@@ -329,33 +329,6 @@ end-to-end.
 
 ## Implementation sequence
 
-### Step 2b: Extract PHPDocProvider
-
-- Stop parsing `@method` and `@property` / `@property-read` /
-  `@property-write` tags eagerly in `parser/classes.rs`. Preserve the raw
-  class-level docblock string on `ClassInfo` instead.
-- Implement `PHPDocProvider` in `src/virtual_members/phpdoc.rs`.
-- `applies_to`: check for non-empty class docblock.
-- `provide`: call the existing `extract_method_tags` and
-  `extract_property_tags` on the preserved docblock string.
-- Register PHPDocProvider at higher priority than MixinProvider.
-- All existing `@method` / `@property` tests must continue to pass. Some
-  may need adjustment if they were relying on `@method` members being on
-  `ClassInfo.methods` directly, but the completion output should be
-  identical.
-
-### Step 3: LaravelModelProvider — relationships
-
-- Implement `applies_to` (walk parent chain for Eloquent Model).
-- Scan methods for relationship return types.
-- Synthesize virtual properties with inferred types.
-- Add relationship type mapping (HasMany → Collection, BelongsTo → singular,
-  etc.).
-- Register at higher priority than PHPDocProvider so synthesized
-  relationship properties (with generics) beat `@property` tags (without).
-- Tests: create a mock Model/HasMany/BelongsTo setup, verify `$user->posts`
-  resolves to `Collection<Post>`, `$user->profile` resolves to `Profile`.
-
 ### Step 4: LaravelModelProvider — scopes
 
 - Scan methods for `scope*` prefix.

@@ -813,6 +813,42 @@ class SwitchDemo
 }
 
 
+// ── Laravel Eloquent Relationship Properties ────────────────────────────────
+// Methods returning Eloquent relationship types (HasMany, HasOne, BelongsTo, etc.)
+// automatically produce virtual properties. Accessing $author->posts resolves to a
+// Collection<BlogPost>, while $author->profile resolves directly to AuthorProfile.
+
+class BlogAuthor extends \Illuminate\Database\Eloquent\Model
+{
+    /** @return \Illuminate\Database\Eloquent\Relations\HasMany<BlogPost, $this> */
+    public function posts(): mixed
+    {
+        return $this->hasMany(BlogPost::class);
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Relations\HasOne<AuthorProfile, $this> */
+    public function profile(): mixed
+    {
+        return $this->hasOne(AuthorProfile::class);
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Relations\BelongsToMany<BlogTag, $this> */
+    public function tags(): mixed
+    {
+        return $this->belongsToMany(BlogTag::class);
+    }
+
+    public function demo(): void
+    {
+        $author = new BlogAuthor();
+        $author->posts;                   // virtual property → Collection<BlogPost>
+        $author->profile;                 // virtual property → AuthorProfile
+        $author->profile->getBio();       // chains to AuthorProfile methods
+        $author->tags;                    // virtual property → Collection<BlogTag>
+    }
+}
+
+
 // ── Match Class-String Forwarding to Conditional Return Types ───────────────
 // When a variable holds a ::class value from a match expression and is then
 // passed to a function/method with @template T + @param class-string<T> +
@@ -2504,3 +2540,24 @@ class EloquentCollection extends BaseCollection {}
  * @extends EloquentCollection<int, User>
  */
 final class UserEloquentCollection extends EloquentCollection {}
+
+// ── Laravel Relationship Demo Models ────────────────────────────────────────
+
+class BlogPost extends \Illuminate\Database\Eloquent\Model
+{
+    public function getTitle(): string { return ''; }
+    public function getSlug(): string { return ''; }
+}
+
+class AuthorProfile extends \Illuminate\Database\Eloquent\Model
+{
+    public function getBio(): string { return ''; }
+    public function getAvatar(): string { return ''; }
+}
+
+class BlogTag extends \Illuminate\Database\Eloquent\Model
+{
+    public function getLabel(): string { return ''; }
+}
+
+

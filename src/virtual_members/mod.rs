@@ -32,6 +32,7 @@
 //!    c. Mixin provider      — @mixin
 //! ```
 
+pub mod laravel;
 pub mod mixin;
 pub mod phpdoc;
 
@@ -142,15 +143,16 @@ pub fn apply_virtual_members(
 
 /// Return the default set of virtual member providers in priority order.
 ///
-/// Currently returns an empty list.  As providers are implemented
-/// (PHPDocProvider, MixinProvider, LaravelModelProvider) they will be
-/// added here in the correct priority order:
+/// Providers are queried in order; a member contributed by an earlier
+/// provider is never overwritten by a later one.
 ///
-/// 1. Framework provider (highest priority)
-/// 2. PHPDoc provider
-/// 3. Mixin provider (lowest priority)
+/// 1. Laravel provider (highest priority — richest type info)
+/// 2. PHPDoc provider (`@method` / `@property` tags)
+/// 3. Mixin provider (`@mixin`, lowest priority)
 pub fn default_providers() -> Vec<Box<dyn VirtualMemberProvider>> {
     vec![
+        // Laravel provider — relationship properties, scopes, Builder forwarding.
+        Box::new(laravel::LaravelModelProvider),
         // PHPDoc provider — @method / @property tags, higher priority than mixin.
         Box::new(phpdoc::PHPDocProvider),
         // Mixin provider — lowest priority among virtual member providers.
@@ -572,12 +574,12 @@ mod tests {
     }
 
     #[test]
-    fn default_providers_has_phpdoc_and_mixin() {
+    fn default_providers_has_laravel_phpdoc_and_mixin() {
         let providers = default_providers();
         assert_eq!(
             providers.len(),
-            2,
-            "should have PHPDocProvider and MixinProvider registered"
+            3,
+            "should have LaravelModelProvider, PHPDocProvider, and MixinProvider registered"
         );
     }
 

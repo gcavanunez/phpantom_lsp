@@ -262,8 +262,9 @@ Provider priority order (highest first):
 2. **PHPDoc provider**: `@method`, `@property`, `@property-read`, `@property-write`
 3. **Mixin provider**: `@mixin` class members
 
-Two providers are currently registered in `default_providers()`:
+Three providers are currently registered in `default_providers()`:
 
+- **`LaravelModelProvider`** (`virtual_members/laravel.rs`): synthesizes virtual members for classes extending `Illuminate\Database\Eloquent\Model`. Currently produces relationship properties: methods returning known relationship types (`HasMany`, `HasOne`, `BelongsTo`, etc.) generate a virtual property with the same name, typed from the relationship's generic parameters (e.g. `HasMany<Post, $this>` produces a `$posts` property typed as `\Illuminate\Database\Eloquent\Collection<Post>`). Highest priority among virtual member providers.
 - **`PHPDocProvider`** (`virtual_members/phpdoc.rs`): parses `@method`, `@property`, `@property-read`, and `@property-write` tags from the class-level docblock stored in `ClassInfo.class_docblock`. These tags are not parsed eagerly during AST extraction; instead, the raw docblock string is preserved and parsed lazily when `provide` is called.
 - **`MixinProvider`** (`virtual_members/mixin.rs`): loads classes listed in `@mixin` tags and returns their public members. Recurses into mixin-of-mixin chains up to `MAX_MIXIN_DEPTH`.
 
