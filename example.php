@@ -883,6 +883,8 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         BlogAuthor::orderBy('name')->limit(10)->get(); // full chain resolution
         // Query\Builder methods (@mixin) are also forwarded:
         BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get();
+        // Compleation for relations after a query
+        BlogAuthor::where('active', 1)->first()->profile->getBio();
     }
 }
 

@@ -2971,3 +2971,201 @@ async fn test_builder_wherein_chain_with_real_example_php() {
         _ => panic!("Expected CompletionResponse::Array"),
     }
 }
+
+// ─── Static call chain → first() → property access ─────────────────────────
+
+#[tokio::test]
+async fn test_static_chain_first_then_property_access() {
+    // BlogAuthor::where('active', 1)->first()->profile-> should offer
+    // AuthorProfile methods (getBio, getAvatar), NOT BlogAuthor methods.
+    // Previously the enum-case check in resolve_target_classes was too
+    // greedy: it matched any subject containing `::` and resolved only
+    // the class name before `::`, ignoring the entire method chain.
+    let original = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example.php"),
+    )
+    .expect("example.php should exist");
+
+    let trigger_line = "        BlogAuthor::where('active', 1)->first()->profile->";
+    let text = original.replace(
+        "        BlogAuthor::where('active', 1)->first();   // returns BlogAuthor|null",
+        trigger_line,
+    );
+
+    let trigger_line_idx = text
+        .lines()
+        .position(|l| l.trim_end() == trigger_line.trim_end())
+        .expect("trigger line should exist in modified text") as u32;
+
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///example_chain_prop.php").unwrap();
+
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text,
+            },
+        })
+        .await;
+
+    let result = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: trigger_line_idx,
+                    character: trigger_line.len() as u32,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        result.is_some(),
+        "Should return completion results for BlogAuthor::where()->first()->profile->"
+    );
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let methods: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            eprintln!(
+                "BlogAuthor::where()->first()->profile->  methods: {:?}",
+                methods
+            );
+
+            // AuthorProfile methods should be offered
+            assert!(
+                methods.contains(&"getBio"),
+                "Should offer getBio() from AuthorProfile, got: {:?}",
+                methods
+            );
+            assert!(
+                methods.contains(&"getAvatar"),
+                "Should offer getAvatar() from AuthorProfile, got: {:?}",
+                methods
+            );
+
+            // BlogAuthor methods should NOT appear — we're on
+            // AuthorProfile, not BlogAuthor.
+            assert!(
+                !methods.contains(&"posts"),
+                "Should NOT offer posts() (BlogAuthor method) on AuthorProfile, got: {:?}",
+                methods
+            );
+            assert!(
+                !methods.contains(&"profile"),
+                "Should NOT offer profile() (BlogAuthor method) on AuthorProfile, got: {:?}",
+                methods
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+#[tokio::test]
+async fn test_static_chain_first_then_relationship_does_not_loop() {
+    // BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->first()->posts->
+    // should offer Collection methods (first, count), NOT BlogAuthor methods.
+    // This verifies that the chain does not loop back to BlogAuthor
+    // (the ->posts->posts->posts infinite loop bug).
+    let original = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example.php"),
+    )
+    .expect("example.php should exist");
+
+    let trigger_line =
+        "        BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->first()->posts->";
+    let text = original.replace(
+        "        BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get();",
+        trigger_line,
+    );
+
+    let trigger_line_idx = text
+        .lines()
+        .position(|l| l.trim_end() == trigger_line.trim_end())
+        .expect("trigger line should exist in modified text") as u32;
+
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///example_chain_no_loop.php").unwrap();
+
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text,
+            },
+        })
+        .await;
+
+    let result = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: trigger_line_idx,
+                    character: trigger_line.len() as u32,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        result.is_some(),
+        "Should return completion results for …->first()->posts->"
+    );
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let methods: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            eprintln!("…->first()->posts->  methods: {:?}", methods);
+
+            // Collection methods should be offered (posts is HasMany
+            // → Collection<BlogPost>)
+            assert!(
+                methods.contains(&"first"),
+                "Should offer first() from Collection, got: {:?}",
+                methods
+            );
+            assert!(
+                methods.contains(&"count"),
+                "Should offer count() from Collection, got: {:?}",
+                methods
+            );
+
+            // BlogAuthor methods should NOT appear — we're on
+            // Collection<BlogPost>, not BlogAuthor.
+            assert!(
+                !methods.contains(&"posts"),
+                "Should NOT offer posts() on Collection (infinite loop bug), got: {:?}",
+                methods
+            );
+            assert!(
+                !methods.contains(&"profile"),
+                "Should NOT offer profile() on Collection, got: {:?}",
+                methods
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}

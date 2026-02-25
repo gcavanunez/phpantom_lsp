@@ -239,10 +239,15 @@ impl Backend {
         // ── Enum case / static member access: `ClassName::CaseName` ──
         // When an enum case or static member is used with `->`, resolve to
         // the class/enum itself (e.g. `Status::Active->label()` → `Status`).
+        // Only match when the part after `::` does NOT contain `->`, which
+        // would indicate a method chain (e.g.
+        // `BlogAuthor::whereIn(…)->first()->posts`) rather than a simple
+        // enum-case or static-property access.
         if !subject.starts_with('$')
             && subject.contains("::")
             && !subject.ends_with(')')
-            && let Some((class_part, _case_part)) = subject.split_once("::")
+            && let Some((class_part, case_part)) = subject.split_once("::")
+            && !case_part.contains("->")
         {
             if let Some(cls) = find_class_by_name(all_classes, class_part) {
                 return vec![cls.clone()];
@@ -261,6 +266,32 @@ impl Backend {
             }
             // Try cross-file / PSR-4 with the full subject
             return class_loader(subject).into_iter().collect();
+        }
+
+        // ── Property chain on non-variable base ──
+        // Handles chains that start with a static call or class name
+        // and end with a property access, e.g.
+        // `BlogAuthor::whereIn(…)->first()->posts` or
+        // `ClassName::make()->config`.
+        // Split at the last `->` and recursively resolve the base
+        // (which typically ends with `)` and goes through the call
+        // expression handler), then look up the trailing property.
+        if !subject.starts_with('$')
+            && subject.contains("->")
+            && !subject.ends_with(')')
+            && let Some((base, prop_name)) = split_last_arrow(subject)
+        {
+            let base_classes = Self::resolve_target_classes(base, _access_kind, ctx);
+            let mut results = Vec::new();
+            for cls in &base_classes {
+                let resolved =
+                    Self::resolve_property_types(prop_name, cls, all_classes, class_loader);
+                ClassInfo::extend_unique(&mut results, resolved);
+            }
+            if !results.is_empty() {
+                return results;
+            }
+            return vec![];
         }
 
         // ── Call expression: subject ends with ")" ──
