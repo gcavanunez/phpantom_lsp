@@ -141,13 +141,65 @@ pub(crate) fn resolve_conditional_with_text_args(
                         )
                     }
                 }
-                ParamCondition::IsType(_) => {
+                ParamCondition::IsType(type_str) => {
+                    // Check if the condition mentions `array` and the
+                    // argument is an array literal (starts with `[`).
+                    if condition_includes_array(type_str)
+                        && let Some(arg) = arg_text
+                        && arg.trim_start().starts_with('[')
+                    {
+                        return resolve_conditional_with_text_args(
+                            then_type,
+                            params,
+                            text_args,
+                            var_resolver,
+                        );
+                    }
                     // Can't statically determine; fall through to else.
                     resolve_conditional_with_text_args(else_type, params, text_args, var_resolver)
                 }
             }
         }
     }
+}
+
+/// Check whether a condition type string includes `array` as one of its
+/// union members.
+///
+/// The type string may be a bare `array`, a generic `array<mixed>`, or a
+/// union wrapped in parentheses like
+/// `(Illuminate\Contracts\Support\Arrayable<...>|array<mixed>)`.
+///
+/// We split on `|` at depth 0 (respecting `<…>` nesting) and check
+/// whether any part starts with `array`.  This avoids false positives
+/// from `Arrayable` which also contains "array" as a substring.
+fn condition_includes_array(type_str: &str) -> bool {
+    let s = type_str.trim();
+    // Strip wrapping parens if present (union groups).
+    let inner = s
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(s);
+
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            '|' if depth == 0 => {
+                let part = inner[start..i].trim();
+                if part == "array" || part.starts_with("array<") {
+                    return true;
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    // Check the last (or only) segment.
+    let part = inner[start..].trim();
+    part == "array" || part.starts_with("array<")
 }
 
 /// Split a textual argument list by commas, respecting nested parentheses
@@ -287,7 +339,19 @@ pub(crate) fn resolve_conditional_with_args<'b>(
                         )
                     }
                 }
-                ParamCondition::IsType(_) => {
+                ParamCondition::IsType(type_str) => {
+                    // Check if the condition mentions `array` and the
+                    // argument is an array literal (`[...]`).
+                    if condition_includes_array(type_str)
+                        && let Some(Expression::Array(_)) = arg_expr
+                    {
+                        return resolve_conditional_with_args(
+                            then_type,
+                            params,
+                            argument_list,
+                            var_resolver,
+                        );
+                    }
                     // We can't statically determine the type of an
                     // arbitrary expression; fall through to else.
                     resolve_conditional_with_args(else_type, params, argument_list, var_resolver)

@@ -37,7 +37,7 @@ use std::collections::HashMap;
 
 use crate::Backend;
 use crate::docblock::types::parse_generic_args;
-use crate::inheritance::apply_substitution;
+use crate::inheritance::{apply_substitution, apply_substitution_to_conditional};
 use crate::types::ELOQUENT_COLLECTION_FQN;
 use crate::types::{ClassInfo, MAX_INHERITANCE_DEPTH, MethodInfo, PropertyInfo, Visibility};
 
@@ -481,6 +481,9 @@ fn build_builder_forwarded_methods(
         if !subs.is_empty() {
             if let Some(ref mut ret) = forwarded.return_type {
                 *ret = apply_substitution(ret, &subs);
+            }
+            if let Some(ref mut cond) = forwarded.conditional_return {
+                apply_substitution_to_conditional(cond, &subs);
             }
             for param in &mut forwarded.parameters {
                 if let Some(ref mut hint) = param.type_hint {

@@ -677,8 +677,20 @@ impl Backend {
                     resolve_conditional_without_args(cond, &method.parameters)
                 };
                 if let Some(ref ty) = resolved_type {
-                    let classes =
-                        Self::type_hint_to_classes(ty, &class_info.name, all_classes, class_loader);
+                    // Apply method-level template substitutions to the
+                    // resolved conditional type (e.g. `TModel` → concrete
+                    // class when TModel is a method-level @template param).
+                    let effective_ty = if !template_subs.is_empty() {
+                        apply_substitution(ty, template_subs)
+                    } else {
+                        ty.clone()
+                    };
+                    let classes = Self::type_hint_to_classes(
+                        &effective_ty,
+                        &class_info.name,
+                        all_classes,
+                        class_loader,
+                    );
                     if !classes.is_empty() {
                         return classes;
                     }

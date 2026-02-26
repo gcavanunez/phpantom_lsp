@@ -21,8 +21,8 @@ use std::collections::HashMap;
 use crate::Backend;
 use crate::docblock::types::split_generic_args;
 use crate::types::{
-    ClassInfo, MAX_INHERITANCE_DEPTH, MAX_TRAIT_DEPTH, MethodInfo, PropertyInfo, TraitAlias,
-    TraitPrecedence, Visibility,
+    ClassInfo, ConditionalReturnType, MAX_INHERITANCE_DEPTH, MAX_TRAIT_DEPTH, MethodInfo,
+    ParamCondition, PropertyInfo, TraitAlias, TraitPrecedence, Visibility,
 };
 use crate::util::short_name;
 
@@ -577,12 +577,49 @@ fn apply_substitution_to_method(method: &mut MethodInfo, subs: &HashMap<String, 
             *ret = substituted;
         }
     }
+    if let Some(ref mut cond) = method.conditional_return {
+        apply_substitution_to_conditional(cond, subs);
+    }
     for param in &mut method.parameters {
         if let Some(ref mut hint) = param.type_hint {
             let substituted = apply_substitution(hint, subs);
             if substituted != *hint {
                 *hint = substituted;
             }
+        }
+    }
+}
+
+/// Apply generic type substitution to a conditional return type tree.
+///
+/// Recursively walks the [`ConditionalReturnType`] and applies
+/// [`apply_substitution`] to every concrete type string (both terminal
+/// `Concrete` nodes and `IsType` condition strings).
+pub(crate) fn apply_substitution_to_conditional(
+    cond: &mut ConditionalReturnType,
+    subs: &HashMap<String, String>,
+) {
+    match cond {
+        ConditionalReturnType::Concrete(ty) => {
+            let substituted = apply_substitution(ty, subs);
+            if substituted != *ty {
+                *ty = substituted;
+            }
+        }
+        ConditionalReturnType::Conditional {
+            condition,
+            then_type,
+            else_type,
+            ..
+        } => {
+            if let ParamCondition::IsType(type_str) = condition {
+                let substituted = apply_substitution(type_str, subs);
+                if substituted != *type_str {
+                    *type_str = substituted;
+                }
+            }
+            apply_substitution_to_conditional(then_type, subs);
+            apply_substitution_to_conditional(else_type, subs);
         }
     }
 }

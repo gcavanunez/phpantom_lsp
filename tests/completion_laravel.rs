@@ -120,6 +120,11 @@ class Builder {
     public function get(): Collection { return new Collection(); }
     /** @return TModel|\\Illuminate\\Database\\Eloquent\\Collection<int, TModel>|null */
     public function find(mixed $id): mixed { return null; }
+    /**
+     * @param mixed $id
+     * @return ($id is (\\Illuminate\\Contracts\\Support\\Arrayable<array-key, mixed>|array<mixed>) ? \\Illuminate\\Database\\Eloquent\\Collection<int, TModel> : TModel)
+     */
+    public function findOrFail(mixed $id, array $columns = ['*']): mixed { return null; }
     /** @return static */
     public function limit(int $value): static { return $this; }
     /** @return bool */
@@ -4181,5 +4186,116 @@ class User extends Model {
         props.contains(&"avatar_url"),
         "Cross-file modern accessor avatarUrl() on Profile should produce property avatar_url, got: {:?}",
         props
+    );
+}
+
+// ─── Conditional return type on Builder methods ─────────────────────────────
+
+/// `Customer::findOrFail(1)` has a conditional return type:
+///   `($id is Arrayable|array) ? Collection<int, TModel> : TModel`
+/// When called with a scalar argument, the condition is false and the
+/// return type should resolve to TModel (= Customer).  Assigning the
+/// result to a variable and completing on it should offer Customer's
+/// methods.
+#[tokio::test]
+async fn test_find_or_fail_conditional_return_resolves_to_model() {
+    let customer_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class Customer extends Model {
+    public function getEmail(): string { return ''; }
+    public function getFullNameAttribute(): string { return ''; }
+}
+";
+    let controller_php = "\
+<?php
+namespace App\\Models;
+class OrderController {
+    public function show(): void {
+        $customer = Customer::findOrFail(1);
+        $customer->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[
+        ("src/Models/Customer.php", customer_php),
+        ("src/Models/OrderController.php", controller_php),
+    ]);
+
+    let items = complete_at(
+        &backend,
+        &dir,
+        "src/Models/OrderController.php",
+        controller_php,
+        5,
+        20,
+    )
+    .await;
+    let methods = method_names(&items);
+    let props = property_names(&items);
+
+    assert!(
+        methods.contains(&"getEmail"),
+        "Customer::findOrFail(1) should resolve to Customer with getEmail(), got methods: {:?}, props: {:?}",
+        methods,
+        props
+    );
+    assert!(
+        props.contains(&"full_name"),
+        "Customer::findOrFail(1) should resolve accessor property full_name, got props: {:?}",
+        props
+    );
+}
+
+/// `Customer::findOrFail([1, 2])` passes an array argument, so the
+/// conditional `($id is Arrayable|array) ? Collection<int, TModel> : TModel`
+/// should take the then-branch and resolve to `Collection<int, Customer>`.
+/// Completing on the result should offer Collection methods like `count()`.
+#[tokio::test]
+async fn test_find_or_fail_array_arg_resolves_to_collection() {
+    let customer_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class Customer extends Model {
+    public function getEmail(): string { return ''; }
+}
+";
+    let controller_php = "\
+<?php
+namespace App\\Models;
+class OrderController {
+    public function index(): void {
+        $customers = Customer::findOrFail([1, 2]);
+        $customers->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[
+        ("src/Models/Customer.php", customer_php),
+        ("src/Models/OrderController.php", controller_php),
+    ]);
+
+    let items = complete_at(
+        &backend,
+        &dir,
+        "src/Models/OrderController.php",
+        controller_php,
+        5,
+        21,
+    )
+    .await;
+    let methods = method_names(&items);
+
+    assert!(
+        methods.contains(&"count"),
+        "Customer::findOrFail([1, 2]) should resolve to Collection with count(), got methods: {:?}",
+        methods
+    );
+    assert!(
+        methods.contains(&"first"),
+        "Customer::findOrFail([1, 2]) should resolve to Collection with first(), got methods: {:?}",
+        methods
     );
 }
