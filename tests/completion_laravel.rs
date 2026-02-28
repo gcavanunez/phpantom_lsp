@@ -4187,6 +4187,123 @@ class User extends Model {
     );
 }
 
+/// When a modern accessor declares `Attribute<string>` (or
+/// `Attribute<string, never>`), the synthesized property should be
+/// typed `string`, not `mixed`.
+#[tokio::test]
+async fn test_modern_accessor_generic_type_extracted() {
+    let attribute_php = "\
+<?php
+namespace Illuminate\\Database\\Eloquent\\Casts;
+class Attribute {}
+";
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Casts\\Attribute;
+class User extends Model {
+    /** @return Attribute<string> */
+    protected function fullName(): Attribute {
+        return Attribute::make(get: fn() => 'hello');
+    }
+    /** @return Attribute<int, never> */
+    protected function age(): Attribute {
+        return Attribute::make(get: fn() => 42);
+    }
+    /** @return Attribute<string|null> */
+    protected function nickname(): Attribute {
+        return Attribute::make(get: fn() => null);
+    }
+    protected function noGeneric(): Attribute {
+        return Attribute::make(get: fn() => 'fallback');
+    }
+    public function test() {
+        $u = new User();
+        $u->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[
+        (
+            "vendor/illuminate/Eloquent/Casts/Attribute.php",
+            attribute_php,
+        ),
+        ("src/Models/User.php", user_php),
+    ]);
+
+    let items = complete_at(&backend, &dir, "src/Models/User.php", user_php, 22, 12).await;
+
+    // Helper: find a completion item by its filter_text / label
+    let find_prop = |name: &str| -> Option<&CompletionItem> {
+        items.iter().find(|i| {
+            i.kind == Some(CompletionItemKind::PROPERTY)
+                && i.filter_text.as_deref().unwrap_or(&i.label) == name
+        })
+    };
+
+    // Attribute<string> → "string"
+    let full_name = find_prop("full_name");
+    assert!(full_name.is_some(), "full_name property should exist");
+    assert!(
+        full_name
+            .unwrap()
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("string"),
+        "full_name should be typed string, got: {:?}",
+        full_name.unwrap().detail
+    );
+    assert!(
+        !full_name
+            .unwrap()
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("mixed"),
+        "full_name should NOT be typed mixed, got: {:?}",
+        full_name.unwrap().detail
+    );
+
+    // Attribute<int, never> → "int"
+    let age = find_prop("age");
+    assert!(age.is_some(), "age property should exist");
+    assert!(
+        age.unwrap().detail.as_deref().unwrap_or("").contains("int"),
+        "age should be typed int, got: {:?}",
+        age.unwrap().detail
+    );
+
+    // Attribute<string|null> → "string|null"
+    let nickname = find_prop("nickname");
+    assert!(nickname.is_some(), "nickname property should exist");
+    assert!(
+        nickname
+            .unwrap()
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("string|null"),
+        "nickname should be typed string|null, got: {:?}",
+        nickname.unwrap().detail
+    );
+
+    // Attribute (no generics) → "mixed"
+    let no_generic = find_prop("no_generic");
+    assert!(no_generic.is_some(), "no_generic property should exist");
+    assert!(
+        no_generic
+            .unwrap()
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("mixed"),
+        "no_generic should fall back to mixed, got: {:?}",
+        no_generic.unwrap().detail
+    );
+}
+
 /// Modern and legacy accessors can coexist on the same model alongside
 /// relationships and scopes.
 #[tokio::test]

@@ -658,6 +658,26 @@ fn is_modern_accessor(method: &MethodInfo) -> bool {
     }
 }
 
+/// Extract the get-type from a modern accessor's return type.
+///
+/// Given a return type like `Attribute<string>` or
+/// `Attribute<string, never>`, returns the first generic argument
+/// (`string` in both examples).  Falls back to `"mixed"` when no
+/// generic parameter is present.
+fn extract_modern_accessor_type(method: &MethodInfo) -> String {
+    if let Some(rt) = method.return_type.as_deref() {
+        let clean = rt.strip_prefix('\\').unwrap_or(rt);
+        let (_, args) = parse_generic_args(clean);
+        if let Some(first) = args.first() {
+            let trimmed = first.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    "mixed".to_string()
+}
+
 /// Convert a camelCase or PascalCase string to snake_case.
 ///
 /// Inserts an underscore before each uppercase letter that follows a
@@ -1199,10 +1219,11 @@ impl VirtualMemberProvider for LaravelModelProvider {
             // ── Modern accessors (Laravel 9+ Attribute casts) ───────
             if is_modern_accessor(method) {
                 let prop_name = camel_to_snake(&method.name);
+                let accessor_type = extract_modern_accessor_type(method);
                 properties.push(PropertyInfo {
                     name: prop_name,
                     name_offset: 0,
-                    type_hint: Some("mixed".to_string()),
+                    type_hint: Some(accessor_type),
                     is_static: false,
                     visibility: Visibility::Public,
                     is_deprecated: method.is_deprecated,
@@ -3015,6 +3036,68 @@ mod tests {
         assert!(!is_modern_accessor(&method));
     }
 
+    // ── extract_modern_accessor_type ────────────────────────────────
+
+    #[test]
+    fn accessor_type_with_single_generic_arg() {
+        let method = make_method(
+            "firstName",
+            Some("Illuminate\\Database\\Eloquent\\Casts\\Attribute<string>"),
+        );
+        assert_eq!(extract_modern_accessor_type(&method), "string");
+    }
+
+    #[test]
+    fn accessor_type_with_two_generic_args() {
+        let method = make_method(
+            "firstName",
+            Some("Illuminate\\Database\\Eloquent\\Casts\\Attribute<string, never>"),
+        );
+        assert_eq!(extract_modern_accessor_type(&method), "string");
+    }
+
+    #[test]
+    fn accessor_type_with_leading_backslash() {
+        let method = make_method(
+            "firstName",
+            Some("\\Illuminate\\Database\\Eloquent\\Casts\\Attribute<int>"),
+        );
+        assert_eq!(extract_modern_accessor_type(&method), "int");
+    }
+
+    #[test]
+    fn accessor_type_short_name_with_generic() {
+        let method = make_method("firstName", Some("Attribute<bool>"));
+        assert_eq!(extract_modern_accessor_type(&method), "bool");
+    }
+
+    #[test]
+    fn accessor_type_no_generic_falls_back_to_mixed() {
+        let method = make_method(
+            "firstName",
+            Some("Illuminate\\Database\\Eloquent\\Casts\\Attribute"),
+        );
+        assert_eq!(extract_modern_accessor_type(&method), "mixed");
+    }
+
+    #[test]
+    fn accessor_type_no_return_type_falls_back_to_mixed() {
+        let method = make_method("firstName", None);
+        assert_eq!(extract_modern_accessor_type(&method), "mixed");
+    }
+
+    #[test]
+    fn accessor_type_nullable_generic_arg() {
+        let method = make_method("firstName", Some("Attribute<?string>"));
+        assert_eq!(extract_modern_accessor_type(&method), "?string");
+    }
+
+    #[test]
+    fn accessor_type_union_generic_arg() {
+        let method = make_method("firstName", Some("Attribute<string|null>"));
+        assert_eq!(extract_modern_accessor_type(&method), "string|null");
+    }
+
     // ── provide: accessor integration ───────────────────────────────
 
     #[test]
@@ -3080,6 +3163,61 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!(prop.unwrap().type_hint.as_deref(), Some("mixed"));
+    }
+
+    #[test]
+    fn synthesizes_modern_accessor_property_with_generic_type() {
+        let provider = LaravelModelProvider;
+        let mut user = make_class("App\\Models\\User");
+        user.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
+        user.methods.push(make_method(
+            "fullName",
+            Some("Illuminate\\Database\\Eloquent\\Casts\\Attribute<string, never>"),
+        ));
+
+        let model = make_class("Illuminate\\Database\\Eloquent\\Model");
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == "Illuminate\\Database\\Eloquent\\Model" {
+                Some(model.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = provider.provide(&user, &loader);
+        let prop = result.properties.iter().find(|p| p.name == "full_name");
+        assert!(
+            prop.is_some(),
+            "Modern accessor fullName() returning Attribute<string, never> should produce property full_name",
+        );
+        assert_eq!(
+            prop.unwrap().type_hint.as_deref(),
+            Some("string"),
+            "Should extract first generic arg as the property type"
+        );
+    }
+
+    #[test]
+    fn synthesizes_modern_accessor_property_short_name_generic() {
+        let provider = LaravelModelProvider;
+        let mut user = make_class("App\\Models\\User");
+        user.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
+        user.methods
+            .push(make_method("age", Some("Attribute<int>")));
+
+        let model = make_class("Illuminate\\Database\\Eloquent\\Model");
+        let loader = |name: &str| -> Option<ClassInfo> {
+            if name == "Illuminate\\Database\\Eloquent\\Model" {
+                Some(model.clone())
+            } else {
+                None
+            }
+        };
+
+        let result = provider.provide(&user, &loader);
+        let prop = result.properties.iter().find(|p| p.name == "age");
+        assert!(prop.is_some());
+        assert_eq!(prop.unwrap().type_hint.as_deref(), Some("int"));
     }
 
     #[test]

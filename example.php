@@ -471,9 +471,9 @@ class StringInterpolationDemo
     public function demo(): void
     {
         $pen = new Pen('blue');
-        $greeting = "Ink is {$pen->color()}";             // brace interpolation — full completion
-        $info = "Tool: $pen->ink";                        // simple interpolation
-        $nope = 'no $pen-> here';                         // single-quoted — suppressed
+        echo "Ink is {$pen->color()}";             // brace interpolation — full completion
+        echo "Tool: $pen->ink";                    // simple interpolation
+        echo 'no $pen-> here';                     // single-quoted — suppressed
     }
 }
 
@@ -619,9 +619,9 @@ class ClosureInvocationDemo
 
 class AnonymousClassDemo
 {
-    public function demo(): void
+    public function demo(): object
     {
-        $anon = new class extends Pen {
+        return new class extends Pen {
             public string $brand;
             public function cap(): string { return ''; }
             public function demo() {
@@ -828,7 +828,7 @@ class ArrayFuncDemo
     {
         $src = new ScaffoldingArrayFunc();
 
-        $active = array_filter($src->members, fn(Pen $p) => $p->color() === 'blue');
+        $active = array_filter($src->members, fn(Pen $pen) => $pen->color() === 'blue');
         $active[0]->write();              // Pen preserved through array_filter
 
         $vals = array_values($src->members);
@@ -843,11 +843,11 @@ class ArrayFuncDemo
 
         end($src->members)->write();      // inline end() without variable
 
-        foreach (array_filter($src->members, fn(Pen $p) => true) as $p) {
-            $p->color();                  // Pen preserved in foreach
+        foreach (array_filter($src->members, fn(Pen $pen) => true) as $pen) {
+            $pen->color();                // Pen preserved in foreach
         }
 
-        $mapped = array_map(fn($p) => $p, $src->members);
+        $mapped = array_map(fn($pen) => $pen, $src->members);
         $mapped[0]->write();              // Pen from array_map fallback
     }
 }
@@ -1160,7 +1160,7 @@ class EloquentVirtualMemberDemo
 
         // Accessors
         $author->display_name;            // virtual property → string
-        $author->avatar_url;              // modern: Attribute → mixed
+        $author->avatar_url;              // modern: Attribute<string> → string
 
         // Builder-as-static forwarding
         BlogAuthor::where('active', true);
@@ -1276,7 +1276,7 @@ class SignatureHelpDemo
 
 class SnippetInsertionDemo
 {
-    public function demo(): void
+    public function demo(): Response
     {
         // Completion inserts snippets with tab-stops for required params
         $user = new User('Alice', 'alice@example.com');
@@ -1284,7 +1284,7 @@ class SnippetInsertionDemo
         $user->toArray();                         // → toArray()  (no params)
         $user->addRoles();                        // → addRoles() (variadic — no tab-stops)
         User::findByEmail('a@b.c');               // → findByEmail(${1:$email})
-        $response = new Response(200);            // → Response(${1:$statusCode})
+        return new Response(200);                 // → Response(${1:$statusCode})
     }
 }
 
@@ -1346,17 +1346,17 @@ class TypeHintGtdDemo
         } catch (GtdNotFoundException|GtdAccessException $e) {}
     }
 
-    public function paramTypes(GtdAlpha $item): void {}                    // Ctrl+Click GtdAlpha
-    public function unionTypes(GtdAlpha|GtdBeta $item): void {}            // Ctrl+Click either
-    public function intersectionTypes(GtdShape&GtdColor $item): void {}    // Ctrl+Click either
-    public function returnType(): GtdResult { return new GtdResult(); }    // Ctrl+Click GtdResult
+    public function paramTypes(GtdAlpha $item): GtdAlpha { return $item; }                             // Ctrl+Click GtdAlpha
+    public function unionTypes(GtdAlpha|GtdBeta $item): GtdAlpha|GtdBeta { return $item; }             // Ctrl+Click either
+    public function intersectionTypes(GtdShape&GtdColor $item): GtdShape&GtdColor { return $item; }    // Ctrl+Click either
+    public function returnType(): GtdResult { return new GtdResult(); }                                // Ctrl+Click GtdResult
 
     /**
      * @param list<GtdAlpha> $items                Ctrl+Click GtdAlpha
      * @return GtdResult                           Ctrl+Click GtdResult
      * @throws GtdNotFoundException                Ctrl+Click GtdNotFoundException
      */
-    public function docblockTypes($items) { return new GtdResult(); }
+    public function docblockTypes($items) { return $items; }
 }
 
 class GtdAlpha { public function label(): string { return 'alpha'; } }
@@ -1435,9 +1435,9 @@ class ClassFilteringDemo extends Model implements Renderable
 // int, float, bool) appear alongside class names, with no constants or
 // functions in the list.
 
-function typeHintDemo(User $user, string $name): User { return $user; }
+function typeHintDemo(User $user, string $name): string { return $user->displayName . $name; }
 
-function unionDemo(string|int $value, ?User $maybe): User|null { return $maybe; }
+function unionDemo(string|int $value, ?User $maybe): string { return $maybe . $maybe->displayName; }
 
 
 // ── $_SERVER Superglobal ────────────────────────────────────────────────────
@@ -1475,7 +1475,7 @@ class TernaryNarrowingDemo
     public function demo(): void
     {
         $thing = pickRockOrBanana();
-        $label = $thing instanceof Rock ? $thing->crush() : $thing->peel();
+        $thing instanceof Rock ? $thing->crush() : $thing->peel();
     }
 }
 
@@ -1515,9 +1515,9 @@ class TraitConflictDemo
 
     public function demo(): void
     {
+        $this->internalSerialize();       // aliased as private
         $this->serialize();               // JsonSerializer wins via insteadof
         $this->serializeXml();            // XmlSerializer::serialize aliased
-        $this->internalSerialize();       // aliased as private
         $this->toJson();                  // non-conflicting from JsonSerializer
         $this->toXml();                   // non-conflicting from XmlSerializer
     }
@@ -1558,8 +1558,8 @@ class FirstClassCallableDemo
     {
         $src = new ScaffoldingFirstClassCallable();
 
-        $fn = makePen(...);
-        $fn()->write();                   // function reference → Closure returning Pen
+        $fun = makePen(...);
+        $fun()->write();                   // function reference → Closure returning Pen
 
         $orderFn = $src->dispatch(...);
         $orderFn()->write();              // instance method → Closure returning Pen
@@ -1601,15 +1601,15 @@ class ClosureMembersDemo
 {
     public function demo(): void
     {
-        $typedClosure = function(Pen $p): string { return $p->write(); };
+        $typedClosure = function(Pen $pen): string { return $pen->write(); };
         $typedClosure->bindTo($this);     // resolves to Closure::bindTo
         $typedClosure->call($this);       // resolves to Closure::call
 
-        $typedArrow = fn(int $x): float => $x * 1.5;
+        $typedArrow = fn(int $posX): float => $posX * 1.5;
         $typedArrow->bindTo($this);       // resolves to Closure::bindTo
 
-        $fn = function(): void {};
-        $bound = $fn->bindTo($this);
+        $fun = function(): void {};
+        $bound = $fun->bindTo($this);
         $bound->call($this);             // chained: $bound is still Closure
     }
 }
@@ -2741,6 +2741,7 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
         return 'display';
     }
 
+    /** @return \Illuminate\Database\Eloquent\Casts\Attribute<string> */
     protected function avatarUrl(): \Illuminate\Database\Eloquent\Casts\Attribute
     {
         return new \Illuminate\Database\Eloquent\Casts\Attribute();
