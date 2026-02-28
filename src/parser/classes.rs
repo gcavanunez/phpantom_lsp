@@ -512,7 +512,7 @@ fn extract_column_names<'a>(
     content: &str,
 ) -> Vec<String> {
     let mut names = Vec::new();
-    let targets = ["fillable", "guarded", "hidden"];
+    let targets = ["fillable", "guarded", "hidden", "visible"];
 
     for member in members {
         if let ClassLikeMember::Property(Property::Plain(plain)) = member {

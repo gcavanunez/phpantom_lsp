@@ -1145,58 +1145,63 @@ class MatchClassStringDemo
 // ═══════════════════════════════════════════════════════════════════════════
 
 
-// ── Eloquent Virtual Members (Full Suite) ───────────────────────────────────
+// ── Eloquent Virtual Properties ─────────────────────────────────────────────
+// Alphabetical — every property a through v should appear in order.
+// Trigger completion on `$bakery->` and scan the list.
 
-class EloquentVirtualMemberDemo
+class EloquentPropertyDemo
 {
     public function demo(): void
     {
+        $bakery = new Bakery();
+
+        $bakery->apricot;            // $casts 'boolean'           → bool
+        $bakery->baguettes;          // relationship HasMany       → Collection<Loaf>
+        $bakery->croissant;          // $attributes default        → string
+        $bakery->dough_temp;         // $casts 'float'             → float
+        $bakery->egg_count;          // $attributes default        → int
+        $bakery->flour;              // $fillable (no cast/attr)   → mixed
+        $bakery->gluten_free;        // $attributes default        → bool
+        $bakery->headBaker;          // relationship HasOne        → Baker
+        $bakery->icing;              // $casts custom class        → ?Frosting
+        $bakery->jam_flavor;         // $casts enum                → JamFlavor
+        $bakery->kitchen_id;         // $guarded (no cast/attr)    → mixed
+        $bakery->loaf_name;          // legacy accessor            → string
+        $bakery->masterRecipe;       // relationship BelongsToMany → Collection<BakeryRecipe>
+        $bakery->notes;              // $casts 'array'             → array
+        $bakery->oven_code;          // $hidden (no cast/attr)     → mixed
+        $bakery->proved_at;          // $casts 'datetime'          → \Carbon\Carbon
+        $bakery->quality;            // casts() method 'float'     → float
+        $bakery->rye_blend;          // $visible (no cast/attr)    → mixed
+        $bakery->sprinkle;           // modern accessor Attribute  → string
+        $bakery->topping('choc');    // scope method               → Builder
+        $bakery->unbaked();          // scope method               → Builder
+        $bakery->vendor;             // body-inferred morphTo      → Model
+        // MUST NOT appear: secret_ingredient (private $attributes field)
+    }
+}
+
+
+// ── Eloquent Query Builder ──────────────────────────────────────────────────
+
+class EloquentQueryDemo
+{
+    public function demo(): void
+    {
+        // Builder-as-static forwarding
+        BlogAuthor::where('active', true);
+        BlogAuthor::where('active', 1)->get();     // → Collection<BlogAuthor>
+        BlogAuthor::where('active', 1)->first();   // → BlogAuthor|null
+        BlogAuthor::orderBy('name')->limit(10)->get();
+        BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get();
+        BlogAuthor::where('active', 1)->first()->profile->getBio();
+
+        // Scope methods — instance and static
         $author = new BlogAuthor();
-
-        // Column name properties ($fillable / $guarded / $hidden → mixed)
-        $author->name;
-        $author->password;
-
-        // $casts — built-in types, enum, custom cast class
-        $author->is_admin;                // → bool
-        $author->created_at;              // → \Carbon\Carbon
-        $author->options;                 // → array
-        $author->status;                  // → OrderStatus (enum)
-        $author->description->toHtml();   // → HtmlString (custom cast)
-
-        // casts() method — overrides / extends $casts
-        $author->verified_at;             // → \Carbon\Carbon
-
-        // $attributes defaults — types from literal values
-        $author->role;                    // → string
-        $author->is_active;               // → bool
-        $author->login_count;             // → int
-        $author->rating;                  // → float
-
-        // Relationship properties
-        $author->posts;                   // → Collection<BlogPost>
-        $author->profile;                 // → AuthorProfile
-        $author->profile->getBio();       // chains through
-        $author->tags;                    // → Collection<BlogTag>
-        $author->commentable;             // body-inferred morphTo → Model
-
-        // Scope methods (instance and static)
         $author->active();
         $author->ofGenre('fiction');
         BlogAuthor::active();
         BlogAuthor::ofGenre('fiction');
-
-        // Accessors
-        $author->display_name;            // virtual property → string
-        $author->avatar_url;              // modern: Attribute<string> → string
-
-        // Builder-as-static forwarding
-        BlogAuthor::where('active', true);
-        BlogAuthor::where('active', 1)->get();     // returns Collection<BlogAuthor>
-        BlogAuthor::where('active', 1)->first();   // returns BlogAuthor|null
-        BlogAuthor::orderBy('name')->limit(10)->get(); // full chain resolution
-        BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get();
-        BlogAuthor::where('active', 1)->first()->profile->getBio();
 
         // Scopes on Builder instances
         BlogAuthor::where('active', 1)->active()->ofGenre('sci-fi')->get();
@@ -2688,71 +2693,109 @@ final class UserEloquentCollection extends EloquentCollection {}
 
 // ── Laravel Relationship Demo Models ────────────────────────────────────────
 
-class BlogAuthor extends \Illuminate\Database\Eloquent\Model
+// ── Bakery — Alphabetical Eloquent property demo model ──────────────────────
+// One virtual member per letter (a–v), each from a different source.
+// Trigger `$bakery->` in EloquentPropertyDemo and verify a–v in order.
+
+class Bakery extends \Illuminate\Database\Eloquent\Model
 {
-    protected $fillable = [
-        'name',
-        'email',
-        'genre',
-    ];
+    protected $fillable = ['flour'];
 
-    protected $guarded = [
-        'id',
-    ];
+    protected $guarded = ['kitchen_id'];
 
-    protected $hidden = [
-        'password',
-        'remember_token',
-    ];
+    protected $hidden = ['oven_code'];
+
+    protected $visible = ['rye_blend'];
 
     protected $casts = [
-        'is_admin' => 'boolean',
-        'created_at' => 'datetime',
-        'options' => 'array',
-        'score' => 'float',
-        'balance' => 'decimal:2',
-        'status' => OrderStatus::class,
-        'description' => HtmlCast::class,
+        'apricot'    => 'boolean',
+        'dough_temp' => 'float',
+        'icing'      => FrostingCast::class,
+        'jam_flavor' => JamFlavor::class,
+        'notes'      => 'array',
+        'proved_at'  => 'datetime',
     ];
 
     protected function casts(): array
     {
         return [
-            'verified_at' => 'datetime',
+            'quality' => 'float',
         ];
     }
 
     protected $attributes = [
-        'role' => 'user',
-        'is_active' => true,
-        'login_count' => 0,
-        'rating' => 0.0,
-        'bio' => null,
-        'is_admin' => 1,
+        'croissant'   => 'plain',
+        'egg_count'   => 0,
+        'gluten_free' => false,
     ];
 
-    /** @return \Illuminate\Database\Eloquent\Relations\HasMany<BlogPost, $this> */
-    public function posts(): mixed
+    /** @return \Illuminate\Database\Eloquent\Relations\HasMany<Loaf, $this> */
+    public function baguettes(): mixed { return $this->hasMany(Loaf::class); }
+
+    /** @return \Illuminate\Database\Eloquent\Relations\HasOne<Baker, $this> */
+    public function headBaker(): mixed { return $this->hasOne(Baker::class); }
+
+    /** @return \Illuminate\Database\Eloquent\Relations\BelongsToMany<BakeryRecipe, $this> */
+    public function masterRecipe(): mixed { return $this->belongsToMany(BakeryRecipe::class); }
+
+    public function vendor() { return $this->morphTo(); }
+
+    public function scopeTopping(\Illuminate\Database\Eloquent\Builder $query, string $type): void
     {
-        return $this->hasMany(BlogPost::class);
+        $query->where('topping', $type);
     }
+
+    public function scopeUnbaked(\Illuminate\Database\Eloquent\Builder $query): void
+    {
+        $query->where('baked', false);
+    }
+
+    public function getLoafNameAttribute(): string { return ''; }
+
+    /** @return \Illuminate\Database\Eloquent\Casts\Attribute<string> */
+    protected function sprinkle(): \Illuminate\Database\Eloquent\Casts\Attribute
+    {
+        return new \Illuminate\Database\Eloquent\Casts\Attribute();
+    }
+}
+
+class Loaf extends \Illuminate\Database\Eloquent\Model
+{
+    public function getWeight(): int { return 0; }
+}
+
+class Baker extends \Illuminate\Database\Eloquent\Model
+{
+    public function getName(): string { return ''; }
+}
+
+class BakeryRecipe extends \Illuminate\Database\Eloquent\Model
+{
+    public function getTitle(): string { return ''; }
+}
+
+enum JamFlavor: string
+{
+    case Strawberry = 'strawberry';
+    case Raspberry = 'raspberry';
+    case Blueberry = 'blueberry';
+}
+
+// ── BlogAuthor — used by EloquentQueryDemo and ClosureParamInferenceDemo ────
+
+class BlogAuthor extends \Illuminate\Database\Eloquent\Model
+{
+    protected $fillable = ['name', 'email', 'genre'];
+
+    protected $guarded = ['id'];
+
+    protected $hidden = ['password'];
+
+    /** @return \Illuminate\Database\Eloquent\Relations\HasMany<BlogPost, $this> */
+    public function posts(): mixed { return $this->hasMany(BlogPost::class); }
 
     /** @return \Illuminate\Database\Eloquent\Relations\HasOne<AuthorProfile, $this> */
-    public function profile(): mixed
-    {
-        return $this->hasOne(AuthorProfile::class);
-    }
-
-    /** @return \Illuminate\Database\Eloquent\Relations\BelongsToMany<BlogTag, $this> */
-    public function tags(): mixed
-    {
-        return $this->belongsToMany(BlogTag::class);
-    }
-
-    public function commentable()
-    {
-        return $this->morphTo();
-    }
+    public function profile(): mixed { return $this->hasOne(AuthorProfile::class); }
 
     public function scopeActive(\Illuminate\Database\Eloquent\Builder $query): void
     {
@@ -2762,17 +2805,6 @@ class BlogAuthor extends \Illuminate\Database\Eloquent\Model
     public function scopeOfGenre(\Illuminate\Database\Eloquent\Builder $query, string $genre): void
     {
         $query->where('genre', $genre);
-    }
-
-    public function getDisplayNameAttribute(): string
-    {
-        return 'display';
-    }
-
-    /** @return \Illuminate\Database\Eloquent\Casts\Attribute<string> */
-    protected function avatarUrl(): \Illuminate\Database\Eloquent\Casts\Attribute
-    {
-        return new \Illuminate\Database\Eloquent\Casts\Attribute();
     }
 }
 
@@ -2819,19 +2851,19 @@ class Review extends \Illuminate\Database\Eloquent\Model
     public function replies(): mixed { return $this->hasMany(Review::class); }
 }
 
-class HtmlString
+class Frosting
 {
-    public function __construct(private string $html = '') {}
-    public function toHtml(): string { return $this->html; }
-    public function isEmpty(): bool { return $this->html === ''; }
-    public function __toString(): string { return $this->html; }
+    public function __construct(private string $flavor = '') {}
+    public function getFlavor(): string { return $this->flavor; }
+    public function isSweet(): bool { return $this->flavor !== ''; }
+    public function __toString(): string { return $this->flavor; }
 }
 
-class HtmlCast
+class FrostingCast
 {
-    public function get($model, string $key, mixed $value, array $attributes): ?HtmlString
+    public function get($model, string $key, mixed $value, array $attributes): ?Frosting
     {
-        return new HtmlString((string) $value);
+        return new Frosting((string) $value);
     }
 }
 

@@ -786,6 +786,22 @@ pub(crate) fn accessor_method_candidates(property_name: &str) -> Vec<String> {
     ]
 }
 
+/// Check whether a method on `class` with the given `method_name` is
+/// actually a legacy or modern Eloquent accessor.
+///
+/// Go-to-definition uses this after `accessor_method_candidates` finds a
+/// matching method, to avoid jumping to a relationship or other method
+/// that happens to share the camelCase name.  For example,
+/// `masterRecipe()` returning `BelongsToMany` is NOT an accessor even
+/// though `snake_to_camel("master_recipe")` produces `"masterRecipe"`.
+pub(crate) fn is_accessor_method(class: &ClassInfo, method_name: &str) -> bool {
+    let method = match class.methods.iter().find(|m| m.name == method_name) {
+        Some(m) => m,
+        None => return false,
+    };
+    is_legacy_accessor(method) || is_modern_accessor(method)
+}
+
 /// Infer a relationship return type from a method's body text.
 ///
 /// When a relationship method has no `@return` annotation, this function

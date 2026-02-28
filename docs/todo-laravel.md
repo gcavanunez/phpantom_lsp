@@ -53,7 +53,7 @@ today and what is still missing.
 |--------|-----------|-------|
 | `$casts` / `casts()` | Rich (built-in map, custom cast `get()` return type, enum, `Castable`, `CastsAttributes<TGet>` generics fallback) | |
 | `$attributes` defaults | Literal type inference (string, bool, int, float, null, array) | Fallback when no `$casts` entry |
-| `$fillable`, `$guarded`, `$hidden` | `mixed` | Last-resort column name fallback |
+| `$fillable`, `$guarded`, `$hidden`, `$visible` | `mixed` | Last-resort column name fallback |
 | Legacy accessors (`getXAttribute()`) | Method's return type | |
 | Modern accessors (returns `Attribute`) | First generic arg of `Attribute<TGet>`, or `mixed` when unparameterised | |
 | Relationship methods | Generic params or body inference | |
@@ -73,21 +73,7 @@ benefit) and an **Effort** estimate (implementation complexity):
 
 ---
 
-#### 1. `$visible` array not included in column name extraction
-
-| | |
-|---|---|
-| **Impact** | ★★ — Only affects models that use `$visible` without also declaring the same columns in `$fillable`/`$hidden`/`$casts`. |
-| **Effort** | ★ — Add one string (`"visible"`) to the `targets` array in `extract_column_names`. |
-
-The `$visible` property lists attribute names that should appear in
-serialized output. It functions identically to `$fillable`/`$guarded`/
-`$hidden` as a source of column names.
-
-**Where to change:** Add `"visible"` to the `targets` array in
-`extract_column_names` in `parser/classes.rs`.
-
-#### 2. `$this` in inferred callable parameter types resolves to wrong class
+#### 1. `$this` in inferred callable parameter types resolves to wrong class
 
 | | |
 |---|---|
@@ -123,7 +109,7 @@ any literal `$this` or `static` tokens with the FQN of the receiver
 class before returning them.  This ensures the inferred types
 reference the declaring class rather than the calling class.
 
-#### 3. `*_count` relationship count properties
+#### 2. `*_count` relationship count properties
 
 | | |
 |---|---|
@@ -149,7 +135,7 @@ again and push a `{snake_name}_count` property typed as `int` for
 each one.  The property should have lower priority than explicit
 `@property` tags.
 
-#### 4. `#[Scope]` attribute (Laravel 11+)
+#### 3. `#[Scope]` attribute (Laravel 11+)
 
 | | |
 |---|---|
@@ -179,7 +165,7 @@ methods with the `#[Scope]` attribute the same as `scopeX` methods
 (strip the first `$query` parameter, expose as both static and
 instance virtual methods).
 
-#### 5. `$dates` array (deprecated)
+#### 4. `$dates` array (deprecated)
 
 | | |
 |---|---|
@@ -198,7 +184,7 @@ Merge these into `casts_definitions` at a lower priority than explicit
 `$casts` entries, or add a separate field on `ClassInfo` and handle
 priority in the provider.
 
-#### 6. Custom Eloquent builders (`HasBuilder` / `#[UseEloquentBuilder]`)
+#### 5. Custom Eloquent builders (`HasBuilder` / `#[UseEloquentBuilder]`)
 
 | | |
 |---|---|
@@ -236,7 +222,7 @@ declares a custom builder via `@use HasBuilder<X>` in `use_generics`
 or a `newEloquentBuilder()` method with a non-default return type.
 If found, load and resolve that builder class instead.
 
-#### 7. `abort_if`/`abort_unless` type narrowing
+#### 6. `abort_if`/`abort_unless` type narrowing
 
 | | |
 |---|---|
@@ -280,7 +266,7 @@ to subsequent code:
 This is similar to the existing guard clause narrowing but triggered
 by specific function names rather than `if` + early return.
 
-#### 8. `collect()` and other helper functions lose generic type info
+#### 7. `collect()` and other helper functions lose generic type info
 
 | | |
 |---|---|
@@ -328,7 +314,7 @@ before passing it to `type_hint_to_classes`.  See the general TODO
 item (§ PHP Language Feature Gaps, "Function-level `@template`
 generic resolution") for the full implementation plan.
 
-#### 9. Factory `has*`/`for*` relationship methods
+#### 8. Factory `has*`/`for*` relationship methods
 
 | | |
 |---|---|
@@ -366,7 +352,7 @@ The `has*` variant should accept optional `int $count` and
 `array|callable $state` parameters; `for*` should accept
 `array|callable $state`.
 
-#### 10. `$pivot` property on BelongsToMany related models
+#### 9. `$pivot` property on BelongsToMany related models
 
 | | |
 |---|---|
@@ -412,7 +398,7 @@ the `BelongsToMany` relationship stubs. If the user's stub set
 includes these annotations, it already works through our PHPDoc
 provider.
 
-#### 11. `withSum()` / `withAvg()` / `withMin()` / `withMax()` aggregate properties
+#### 10. `withSum()` / `withAvg()` / `withMin()` / `withMax()` aggregate properties
 
 | | |
 |---|---|
@@ -428,7 +414,7 @@ aggregate function (`withSum`/`withAvg` → `float`,
 
 The `@property` workaround applies here too.
 
-#### 12. Higher-order collection proxies
+#### 11. Higher-order collection proxies
 
 | | |
 |---|---|
@@ -451,7 +437,7 @@ and `HigherOrderCollectionProxyExtension`, which resolve the proxy's
 template types and delegate property/method lookups to the collection's
 value type.
 
-#### 13. `SoftDeletes` trait methods on Builder
+#### 12. `SoftDeletes` trait methods on Builder
 
 | | |
 |---|---|
@@ -479,7 +465,7 @@ type — e.g. `Builder<static>` instead of `Builder<User>`.  This is
 a minor gap but not worth a dedicated fix until custom builder
 support (gap §7) is implemented.
 
-#### 14. `View::withX()` and `RedirectResponse::withX()` dynamic methods
+#### 13. `View::withX()` and `RedirectResponse::withX()` dynamic methods
 
 | | |
 |---|---|
@@ -511,7 +497,7 @@ hard-coding the two known classes.  A simpler approach: add
 `@method` tags to bundled stubs for the most common dynamic `with*`
 methods, or document this as a known limitation.
 
-#### 15. `$appends` array
+#### 14. `$appends` array
 
 | | |
 |---|---|

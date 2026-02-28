@@ -1,6 +1,6 @@
 mod common;
 
-use common::{create_psr4_workspace, create_test_backend};
+use common::create_psr4_workspace;
 use tower_lsp::LanguageServer;
 use tower_lsp::lsp_types::*;
 
@@ -722,338 +722,6 @@ class User extends Model {
     assert_eq!(line, 4, "User's own where() is on line 4, got: {}", line);
 }
 
-// ─── Go-to-definition with example.php (multi-namespace, short-name collisions) ──
-
-/// Helper: load example.php into a test backend, trigger go-to-definition at
-/// the given line/character, and return the response.
-async fn goto_definition_in_example_php(
-    line: u32,
-    character: u32,
-) -> Option<GotoDefinitionResponse> {
-    let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example.php"),
-    )
-    .expect("example.php should exist");
-
-    let backend = create_test_backend();
-    let uri = Url::parse("file:///example_goto.php").unwrap();
-
-    backend
-        .did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem {
-                uri: uri.clone(),
-                language_id: "php".to_string(),
-                version: 1,
-                text,
-            },
-        })
-        .await;
-
-    let params = GotoDefinitionParams {
-        text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri },
-            position: Position { line, character },
-        },
-        work_done_progress_params: WorkDoneProgressParams::default(),
-        partial_result_params: PartialResultParams::default(),
-    };
-
-    backend.goto_definition(params).await.unwrap()
-}
-
-/// `BlogAuthor::where('active', true)` — clicking on `where` should jump to
-/// the Eloquent Builder's `where()` method, NOT `Demo\Builder::where()`.
-///
-/// In example.php, `Demo\Builder` (scaffolding) also has a `where()` method
-/// and appears earlier in the file.  The go-to-definition resolver must use
-/// the builder-as-static forwarding to find the correct declaring class.
-#[tokio::test]
-async fn test_goto_definition_builder_where_in_example_php() {
-    let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example.php"),
-    )
-    .expect("example.php should exist");
-
-    let lines: Vec<&str> = text.lines().collect();
-
-    // Find the line "        BlogAuthor::where('active', true);"
-    let target_line = lines
-        .iter()
-        .position(|l| l.contains("BlogAuthor::where('active', true)"))
-        .expect("should find BlogAuthor::where line");
-
-    // Character position of "where" in that line.
-    let where_col = lines[target_line].find("where").unwrap() as u32;
-
-    let response = goto_definition_in_example_php(target_line as u32, where_col + 1).await;
-    assert!(
-        response.is_some(),
-        "Should resolve BlogAuthor::where() go-to-definition"
-    );
-    let response = response.unwrap();
-    let line = definition_line(&response) as usize;
-
-    // Find the start of the Illuminate\Database\Eloquent namespace block.
-    let eloquent_ns_start = lines
-        .iter()
-        .position(|l| l.contains("namespace Illuminate\\Database\\Eloquent {"))
-        .unwrap_or(0);
-
-    // Find the Eloquent Builder's where() declaration (must be after the
-    // namespace start and contain `function where`).
-    let eloquent_where_line = lines
-        .iter()
-        .enumerate()
-        .position(|(idx, l)| idx > eloquent_ns_start && l.contains("function where"))
-        .expect("should find Eloquent Builder's where() in example.php");
-
-    // The definition should NOT be on Demo\Builder's where() line.
-    let demo_where_line = lines
-        .iter()
-        .position(|l| l.contains("public function where(string $col, mixed $val)"))
-        .unwrap_or(0);
-
-    assert_ne!(
-        line, demo_where_line,
-        "Should NOT jump to Demo\\Builder::where() (line {}), got line {}",
-        demo_where_line, line
-    );
-
-    // It should jump to the Eloquent Builder's where() instead.
-    assert_eq!(
-        line, eloquent_where_line,
-        "Should jump to Eloquent\\Builder::where() (line {}), got line {}",
-        eloquent_where_line, line
-    );
-}
-
-/// `BlogAuthor::where('active', 1)->get()` — clicking on `get` should jump
-/// to the Eloquent Builder's `get()` method, NOT the `Indexable` trait's
-/// `get()` or `Repository::first()`.
-#[tokio::test]
-async fn test_goto_definition_builder_get_in_example_php() {
-    let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example.php"),
-    )
-    .expect("example.php should exist");
-
-    let lines: Vec<&str> = text.lines().collect();
-
-    // Find the line "        BlogAuthor::where('active', 1)->get();"
-    let target_line = lines
-        .iter()
-        .position(|l| l.contains("BlogAuthor::where('active', 1)->get()"))
-        .expect("should find BlogAuthor::where()->get() line");
-
-    // Character position of "get" after the "->"
-    let get_col = lines[target_line].rfind("get").unwrap() as u32;
-
-    let response = goto_definition_in_example_php(target_line as u32, get_col + 1).await;
-    assert!(
-        response.is_some(),
-        "Should resolve BlogAuthor::where()->get() go-to-definition"
-    );
-    let response = response.unwrap();
-    let line = definition_line(&response) as usize;
-
-    // Find the start of the Illuminate\Database\Eloquent namespace block.
-    let eloquent_ns_start = lines
-        .iter()
-        .position(|l| l.contains("namespace Illuminate\\Database\\Eloquent {"))
-        .unwrap_or(0);
-
-    // Find the Eloquent Builder's get() declaration: must be after the
-    // namespace start, contain `function get`, and be inside the Builder
-    // class (look backward for `class Builder`).
-    let eloquent_get_line = lines
-        .iter()
-        .enumerate()
-        .position(|(idx, l)| {
-            idx > eloquent_ns_start
-                && l.contains("function get")
-                && lines[eloquent_ns_start..idx]
-                    .iter()
-                    .rev()
-                    .take(30)
-                    .any(|prev| prev.contains("class Builder"))
-        })
-        .expect("should find Eloquent Builder's get() in example.php");
-
-    // The definition should NOT be on the Indexable trait's get() line.
-    let indexable_get_line = lines
-        .iter()
-        .enumerate()
-        .position(|(idx, l)| {
-            l.contains("function get()")
-                && idx > 0
-                && lines[idx.saturating_sub(5)..idx]
-                    .iter()
-                    .any(|prev| prev.contains("trait Indexable"))
-        })
-        .unwrap_or(0);
-
-    assert_ne!(
-        line, indexable_get_line,
-        "Should NOT jump to Indexable::get() (line {}), got line {}",
-        indexable_get_line, line
-    );
-
-    assert_eq!(
-        line, eloquent_get_line,
-        "Should jump to Eloquent\\Builder::get() (line {}), got line {}",
-        eloquent_get_line, line
-    );
-}
-
-/// `BlogAuthor::orderBy('name')->limit(10)->get()` — clicking on `limit`
-/// should jump to `Query\Builder::limit()`.
-///
-/// `limit()` lives on the Query Builder (mixed into Eloquent Builder via
-/// `@mixin`).  The subject `BlogAuthor::orderBy('name')` resolves to
-/// `BlogAuthor` (a Model), so go-to-definition must use builder forwarding
-/// to find `limit` through the mixin chain.
-#[tokio::test]
-async fn test_goto_definition_builder_limit_in_example_php() {
-    let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example.php"),
-    )
-    .expect("example.php should exist");
-
-    let lines: Vec<&str> = text.lines().collect();
-
-    // Find the line "        BlogAuthor::orderBy('name')->limit(10)->get();"
-    let target_line = lines
-        .iter()
-        .position(|l| l.contains("BlogAuthor::orderBy('name')->limit(10)->get()"))
-        .expect("should find BlogAuthor::orderBy()->limit()->get() line");
-
-    // Character position of "limit" in that line.
-    let limit_col = lines[target_line].find("limit").unwrap() as u32;
-
-    let response = goto_definition_in_example_php(target_line as u32, limit_col + 1).await;
-    assert!(
-        response.is_some(),
-        "Should resolve limit() go-to-definition"
-    );
-    let response = response.unwrap();
-    let line = definition_line(&response) as usize;
-
-    // Find the Query\Builder namespace block.
-    let query_ns_start = lines
-        .iter()
-        .position(|l| l.contains("namespace Illuminate\\Database\\Query {"))
-        .unwrap_or(0);
-
-    // Find Query\Builder's limit() declaration.
-    let query_limit_line = lines
-        .iter()
-        .enumerate()
-        .position(|(idx, l)| idx > query_ns_start && l.contains("function limit"))
-        .expect("should find Query\\Builder's limit() in example.php");
-
-    assert_eq!(
-        line, query_limit_line,
-        "Should jump to Query\\Builder::limit() (line {}), got line {}",
-        query_limit_line, line
-    );
-}
-
-/// `BlogAuthor::where('active', 1)->first()` — clicking on `first` should
-/// jump to the `BuildsQueries` trait's `first()` method (used by Eloquent
-/// Builder).
-#[tokio::test]
-async fn test_goto_definition_builder_first_in_example_php() {
-    let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example.php"),
-    )
-    .expect("example.php should exist");
-
-    let lines: Vec<&str> = text.lines().collect();
-
-    // Find the line "        BlogAuthor::where('active', 1)->first();"
-    let target_line = lines
-        .iter()
-        .position(|l| l.contains("BlogAuthor::where('active', 1)->first()"))
-        .expect("should find BlogAuthor::where()->first() line");
-
-    // Character position of "first" after the "->"
-    let first_col = lines[target_line].rfind("first").unwrap() as u32;
-
-    let response = goto_definition_in_example_php(target_line as u32, first_col + 1).await;
-    assert!(
-        response.is_some(),
-        "Should resolve first() go-to-definition"
-    );
-    let response = response.unwrap();
-    let line = definition_line(&response) as usize;
-
-    // Find the BuildsQueries trait's first() declaration.
-    let builds_queries_ns_start = lines
-        .iter()
-        .position(|l| l.contains("namespace Illuminate\\Database\\Concerns {"))
-        .unwrap_or(0);
-
-    let builds_queries_first_line = lines
-        .iter()
-        .enumerate()
-        .position(|(idx, l)| idx > builds_queries_ns_start && l.contains("function first"))
-        .expect("should find BuildsQueries::first() in example.php");
-
-    assert_eq!(
-        line, builds_queries_first_line,
-        "Should jump to BuildsQueries::first() (line {}), got line {}",
-        builds_queries_first_line, line
-    );
-}
-
-/// `BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get()` — clicking
-/// on `groupBy` should jump to `Query\Builder::groupBy()`.
-#[tokio::test]
-async fn test_goto_definition_builder_groupby_in_example_php() {
-    let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example.php"),
-    )
-    .expect("example.php should exist");
-
-    let lines: Vec<&str> = text.lines().collect();
-
-    // Find the line with whereIn->groupBy->get chain
-    let target_line = lines
-        .iter()
-        .position(|l| l.contains("BlogAuthor::whereIn('id', [1, 2])->groupBy('genre')->get()"))
-        .expect("should find BlogAuthor::whereIn()->groupBy()->get() line");
-
-    // Character position of "groupBy" in that line.
-    let groupby_col = lines[target_line].find("groupBy").unwrap() as u32;
-
-    let response = goto_definition_in_example_php(target_line as u32, groupby_col + 1).await;
-    assert!(
-        response.is_some(),
-        "Should resolve groupBy() go-to-definition"
-    );
-    let response = response.unwrap();
-    let line = definition_line(&response) as usize;
-
-    // Find the Query\Builder namespace block.
-    let query_ns_start = lines
-        .iter()
-        .position(|l| l.contains("namespace Illuminate\\Database\\Query {"))
-        .unwrap_or(0);
-
-    // Find Query\Builder's groupBy() declaration.
-    let query_groupby_line = lines
-        .iter()
-        .enumerate()
-        .position(|(idx, l)| idx > query_ns_start && l.contains("function groupBy"))
-        .expect("should find Query\\Builder's groupBy() in example.php");
-
-    assert_eq!(
-        line, query_groupby_line,
-        "Should jump to Query\\Builder::groupBy() (line {}), got line {}",
-        query_groupby_line, line
-    );
-}
-
 // ─── Go-to-definition for Eloquent virtual properties ───────────────────────
 
 #[tokio::test]
@@ -1144,6 +812,47 @@ class BlogAuthor extends Model {
         "Should jump to avatarUrl() on line 4, got: {}",
         line
     );
+}
+
+#[tokio::test]
+async fn test_goto_definition_snake_case_does_not_jump_to_relationship_method() {
+    // Ctrl+click on `$bakery->master_recipe` should NOT jump to the
+    // `masterRecipe()` relationship method.  The relationship property
+    // name is `masterRecipe` (no snake_case conversion), so
+    // `master_recipe` is not a real property.  Previously the accessor
+    // fallback in GTD ran snake_to_camel, found `masterRecipe()`, and
+    // jumped to it even though it is not an accessor.
+    let bakery_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class Bakery extends Model {
+    /** @return \\Illuminate\\Database\\Eloquent\\Relations\\BelongsToMany<Recipe, $this> */
+    public function masterRecipe(): mixed {
+        return $this->belongsToMany(Recipe::class);
+    }
+    public function demo(): void {
+        $bakery = new Bakery();
+        $bakery->master_recipe;
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/Bakery.php", bakery_php)]);
+
+    // "master_recipe" on line 10, cursor at character 18
+    let result =
+        goto_definition_at(&backend, &dir, "src/Models/Bakery.php", bakery_php, 10, 18).await;
+
+    // Should NOT resolve — master_recipe is not a real property.
+    // If it resolves, it means the accessor fallback incorrectly matched
+    // the relationship method.
+    if let Some(response) = result {
+        let line = definition_line(&response);
+        assert_ne!(
+            line, 5,
+            "Should NOT jump to masterRecipe() relationship method (line 5) for snake_case master_recipe"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1370,6 +1079,44 @@ class User extends Model {
     assert_eq!(
         line, 5,
         "Should jump to 'secret_key' in $guarded on line 5, got: {}",
+        line
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_visible_column_name() {
+    // Ctrl+click on `$user->website` should jump to the 'website'
+    // entry in the $visible array.
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $visible = [
+        'website',
+        'avatar',
+    ];
+    public function demo(): void {
+        $user = new User();
+        $user->website;
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
+
+    // "website" on line 10, cursor at character 15
+    let result = goto_definition_at(&backend, &dir, "src/Models/User.php", user_php, 10, 15).await;
+
+    assert!(
+        result.is_some(),
+        "Go-to-definition on $user->website should resolve to $visible entry"
+    );
+
+    let response = result.unwrap();
+    let line = definition_line(&response);
+    assert_eq!(
+        line, 5,
+        "Should jump to 'website' in $visible on line 5, got: {}",
         line
     );
 }

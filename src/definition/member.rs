@@ -26,7 +26,7 @@ use crate::subject_extraction::{
 use crate::types::*;
 use crate::util::short_name;
 use crate::virtual_members::laravel::{
-    ELOQUENT_BUILDER_FQN, accessor_method_candidates, extends_eloquent_model,
+    ELOQUENT_BUILDER_FQN, accessor_method_candidates, extends_eloquent_model, is_accessor_method,
 };
 
 /// The kind of class member being resolved.
@@ -217,6 +217,9 @@ impl Backend {
                                                         &candidate,
                                                         &class_loader,
                                                     )
+                                                    .filter(|(cls, _)| {
+                                                        is_accessor_method(cls, &candidate)
+                                                    })
                                                     .map(|(cls, fqn)| (candidate, cls, fqn))
                                                 });
                                         match accessor_match {
@@ -276,7 +279,7 @@ impl Backend {
 
             // ── Eloquent array entry fallback ───────────────────────
             // Virtual properties from $casts, $attributes, $fillable,
-            // $guarded, and $hidden don't have a method or property
+            // $guarded, $hidden, and $visible don't have a method or property
             // declaration.  Jump to the string literal entry inside the
             // array property instead.
             if extends_eloquent_model(lookup_class, &class_loader)
@@ -353,6 +356,9 @@ impl Backend {
                                                     &candidate,
                                                     &class_loader,
                                                 )
+                                                .filter(|(cls, _)| {
+                                                    is_accessor_method(cls, &candidate)
+                                                })
                                                 .map(|(cls, fqn)| (candidate, cls, fqn))
                                             });
                                     match accessor_match {
@@ -726,9 +732,9 @@ impl Backend {
     /// Find a string literal entry inside an Eloquent array property.
     ///
     /// Searches for `'member_name'` or `"member_name"` inside `$casts`,
-    /// `$attributes`, `$fillable`, `$guarded`, and `$hidden` property
-    /// declarations within the given class range.  Returns the position
-    /// of the string literal so go-to-definition can jump to it.
+    /// `$attributes`, `$fillable`, `$guarded`, `$hidden`, and `$visible`
+    /// property declarations within the given class range.  Returns the
+    /// position of the string literal so go-to-definition can jump to it.
     fn find_eloquent_array_entry(
         content: &str,
         member_name: &str,
@@ -736,7 +742,14 @@ impl Backend {
     ) -> Option<Position> {
         let single_pattern = format!("'{member_name}'");
         let double_pattern = format!("\"{member_name}\"");
-        let targets = ["$casts", "$attributes", "$fillable", "$guarded", "$hidden"];
+        let targets = [
+            "$casts",
+            "$attributes",
+            "$fillable",
+            "$guarded",
+            "$hidden",
+            "$visible",
+        ];
 
         // Track whether we're inside one of the target property arrays.
         let mut in_target_property = false;
