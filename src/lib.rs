@@ -10,6 +10,8 @@
 //! - `server` — The LSP `LanguageServer` trait implementation (thin wrapper that delegates
 //!   to feature-specific modules)
 //! - `util` — Utility helpers (position conversion, class lookup, logging)
+//! - `hover` — Hover support (`textDocument/hover`). Resolves the symbol under the
+//!   cursor and returns type information, method signatures, and docblock descriptions
 //! - `definition` — Go-to-definition support for classes, members, and functions
 //! - `inheritance` — Base class inheritance resolution. Merges members from parent
 //!   classes and traits into a unified `ClassInfo`
@@ -43,6 +45,7 @@ pub mod completion;
 pub mod composer;
 mod definition;
 pub mod docblock;
+mod hover;
 pub(crate) mod inheritance;
 mod parser;
 mod resolution;

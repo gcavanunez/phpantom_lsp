@@ -20,17 +20,7 @@ Each item carries two ratings:
 
 ## Critical Impact
 
-### 1. Hover (`textDocument/hover`)
-**Impact: Critical · Effort: Low**
-
-No hover support at all. Users can't see inferred types, docblock descriptions,
-or method signatures by hovering. Most of the infrastructure already exists
-(type resolution, class loading, docblocks) — wiring it into a hover handler
-would be relatively straightforward and extremely high-impact.
-
----
-
-### 2. Signature Help (`textDocument/signatureHelp`)
+### 1. Signature Help (`textDocument/signatureHelp`)
 **Impact: Critical · Effort: Medium**
 
 No parameter hints shown while typing function/method arguments. Named arg
@@ -46,7 +36,7 @@ users rely on it constantly when calling unfamiliar APIs.
 
 ## High Impact
 
-### 3. `in_array` strict-mode type narrowing
+### 2. `in_array` strict-mode type narrowing
 **Impact: High · Effort: Low**
 
 When `in_array($needle, $haystack, true)` is used as a condition,
@@ -68,7 +58,7 @@ See `InArrayFunctionTypeSpecifyingExtension` in PHPStan.
 
 ---
 
-### 4. Pipe operator (PHP 8.5)
+### 3. Pipe operator (PHP 8.5)
 **Impact: High · Effort: Low**
 
 PHP 8.5 introduced the pipe operator (`|>`):
@@ -94,7 +84,7 @@ callable syntax (`htmlspecialchars(...)`), reuse the existing
 
 ---
 
-### 5. Function-level `@template` generic resolution
+### 4. Function-level `@template` generic resolution
 **Impact: High · Effort: Medium**
 
 `MethodInfo` has `template_params` and `template_bindings` fields that
@@ -195,7 +185,7 @@ manifestation of this gap.
 
 ---
 
-### 6. Parse and resolve `($param is T ? A : B)` return types
+### 5. Parse and resolve `($param is T ? A : B)` return types
 **Impact: High · Effort: Medium**
 
 PHPStan's stubs use conditional return type syntax in docblocks:
@@ -234,7 +224,7 @@ extend the existing `ConditionalReturnType` infrastructure.
 
 ---
 
-### 7. Warn when composer.json is missing or classmap is not optimized
+### 6. Warn when composer.json is missing or classmap is not optimized
 **Impact: High · Effort: Medium**
 
 PHPantom relies on Composer artifacts (`vendor/composer/autoload_classmap.php`,
@@ -309,7 +299,7 @@ For the non-optimized classmap case, offer action buttons:
 
 ---
 
-### 8. Find References (`textDocument/references`)
+### 7. Find References (`textDocument/references`)
 **Impact: High · Effort: Medium-High**
 
 Can't find all usages of a symbol. The precomputed `SymbolMap` (built
@@ -333,7 +323,7 @@ variable within its scope" without re-parsing.
 
 ## Medium-High Impact
 
-### 9. File system watching for vendor and project changes
+### 8. File system watching for vendor and project changes
 **Impact: Medium-High · Effort: Medium**
 
 PHPantom loads Composer artifacts (classmap, PSR-4 mappings, autoload
@@ -391,7 +381,7 @@ supports glob patterns like `**/vendor/composer/autoload_*.php`.
 
 ## Medium Impact
 
-### 10. No reverse jump: implementation → interface method declaration
+### 9. No reverse jump: implementation → interface method declaration
 **Impact: Medium · Effort: Low**
 
 Go-to-implementation lets you jump from an interface method to its concrete
@@ -408,7 +398,7 @@ target.
 
 ---
 
-### 11. `BackedEnum::from()` / `::tryFrom()` return type refinement
+### 10. `BackedEnum::from()` / `::tryFrom()` return type refinement
 **Impact: Medium · Effort: Low**
 
 When calling `MyEnum::from($value)` or `MyEnum::tryFrom($value)`,
@@ -425,14 +415,14 @@ See `BackedEnumFromMethodDynamicReturnTypeExtension` in PHPStan.
 
 ---
 
-### 12. Document Symbols (`textDocument/documentSymbol`)
+### 11. Document Symbols (`textDocument/documentSymbol`)
 **Impact: Medium · Effort: Low**
 
 No outline view. Editors can't show a file's class/method/property structure.
 
 ---
 
-### 13. Workspace Symbols (`workspace/symbol`)
+### 12. Workspace Symbols (`workspace/symbol`)
 **Impact: Medium · Effort: Low-Medium**
 
 Can't search for classes/functions across the project. The `ast_map`
@@ -444,7 +434,7 @@ LSP `Location`s.
 
 ---
 
-### 14. No go-to-definition for built-in (stub) functions and constants
+### 13. No go-to-definition for built-in (stub) functions and constants
 **Impact: Medium · Effort: Medium**
 
 Clicking on a built-in function name like `array_map`, `strlen`, or
@@ -466,7 +456,7 @@ limitation.
 
 ---
 
-### 15. Property hooks (PHP 8.4)
+### 14. Property hooks (PHP 8.4)
 **Impact: Medium · Effort: Medium**
 
 PHP 8.4 introduced property hooks (`get` / `set`):
@@ -501,7 +491,7 @@ scopes, and parse the set-visibility modifier into a new
 
 ---
 
-### 16. Narrow types of `&$var` parameters after function calls
+### 15. Narrow types of `&$var` parameters after function calls
 **Impact: Medium · Effort: Medium**
 
 When a function takes a parameter by reference, the variable's type
@@ -530,7 +520,7 @@ extension) or use a built-in map for known functions.
 
 ---
 
-### 17. SPL iterator generic stubs
+### 16. SPL iterator generic stubs
 **Impact: Medium · Effort: Medium**
 
 PHPStan's `iterable.stub` provides full `@template TKey` /
@@ -551,7 +541,7 @@ certainly missing these generic annotations.  We should either:
 
 ---
 
-### 18. Partial result streaming via `$/progress`
+### 17. Partial result streaming via `$/progress`
 **Impact: Medium · Effort: Medium-High**
 
 The LSP spec (3.17) allows requests that return arrays — such as
@@ -631,7 +621,7 @@ developer arrive before vendor matches, even within a single phase.
 
 ---
 
-### 19. Rename (`textDocument/rename`)
+### 18. Rename (`textDocument/rename`)
 **Impact: Medium · Effort: Medium-High**
 
 No rename refactoring support. Rename builds on find-references (§8) —
@@ -646,7 +636,7 @@ position without text scanning.
 
 ---
 
-### 20. Array functions needing new code paths
+### 19. Array functions needing new code paths
 **Impact: Medium · Effort: High**
 
 These functions have return type semantics that don't fit into either
@@ -685,7 +675,7 @@ These functions have return type semantics that don't fit into either
 
 ## Low-Medium Impact
 
-### 21. Asymmetric visibility (PHP 8.4)
+### 20. Asymmetric visibility (PHP 8.4)
 **Impact: Low-Medium · Effort: Low**
 
 Separate from property hooks, PHP 8.4 allows asymmetric visibility on
@@ -715,7 +705,7 @@ is just to store the value; context-aware filtering can follow later.
 
 ---
 
-### 22. `str_contains` / `str_starts_with` / `str_ends_with` → non-empty-string narrowing
+### 21. `str_contains` / `str_starts_with` / `str_ends_with` → non-empty-string narrowing
 **Impact: Low-Medium · Effort: Low**
 
 When `str_contains($haystack, $needle)` appears in a condition and
@@ -732,7 +722,7 @@ See `StrContainingTypeSpecifyingExtension` in PHPStan.
 
 ---
 
-### 23. `count` / `sizeof` comparison → non-empty-array narrowing
+### 22. `count` / `sizeof` comparison → non-empty-array narrowing
 **Impact: Low-Medium · Effort: Low**
 
 `if (count($arr) > 0)` or `if (count($arr) >= 1)` narrows `$arr` to
@@ -750,7 +740,7 @@ branches in `TypeSpecifier::specifyTypesInCondition`.
 
 ## Low Impact
 
-### 24. Short-name collisions in `find_implementors`
+### 23. Short-name collisions in `find_implementors`
 **Impact: Low · Effort: Low**
 
 `class_implements_or_extends` matches interfaces by both short name and
@@ -766,7 +756,7 @@ before comparison.
 
 ---
 
-### 25. Fiber type resolution
+### 24. Fiber type resolution
 **Impact: Low · Effort: Low**
 
 `Generator<TKey, TValue, TSend, TReturn>` has dedicated support for
@@ -781,7 +771,7 @@ Generator extraction in `docblock/types.rs`.
 
 ---
 
-### 26. Non-empty-string propagation through string functions
+### 25. Non-empty-string propagation through string functions
 **Impact: Low · Effort: Low**
 
 PHPStan tracks `non-empty-string` through string-manipulating
@@ -799,7 +789,7 @@ See `NonEmptyStringFunctionsReturnTypeExtension` in PHPStan.
 
 ---
 
-### 27. `Closure::bind()` / `Closure::fromCallable()` return type preservation
+### 26. `Closure::bind()` / `Closure::fromCallable()` return type preservation
 **Impact: Low · Effort: Low-Medium**
 
 PHPStan preserves the closure's type through `Closure::bind()` and
@@ -812,7 +802,7 @@ See `ClosureBindDynamicReturnTypeExtension` and
 
 ---
 
-### 28. Remove deprecated text-search fallbacks
+### 27. Remove deprecated text-search fallbacks
 **Impact: Low · Effort: Medium**
 
 The go-to-definition subsystem now uses the precomputed `SymbolMap` as
@@ -844,7 +834,7 @@ would let that deprecated function be removed entirely.
 
 ---
 
-### 29. Non-array functions with dynamic return types
+### 28. Non-array functions with dynamic return types
 **Impact: Low · Effort: High**
 
 PHPStan also provides dynamic return type extensions for many non-array
@@ -875,14 +865,14 @@ return types (less impactful for class-based completion).
 
 ---
 
-### 30. Diagnostics
+### 29. Diagnostics
 **Impact: Low (large scope) · Effort: Very High**
 
 No error reporting (undefined methods, type mismatches, etc.).
 
 ---
 
-### 31. Code Actions
+### 30. Code Actions
 **Impact: Low · Effort: Very High**
 
 No quick fixes or refactoring suggestions. No `codeActionProvider` in
@@ -890,7 +880,7 @@ No quick fixes or refactoring suggestions. No `codeActionProvider` in
 `WorkspaceEdit` generation infrastructure beyond trivial `TextEdit`s for
 use-statement insertion.
 
-#### 31a. Extract Function refactoring
+#### 30a. Extract Function refactoring
 
 Select a range of statements inside a method/function and extract them into a
 new function. The LSP would need to:
@@ -924,34 +914,33 @@ new function. The LSP would need to:
 
 | # | Item | Impact | Effort |
 |---|---|---|---|
-| 1 | Hover | **Critical** | Low |
-| 2 | Signature Help | **Critical** | Medium |
-| 3 | `in_array` strict-mode type narrowing | High | Low |
-| 4 | Pipe operator (PHP 8.5) | High | Low |
-| 5 | Function-level `@template` generic resolution | High | Medium |
-| 6 | Conditional return type syntax | High | Medium |
-| 7 | Composer environment warnings | High | Medium |
-| 8 | Find References | High | Medium-High |
-| 9 | File system watching | Medium-High | Medium |
-| 10 | Reverse jump: impl → interface | Medium | Low |
-| 11 | `BackedEnum::from()` refinement | Medium | Low |
-| 12 | Document Symbols | Medium | Low |
-| 13 | Workspace Symbols | Medium | Low-Medium |
-| 14 | Built-in stub go-to-definition | Medium | Medium |
-| 15 | Property hooks (PHP 8.4) | Medium | Medium |
-| 16 | Parameter out types (by-reference) | Medium | Medium |
-| 17 | SPL iterator generic stubs | Medium | Medium |
-| 18 | Partial result streaming | Medium | Medium-High |
-| 19 | Rename | Medium | Medium-High |
-| 20 | Array functions (new code paths) | Medium | High |
-| 21 | Asymmetric visibility (PHP 8.4) | Low-Medium | Low |
-| 22 | `str_contains` / `str_starts_with` narrowing | Low-Medium | Low |
-| 23 | `count` / `sizeof` → non-empty-array | Low-Medium | Low |
-| 24 | Short-name collisions | Low | Low |
-| 25 | Fiber type resolution | Low | Low |
-| 26 | Non-empty-string propagation | Low | Low |
-| 27 | `Closure::bind()` preservation | Low | Low-Medium |
-| 28 | Remove deprecated text-search fallbacks | Low | Medium |
-| 29 | Non-array dynamic return types | Low | High |
-| 30 | Diagnostics | Low | Very High |
-| 31 | Code Actions / Extract Function | Low | Very High |
+| 1 | Signature Help | **Critical** | Medium |
+| 2 | `in_array` strict-mode type narrowing | High | Low |
+| 3 | Pipe operator (PHP 8.5) | High | Low |
+| 4 | Function-level `@template` generic resolution | High | Medium |
+| 5 | Conditional return type syntax | High | Medium |
+| 6 | Composer environment warnings | High | Medium |
+| 7 | Find References | High | Medium-High |
+| 8 | File system watching | Medium-High | Medium |
+| 9 | Reverse jump: impl → interface | Medium | Low |
+| 10 | `BackedEnum::from()` refinement | Medium | Low |
+| 11 | Document Symbols | Medium | Low |
+| 12 | Workspace Symbols | Medium | Low-Medium |
+| 13 | Built-in stub go-to-definition | Medium | Medium |
+| 14 | Property hooks (PHP 8.4) | Medium | Medium |
+| 15 | Parameter out types (by-reference) | Medium | Medium |
+| 16 | SPL iterator generic stubs | Medium | Medium |
+| 17 | Partial result streaming | Medium | Medium-High |
+| 18 | Rename | Medium | Medium-High |
+| 19 | Array functions (new code paths) | Medium | High |
+| 20 | Asymmetric visibility (PHP 8.4) | Low-Medium | Low |
+| 21 | `str_contains` / `str_starts_with` narrowing | Low-Medium | Low |
+| 22 | `count` / `sizeof` → non-empty-array | Low-Medium | Low |
+| 23 | Short-name collisions | Low | Low |
+| 24 | Fiber type resolution | Low | Low |
+| 25 | Non-empty-string propagation | Low | Low |
+| 26 | `Closure::bind()` preservation | Low | Low-Medium |
+| 27 | Remove deprecated text-search fallbacks | Low | Medium |
+| 28 | Non-array dynamic return types | Low | High |
+| 29 | Diagnostics | Low | Very High |
+| 30 | Code Actions / Extract Function | Low | Very High |

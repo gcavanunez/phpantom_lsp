@@ -127,7 +127,7 @@ impl Backend {
     ///
     /// Returns all possible types when the variable is assigned different
     /// types in conditional branches.
-    pub(super) fn resolve_variable_types(
+    pub(crate) fn resolve_variable_types(
         var_name: &str,
         current_class: &ClassInfo,
         all_classes: &[ClassInfo],

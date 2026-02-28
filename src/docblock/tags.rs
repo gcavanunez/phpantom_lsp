@@ -504,9 +504,7 @@ pub fn find_iterable_raw_type_in_source(
             // (e.g. `$thing = …;` or `$thing;`).
             let next_trimmed = next_line.trim();
             if next_trimmed.starts_with(var_name)
-                && next_trimmed[var_name.len()..]
-                    .trim_start()
-                    .starts_with('=')
+                && next_trimmed[var_name.len()..].trim_start().starts_with('=')
             {
                 let inner = trimmed
                     .strip_prefix("/**")

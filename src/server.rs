@@ -54,6 +54,7 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
@@ -298,6 +299,42 @@ impl LanguageServer for Backend {
                 Err(_) => {
                     log::error!(
                         "PHPantom: panic during goto_implementation at {}:{}:{}",
+                        uri,
+                        position.line,
+                        position.character
+                    );
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .to_string();
+        let position = params.text_document_position_params.position;
+
+        let content = if let Ok(files) = self.open_files.lock() {
+            files.get(&uri).cloned()
+        } else {
+            None
+        };
+
+        if let Some(content) = content {
+            let uri_owned = uri.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.handle_hover(&uri_owned, &content, position)
+            }));
+
+            match result {
+                Ok(hover) => return Ok(hover),
+                Err(_) => {
+                    log::error!(
+                        "PHPantom: panic during hover at {}:{}:{}",
                         uri,
                         position.line,
                         position.character

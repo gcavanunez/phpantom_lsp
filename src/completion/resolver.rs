@@ -247,38 +247,36 @@ impl Backend {
         // because subjects like `[Customer::first()][]` contain `::`
         // and would otherwise be misinterpreted as a static member
         // access on `[Customer`.
-        if subject.starts_with('[') && subject.contains("][") {
-            if let Some(split_pos) = subject.find("][") {
-                let literal_text = &subject[..split_pos + 1];
-                if literal_text.starts_with('[') && literal_text.ends_with(']') {
-                    let inner = literal_text[1..literal_text.len() - 1].trim();
+        if subject.starts_with('[')
+            && subject.contains("][")
+            && let Some(split_pos) = subject.find("][")
+        {
+            let literal_text = &subject[..split_pos + 1];
+            if literal_text.starts_with('[') && literal_text.ends_with(']') {
+                let inner = literal_text[1..literal_text.len() - 1].trim();
 
-                    let mut element_classes = Vec::new();
-                    for element in split_text_args(inner) {
-                        let elem = element.trim();
-                        if elem.is_empty() {
-                            continue;
+                let mut element_classes = Vec::new();
+                for element in split_text_args(inner) {
+                    let elem = element.trim();
+                    if elem.is_empty() {
+                        continue;
+                    }
+                    if elem.ends_with(')') {
+                        if let Some((cb, ca)) = split_call_subject(elem) {
+                            let resolved = Self::resolve_call_return_types(cb, ca, ctx);
+                            ClassInfo::extend_unique(&mut element_classes, resolved);
                         }
-                        if elem.ends_with(')') {
-                            if let Some((cb, ca)) = split_call_subject(elem) {
-                                let resolved =
-                                    Self::resolve_call_return_types(cb, ca, ctx);
-                                ClassInfo::extend_unique(&mut element_classes, resolved);
-                            }
-                        } else if let Some(class_name) =
-                            Self::extract_new_expression_class(elem)
-                        {
-                            let resolved = find_class_by_name(all_classes, &class_name)
-                                .cloned()
-                                .or_else(|| class_loader(&class_name));
-                            if let Some(cls) = resolved {
-                                ClassInfo::extend_unique(&mut element_classes, vec![cls]);
-                            }
+                    } else if let Some(class_name) = Self::extract_new_expression_class(elem) {
+                        let resolved = find_class_by_name(all_classes, &class_name)
+                            .cloned()
+                            .or_else(|| class_loader(&class_name));
+                        if let Some(cls) = resolved {
+                            ClassInfo::extend_unique(&mut element_classes, vec![cls]);
                         }
                     }
-                    if !element_classes.is_empty() {
-                        return element_classes;
-                    }
+                }
+                if !element_classes.is_empty() {
+                    return element_classes;
                 }
             }
         }
@@ -615,19 +613,15 @@ impl Backend {
         if (is_array_element_func || is_array_preserving_func) && !text_args.is_empty() {
             // Extract the first argument text (respecting nested parens).
             if let Some(first_arg) = Self::extract_first_arg_text(text_args) {
-                let arg_raw_type =
-                    Self::resolve_inline_arg_raw_type(&first_arg, ctx);
+                let arg_raw_type = Self::resolve_inline_arg_raw_type(&first_arg, ctx);
 
                 if let Some(ref raw) = arg_raw_type {
                     // Element-extracting funcs → unwrap one level of generics.
                     // Preserving funcs used inline with `->` also need
                     // the element type (the caller already dereferenced
                     // the array via `func(...)->`).
-                    if let Some(element_type) =
-                        docblock::types::extract_generic_value_type(raw)
-                    {
-                        let owner_name =
-                            current_class.map(|c| c.name.as_str()).unwrap_or("");
+                    if let Some(element_type) = docblock::types::extract_generic_value_type(raw) {
+                        let owner_name = current_class.map(|c| c.name.as_str()).unwrap_or("");
                         let classes = Self::type_hint_to_classes(
                             &element_type,
                             owner_name,
@@ -1414,11 +1408,6 @@ impl Backend {
         None
     }
 
-    /// Resolve an imported type alias reference (`ClassName:OriginalName`).
-    ///
-    /// Loads the source class and looks up the original alias in its
-    /// `type_aliases` map.
-
     /// Extract the first argument from a comma-separated argument text,
     /// respecting nested parentheses, brackets, and braces.
     fn extract_first_arg_text(args_text: &str) -> Option<String> {
@@ -1457,17 +1446,16 @@ impl Backend {
     ///
     /// Returns the raw type string (e.g. `"array<int, Customer>"`) so
     /// that the caller can extract element types from it.
-    fn resolve_inline_arg_raw_type(
-        arg_text: &str,
-        ctx: &ResolutionCtx<'_>,
-    ) -> Option<String> {
+    fn resolve_inline_arg_raw_type(arg_text: &str, ctx: &ResolutionCtx<'_>) -> Option<String> {
         let current_class = ctx.current_class;
         let all_classes = ctx.all_classes;
         let class_loader = ctx.class_loader;
 
         // ── Plain variable: `$customers` ────────────────────────────────
         if arg_text.starts_with('$')
-            && arg_text[1..].chars().all(|c| c.is_alphanumeric() || c == '_')
+            && arg_text[1..]
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_')
         {
             // Try docblock annotation first (@var / @param).
             if let Some(raw) = docblock::find_iterable_raw_type_in_source(
@@ -1489,43 +1477,41 @@ impl Backend {
         }
 
         // ── Call expression ending with `)` ─────────────────────────────
-        if arg_text.ends_with(')') {
-            if let Some((call_body, _args)) = split_call_subject(arg_text) {
-                // Instance method chain: `expr->method()`
-                if let Some(pos) = call_body.rfind("->") {
-                    let lhs = &call_body[..pos];
-                    let method_name = &call_body[pos + 2..];
+        if arg_text.ends_with(')')
+            && let Some((call_body, _args)) = split_call_subject(arg_text)
+        {
+            // Instance method chain: `expr->method()`
+            if let Some(pos) = call_body.rfind("->") {
+                let lhs = &call_body[..pos];
+                let method_name = &call_body[pos + 2..];
 
-                    let lhs_classes =
-                        Self::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
-                    for cls in &lhs_classes {
-                        if let Some(rt) =
-                            Self::resolve_method_return_type(&cls, method_name, class_loader)
-                        {
-                            return Some(rt);
-                        }
+                let lhs_classes = Self::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
+                for cls in &lhs_classes {
+                    if let Some(rt) =
+                        Self::resolve_method_return_type(cls, method_name, class_loader)
+                    {
+                        return Some(rt);
                     }
                 }
+            }
 
-                // Static call: `ClassName::method()`
-                if let Some(pos) = call_body.rfind("::") {
-                    let class_part = &call_body[..pos];
-                    let method_name = &call_body[pos + 2..];
+            // Static call: `ClassName::method()`
+            if let Some(pos) = call_body.rfind("::") {
+                let class_part = &call_body[..pos];
+                let method_name = &call_body[pos + 2..];
 
-                    let owner = if class_part == "self" || class_part == "static" {
-                        current_class.cloned()
-                    } else {
-                        find_class_by_name(all_classes, class_part)
-                            .cloned()
-                            .or_else(|| class_loader(class_part))
-                    };
-                    if let Some(ref cls) = owner {
-                        if let Some(rt) =
-                            Self::resolve_method_return_type(cls, method_name, class_loader)
-                        {
-                            return Some(rt);
-                        }
-                    }
+                let owner = if class_part == "self" || class_part == "static" {
+                    current_class.cloned()
+                } else {
+                    find_class_by_name(all_classes, class_part)
+                        .cloned()
+                        .or_else(|| class_loader(class_part))
+                };
+                if let Some(ref cls) = owner
+                    && let Some(rt) =
+                        Self::resolve_method_return_type(cls, method_name, class_loader)
+                {
+                    return Some(rt);
                 }
             }
         }
@@ -1534,14 +1520,10 @@ impl Backend {
         if let Some(pos) = arg_text.rfind("->") {
             let lhs = &arg_text[..pos];
             let prop_name = &arg_text[pos + 2..];
-            if !prop_name.is_empty()
-                && prop_name.chars().all(|c| c.is_alphanumeric() || c == '_')
-            {
-                let lhs_classes =
-                    Self::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
+            if !prop_name.is_empty() && prop_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                let lhs_classes = Self::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
                 for cls in &lhs_classes {
-                    if let Some(rt) =
-                        Self::resolve_property_type_hint(&cls, prop_name, class_loader)
+                    if let Some(rt) = Self::resolve_property_type_hint(cls, prop_name, class_loader)
                     {
                         return Some(rt);
                     }

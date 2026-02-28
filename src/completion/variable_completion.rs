@@ -186,15 +186,11 @@ impl Backend {
 /// The returned set contains variable names including the `$` prefix
 /// (e.g. `"$user"`, `"$this"`).
 fn collect_variables_in_scope(content: &str, cursor_offset: u32) -> HashSet<String> {
-    with_parsed_program(
-        content,
-        "collect_variables_in_scope",
-        |program, content| {
-            let mut vars = HashSet::new();
-            find_scope_and_collect(content, program.statements.iter(), cursor_offset, &mut vars);
-            vars
-        },
-    )
+    with_parsed_program(content, "collect_variables_in_scope", |program, content| {
+        let mut vars = HashSet::new();
+        find_scope_and_collect(content, program.statements.iter(), cursor_offset, &mut vars);
+        vars
+    })
 }
 
 /// Walk top-level statements to find the scope enclosing the cursor,
@@ -230,7 +226,12 @@ fn find_scope_and_collect<'b>(
                 let start = enum_def.left_brace.start.offset;
                 let end = enum_def.right_brace.end.offset;
                 if cursor_offset >= start && cursor_offset <= end {
-                    collect_from_class_members(content, enum_def.members.iter(), cursor_offset, vars);
+                    collect_from_class_members(
+                        content,
+                        enum_def.members.iter(),
+                        cursor_offset,
+                        vars,
+                    );
                     return;
                 }
             }
@@ -238,7 +239,12 @@ fn find_scope_and_collect<'b>(
                 let start = trait_def.left_brace.start.offset;
                 let end = trait_def.right_brace.end.offset;
                 if cursor_offset >= start && cursor_offset <= end {
-                    collect_from_class_members(content, trait_def.members.iter(), cursor_offset, vars);
+                    collect_from_class_members(
+                        content,
+                        trait_def.members.iter(),
+                        cursor_offset,
+                        vars,
+                    );
                     return;
                 }
             }
@@ -249,7 +255,12 @@ fn find_scope_and_collect<'b>(
                     // Collect parameters
                     collect_from_params(&func.parameter_list, vars);
                     // Collect from body statements
-                    collect_from_statements(content, func.body.statements.iter(), cursor_offset, vars);
+                    collect_from_statements(
+                        content,
+                        func.body.statements.iter(),
+                        cursor_offset,
+                        vars,
+                    );
                     return;
                 }
             }
@@ -374,7 +385,12 @@ fn collect_from_statements<'b>(
                     collect_vars_from_expression(content, if_stmt.condition, cursor_offset, vars);
                     collect_from_statement(content, body.statement, cursor_offset, vars);
                     for else_if in body.else_if_clauses.iter() {
-                        collect_vars_from_expression(content, else_if.condition, cursor_offset, vars);
+                        collect_vars_from_expression(
+                            content,
+                            else_if.condition,
+                            cursor_offset,
+                            vars,
+                        );
                         collect_from_statement(content, else_if.statement, cursor_offset, vars);
                     }
                     if let Some(else_clause) = &body.else_clause {
@@ -385,11 +401,26 @@ fn collect_from_statements<'b>(
                     collect_vars_from_expression(content, if_stmt.condition, cursor_offset, vars);
                     collect_from_statements(content, body.statements.iter(), cursor_offset, vars);
                     for else_if in body.else_if_clauses.iter() {
-                        collect_vars_from_expression(content, else_if.condition, cursor_offset, vars);
-                        collect_from_statements(content, else_if.statements.iter(), cursor_offset, vars);
+                        collect_vars_from_expression(
+                            content,
+                            else_if.condition,
+                            cursor_offset,
+                            vars,
+                        );
+                        collect_from_statements(
+                            content,
+                            else_if.statements.iter(),
+                            cursor_offset,
+                            vars,
+                        );
                     }
                     if let Some(else_clause) = &body.else_clause {
-                        collect_from_statements(content, else_clause.statements.iter(), cursor_offset, vars);
+                        collect_from_statements(
+                            content,
+                            else_clause.statements.iter(),
+                            cursor_offset,
+                            vars,
+                        );
                     }
                 }
             },
@@ -420,7 +451,12 @@ fn collect_from_statements<'b>(
                         collect_from_statement(content, inner, cursor_offset, vars);
                     }
                     ForBody::ColonDelimited(body) => {
-                        collect_from_statements(content, body.statements.iter(), cursor_offset, vars);
+                        collect_from_statements(
+                            content,
+                            body.statements.iter(),
+                            cursor_offset,
+                            vars,
+                        );
                     }
                 }
             }
@@ -436,7 +472,12 @@ fn collect_from_statements<'b>(
                 collect_from_statement(content, dw.statement, cursor_offset, vars);
             }
             Statement::Try(try_stmt) => {
-                collect_from_statements(content, try_stmt.block.statements.iter(), cursor_offset, vars);
+                collect_from_statements(
+                    content,
+                    try_stmt.block.statements.iter(),
+                    cursor_offset,
+                    vars,
+                );
                 for catch in try_stmt.catch_clauses.iter() {
                     // Only collect the catch variable if its clause starts
                     // before the cursor (i.e. the cursor is inside or after
@@ -448,7 +489,12 @@ fn collect_from_statements<'b>(
                     if let Some(ref var) = catch.variable {
                         vars.insert(var.name.to_string());
                     }
-                    collect_from_statements(content, catch.block.statements.iter(), cursor_offset, vars);
+                    collect_from_statements(
+                        content,
+                        catch.block.statements.iter(),
+                        cursor_offset,
+                        vars,
+                    );
                 }
                 if let Some(finally) = &try_stmt.finally_clause {
                     let finally_span = finally.span();
@@ -491,12 +537,22 @@ fn collect_from_statements<'b>(
                 match &switch.body {
                     SwitchBody::BraceDelimited(body) => {
                         for case in body.cases.iter() {
-                            collect_from_statements(content, case.statements().iter(), cursor_offset, vars);
+                            collect_from_statements(
+                                content,
+                                case.statements().iter(),
+                                cursor_offset,
+                                vars,
+                            );
                         }
                     }
                     SwitchBody::ColonDelimited(body) => {
                         for case in body.cases.iter() {
-                            collect_from_statements(content, case.statements().iter(), cursor_offset, vars);
+                            collect_from_statements(
+                                content,
+                                case.statements().iter(),
+                                cursor_offset,
+                                vars,
+                            );
                         }
                     }
                 }
@@ -564,7 +620,12 @@ fn collect_vars_from_expression<'b>(
                         vars.insert(use_var.variable.name.to_string());
                     }
                 }
-                collect_from_statements(content, closure.body.statements.iter(), cursor_offset, vars);
+                collect_from_statements(
+                    content,
+                    closure.body.statements.iter(),
+                    cursor_offset,
+                    vars,
+                );
             }
             // If cursor is outside this closure, don't collect its internals.
         }

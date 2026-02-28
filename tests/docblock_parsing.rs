@@ -1896,8 +1896,8 @@ fn enclosing_return_type_deeply_nested_control_flow() {
     // function brace.  Here we verify both behaviors:
 
     // Passing the method body's `{` offset + 1 should work.
-    let func_brace = content.find("schedule(): \\Generator {").unwrap()
-        + "schedule(): \\Generator {".len();
+    let func_brace =
+        content.find("schedule(): \\Generator {").unwrap() + "schedule(): \\Generator {".len();
     assert_eq!(
         find_enclosing_return_type(content, func_brace),
         Some("\\Generator<int, string, Task, void>".to_string()),

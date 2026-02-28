@@ -114,7 +114,12 @@ $cls::findByEmail('a@b.c');  // static method from User
 $cls::TYPE_ADMIN;            // class constant
 $cls::$defaultRole;          // static property
 
-$ref = self::class;          // also works with self::class / static::class
+class ClassTest {
+    function test()
+    {
+        return self::class;          // also works with self::class / static::class
+    }
+}
 
 
 // ── Static & Enum Completion ────────────────────────────────────────────────

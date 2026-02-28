@@ -287,8 +287,7 @@ pub(crate) fn extract_arrow_subject(chars: &[char], arrow_pos: usize) -> String 
 
                 // The remaining segments (all but the last) are the
                 // index accesses, in innermost-first order → reverse.
-                let mut index_segs: Vec<String> =
-                    segments[..segments.len() - 1].to_vec();
+                let mut index_segs: Vec<String> = segments[..segments.len() - 1].to_vec();
                 index_segs.reverse();
                 return format!("{}{}", literal, index_segs.join(""));
             }
