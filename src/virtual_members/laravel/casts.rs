@@ -1,0 +1,183 @@
+//! Eloquent cast type resolution.
+//!
+//! This module maps Eloquent `$casts` type strings (e.g. `datetime`,
+//! `boolean`, `App\Casts\MoneyCast`) to their corresponding PHP types
+//! for virtual property synthesis.  It handles built-in cast strings,
+//! `decimal:N` and `datetime:format` variants, custom cast classes
+//! (via `get()` return type inspection), enum casts, `Castable`
+//! implementations, and `@implements CastsAttributes<TGet, TSet>`
+//! fallback resolution.
+
+use crate::types::{ClassInfo, ClassLikeKind};
+use crate::util::short_name;
+
+/// The short name of the `CastsAttributes` interface, used to look up
+/// `@implements` generic arguments on custom cast classes.
+const CASTS_ATTRIBUTES_SHORT: &str = "CastsAttributes";
+
+/// The fully-qualified name of the `CastsAttributes` interface.
+const CASTS_ATTRIBUTES_FQN: &str = "Illuminate\\Contracts\\Database\\Eloquent\\CastsAttributes";
+
+/// Maps Eloquent cast type strings to their corresponding PHP types.
+///
+/// When a model declares `protected $casts = ['col' => 'datetime']`, the
+/// column is treated as `\Carbon\Carbon` in completions.  This table
+/// covers all built-in Laravel cast types.
+const CAST_TYPE_MAP: &[(&str, &str)] = &[
+    ("datetime", "\\Carbon\\Carbon"),
+    ("date", "\\Carbon\\Carbon"),
+    ("timestamp", "int"),
+    ("immutable_datetime", "\\Carbon\\CarbonImmutable"),
+    ("immutable_date", "\\Carbon\\CarbonImmutable"),
+    ("boolean", "bool"),
+    ("bool", "bool"),
+    ("integer", "int"),
+    ("int", "int"),
+    ("float", "float"),
+    ("double", "float"),
+    ("real", "float"),
+    ("string", "string"),
+    ("array", "array"),
+    ("json", "array"),
+    ("object", "object"),
+    ("collection", "\\Illuminate\\Support\\Collection"),
+    ("encrypted", "string"),
+    ("encrypted:array", "array"),
+    ("encrypted:collection", "\\Illuminate\\Support\\Collection"),
+    ("encrypted:object", "object"),
+    ("hashed", "string"),
+];
+
+/// The fully-qualified name of the `Castable` contract.
+const CASTABLE_FQN: &str = "Illuminate\\Contracts\\Database\\Eloquent\\Castable";
+
+/// Map an Eloquent cast type string to a PHP type.
+///
+/// Handles built-in cast strings (`datetime`, `boolean`, `array`, etc.),
+/// `decimal:N` variants (e.g. `decimal:2` → `float`), custom cast
+/// classes (inspects the `get()` return type), enum classes (the
+/// property type is the enum itself), and `Castable` implementations
+/// (the property type is the class itself).
+///
+/// When a custom cast class's `get()` method has no return type (native
+/// or docblock), the resolver falls back to the first generic argument
+/// from an `@implements CastsAttributes<TGet, TSet>` annotation on the
+/// cast class.
+///
+/// Class-based cast types may carry a `:argument` suffix (e.g.
+/// `Address::class.':nullable'`).  The suffix is stripped before
+/// resolving the class.
+pub(super) fn cast_type_to_php_type(
+    cast_type: &str,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> String {
+    // 1. Check the built-in mapping table.
+    let lower = cast_type.to_lowercase();
+    for &(key, php_type) in CAST_TYPE_MAP {
+        if lower == key {
+            return php_type.to_string();
+        }
+    }
+
+    // 2. Handle `decimal:N` variants (e.g. `decimal:2`, `decimal:8`).
+    if lower.starts_with("decimal:") || lower == "decimal" {
+        return "float".to_string();
+    }
+
+    // 3. Handle `datetime:format` variants (e.g. `datetime:Y-m-d`).
+    if lower.starts_with("datetime:") {
+        return "\\Carbon\\Carbon".to_string();
+    }
+
+    // 4. Handle `date:format` variants.
+    if lower.starts_with("date:") {
+        return "\\Carbon\\Carbon".to_string();
+    }
+
+    // 5. Handle `immutable_datetime:format` variants.
+    if lower.starts_with("immutable_datetime:") {
+        return "\\Carbon\\CarbonImmutable".to_string();
+    }
+
+    // 6. Handle `immutable_date:format` variants.
+    if lower.starts_with("immutable_date:") {
+        return "\\Carbon\\CarbonImmutable".to_string();
+    }
+
+    // 7. Assume it's a class-based cast.  Strip any `:argument` suffix
+    //    (e.g. `App\Casts\Address:nullable` → `App\Casts\Address`).
+    let class_name = cast_type.split(':').next().unwrap_or(cast_type);
+    let clean = class_name.strip_prefix('\\').unwrap_or(class_name);
+
+    if let Some(cast_class) = class_loader(clean) {
+        // 7a. Enums — the property type is the enum itself.
+        if cast_class.kind == ClassLikeKind::Enum {
+            return format!("\\{clean}");
+        }
+
+        // 7b. Castable implementations — the property type is the
+        //     class itself.  Castable classes declare `castUsing()`
+        //     which returns a CastsAttributes instance, but the
+        //     developer-facing type is the Castable class.
+        if is_castable(&cast_class) {
+            return format!("\\{clean}");
+        }
+
+        // 7c. CastsAttributes / custom cast class — inspect `get()`.
+        if let Some(get_method) = cast_class.methods.iter().find(|m| m.name == "get")
+            && let Some(ref rt) = get_method.return_type
+        {
+            return rt.clone();
+        }
+
+        // 7d. Fallback: extract TGet from `@implements CastsAttributes<TGet, TSet>`.
+        //     When the `get()` method has no return type (native or docblock),
+        //     the type may be declared via the class-level `@implements`
+        //     annotation on the `CastsAttributes` interface.  The first
+        //     generic argument corresponds to `TGet`.
+        if let Some(tget) = extract_tget_from_implements_generics(&cast_class) {
+            return tget;
+        }
+    }
+
+    // 8. Fallback: unknown cast type.
+    "mixed".to_string()
+}
+
+/// Extract the `TGet` type from a cast class's `@implements CastsAttributes<TGet, TSet>`.
+///
+/// Returns the first generic argument if the class declares an
+/// `@implements` annotation for `CastsAttributes` (matched by short
+/// name or FQN, with or without leading backslash).
+fn extract_tget_from_implements_generics(class: &ClassInfo) -> Option<String> {
+    for (name, args) in &class.implements_generics {
+        let stripped = name.strip_prefix('\\').unwrap_or(name);
+        if (stripped == CASTS_ATTRIBUTES_FQN
+            || stripped == CASTS_ATTRIBUTES_SHORT
+            || short_name(stripped) == CASTS_ATTRIBUTES_SHORT)
+            && let Some(tget) = args.first()
+            && !tget.is_empty()
+        {
+            return Some(tget.clone());
+        }
+    }
+    None
+}
+
+/// Check whether a class implements the `Castable` contract.
+///
+/// Looks for `Illuminate\Contracts\Database\Eloquent\Castable` in the
+/// class's `interfaces` list (with or without leading backslash, and
+/// also matches the short name `Castable`).
+fn is_castable(class: &ClassInfo) -> bool {
+    class.interfaces.iter().any(|iface| {
+        let stripped = iface.strip_prefix('\\').unwrap_or(iface);
+        stripped == CASTABLE_FQN || stripped == "Castable"
+    })
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "casts_tests.rs"]
+mod tests;

@@ -1,8 +1,8 @@
 /// Utility functions for the PHPantom server.
 ///
 /// This module contains helper methods for position/offset conversion,
-/// class lookup by offset, logging, and shared text-processing helpers
-/// used by multiple modules.
+/// class lookup by offset, logging, panic catching, and shared
+/// text-processing helpers used by multiple modules.
 ///
 /// Cross-file class/function resolution and name-resolution logic live
 /// in the dedicated [`crate::resolution`] module.
@@ -10,7 +10,68 @@
 /// Subject-extraction helpers (walking backwards through characters to
 /// find variables, call expressions, balanced parentheses, `new`
 /// expressions, etc.) live in [`crate::subject_extraction`].
+use std::panic::{self, AssertUnwindSafe, UnwindSafe};
+
 use tower_lsp::lsp_types::*;
+
+/// Run `f` inside [`panic::catch_unwind`], logging and swallowing any
+/// panic.
+///
+/// Returns `Some(value)` on success and `None` on panic.  The error
+/// message includes `label` (the operation name, e.g. `"hover"` or
+/// `"goto_definition"`), `uri`, and the optional cursor `position`.
+///
+/// This centralises the boilerplate that every LSP handler uses to
+/// guard against stack overflows and unexpected panics in the
+/// resolution pipeline.
+///
+/// # Examples
+///
+/// ```ignore
+/// let result = catch_panic("hover", uri, Some(position), || {
+///     self.handle_hover(uri, content, position)
+/// });
+/// ```
+pub(crate) fn catch_panic<T>(
+    label: &str,
+    uri: &str,
+    position: Option<Position>,
+    f: impl FnOnce() -> T + UnwindSafe,
+) -> Option<T> {
+    match panic::catch_unwind(f) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            if let Some(pos) = position {
+                log::error!(
+                    "PHPantom: panic during {} at {}:{}:{}",
+                    label,
+                    uri,
+                    pos.line,
+                    pos.character
+                );
+            } else {
+                log::error!("PHPantom: panic during {} at {}", label, uri);
+            }
+            None
+        }
+    }
+}
+
+/// Convenience wrapper around [`catch_panic`] for closures that
+/// capture `&self` or other non-[`UnwindSafe`] references.
+///
+/// Wraps `f` in [`AssertUnwindSafe`] before forwarding to
+/// [`catch_panic`].  This is safe in our context because a panic
+/// during LSP handling never leaves shared state in an inconsistent
+/// state (the worst case is a stale cache entry).
+pub(crate) fn catch_panic_unwind_safe<T>(
+    label: &str,
+    uri: &str,
+    position: Option<Position>,
+    f: impl FnOnce() -> T,
+) -> Option<T> {
+    catch_panic(label, uri, position, AssertUnwindSafe(f))
+}
 
 /// Convert a byte offset in `content` to an LSP `Position` (line, character).
 ///

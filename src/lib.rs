@@ -54,11 +54,15 @@ mod resolution;
 mod server;
 mod signature_help;
 pub mod stubs;
+pub mod subject_expr;
 pub(crate) mod subject_extraction;
 pub(crate) mod symbol_map;
 pub mod types;
 mod util;
 pub(crate) mod virtual_members;
+
+#[cfg(test)]
+pub mod test_fixtures;
 
 // ─── Re-exports ─────────────────────────────────────────────────────────────
 

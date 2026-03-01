@@ -235,35 +235,18 @@ impl LanguageServer for Backend {
             .to_string();
         let position = params.text_document_position_params.position;
 
-        let content = if let Ok(files) = self.open_files.lock() {
-            files.get(&uri).cloned()
-        } else {
-            None
-        };
+        let content = self.get_file_content(&uri);
 
         if let Some(content) = content {
-            // Wrap in catch_unwind so that a stack overflow (e.g. from
-            // deep trait/inheritance resolution when the subject is a
-            // call expression like `collect($x)->map(`) doesn't crash
-            // the LSP server process.
-            let uri_owned = uri.clone();
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.resolve_definition(&uri_owned, &content, position)
-            }));
+            let result = crate::util::catch_panic_unwind_safe(
+                "goto_definition",
+                &uri,
+                Some(position),
+                || self.resolve_definition(&uri, &content, position),
+            );
 
-            match result {
-                Ok(Some(location)) => {
-                    return Ok(Some(GotoDefinitionResponse::Scalar(location)));
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    log::error!(
-                        "PHPantom: panic during goto_definition at {}:{}:{}",
-                        uri,
-                        position.line,
-                        position.character
-                    );
-                }
+            if let Some(Some(location)) = result {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
         }
 
@@ -281,35 +264,24 @@ impl LanguageServer for Backend {
             .to_string();
         let position = params.text_document_position_params.position;
 
-        let content = if let Ok(files) = self.open_files.lock() {
-            files.get(&uri).cloned()
-        } else {
-            None
-        };
+        let content = self.get_file_content(&uri);
 
         if let Some(content) = content {
-            let uri_owned = uri.clone();
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.resolve_implementation(&uri_owned, &content, position)
-            }));
+            let result = crate::util::catch_panic_unwind_safe(
+                "goto_implementation",
+                &uri,
+                Some(position),
+                || self.resolve_implementation(&uri, &content, position),
+            );
 
-            match result {
-                Ok(Some(locations)) if locations.len() == 1 => {
+            if let Some(Some(locations)) = result {
+                if locations.len() == 1 {
                     return Ok(Some(GotoImplementationResponse::Scalar(
                         locations.into_iter().next().unwrap(),
                     )));
                 }
-                Ok(Some(locations)) if !locations.is_empty() => {
+                if !locations.is_empty() {
                     return Ok(Some(GotoImplementationResponse::Array(locations)));
-                }
-                Ok(_) => {}
-                Err(_) => {
-                    log::error!(
-                        "PHPantom: panic during goto_implementation at {}:{}:{}",
-                        uri,
-                        position.line,
-                        position.character
-                    );
                 }
             }
         }
@@ -325,29 +297,15 @@ impl LanguageServer for Backend {
             .to_string();
         let position = params.text_document_position_params.position;
 
-        let content = if let Ok(files) = self.open_files.lock() {
-            files.get(&uri).cloned()
-        } else {
-            None
-        };
+        let content = self.get_file_content(&uri);
 
-        if let Some(content) = content {
-            let uri_owned = uri.clone();
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.handle_hover(&uri_owned, &content, position)
-            }));
-
-            match result {
-                Ok(hover) => return Ok(hover),
-                Err(_) => {
-                    log::error!(
-                        "PHPantom: panic during hover at {}:{}:{}",
-                        uri,
-                        position.line,
-                        position.character
-                    );
-                }
-            }
+        if let Some(content) = content
+            && let Some(hover) =
+                crate::util::catch_panic_unwind_safe("hover", &uri, Some(position), || {
+                    self.handle_hover(&uri, &content, position)
+                })
+        {
+            return Ok(hover);
         }
 
         Ok(None)
@@ -365,29 +323,15 @@ impl LanguageServer for Backend {
             .to_string();
         let position = params.text_document_position_params.position;
 
-        let content = if let Ok(files) = self.open_files.lock() {
-            files.get(&uri).cloned()
-        } else {
-            None
-        };
+        let content = self.get_file_content(&uri);
 
-        if let Some(content) = content {
-            let uri_owned = uri.clone();
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.handle_signature_help(&uri_owned, &content, position)
-            }));
-
-            match result {
-                Ok(sig_help) => return Ok(sig_help),
-                Err(_) => {
-                    log::error!(
-                        "PHPantom: panic during signature_help at {}:{}:{}",
-                        uri,
-                        position.line,
-                        position.character
-                    );
-                }
-            }
+        if let Some(content) = content
+            && let Some(sig_help) =
+                crate::util::catch_panic_unwind_safe("signature_help", &uri, Some(position), || {
+                    self.handle_signature_help(&uri, &content, position)
+                })
+        {
+            return Ok(sig_help);
         }
 
         Ok(None)

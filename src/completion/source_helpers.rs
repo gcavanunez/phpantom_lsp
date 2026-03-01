@@ -22,45 +22,11 @@
 /// Migrated from `text_resolution.rs` as part of the §3 refactoring to
 /// retire the bulk text scanner while preserving these unique helpers.
 use crate::Backend;
-use crate::docblock;
+use crate::docblock::{self, replace_self_in_type};
 use crate::types::{BracketSegment, ClassInfo};
 use crate::util::{find_semicolon_balanced, short_name};
 
 use super::resolver::FunctionLoaderFn;
-
-/// Replace `self`, `static`, and `$this` tokens in a type string with
-/// the concrete class name.
-///
-/// This is needed when a method's return type is extracted in a context
-/// where the owning class is known but the caller will resolve the type
-/// string without that class context (e.g. first-class callable return
-/// types passed through with `owning_class_name = ""`).
-fn replace_self_references(type_str: &str, class_name: &str) -> String {
-    // Fast path: no substitution needed.
-    if !type_str.contains("self") && !type_str.contains("static") && !type_str.contains("$this") {
-        return type_str.to_string();
-    }
-
-    // Split on `|` (union) boundaries, replace each token that is
-    // exactly `self`, `static`, or `$this` (with optional leading `?`).
-    type_str
-        .split('|')
-        .map(|part| {
-            let trimmed = part.trim();
-            let (prefix, base) = if let Some(rest) = trimmed.strip_prefix('?') {
-                ("?", rest)
-            } else {
-                ("", trimmed)
-            };
-            if base == "self" || base == "static" || base == "$this" {
-                format!("{}{}", prefix, class_name)
-            } else {
-                trimmed.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("|")
-}
 
 // ─── impl Backend — source-text helpers ─────────────────────────────────────
 
@@ -290,7 +256,7 @@ impl Backend {
 
             if let Some(cls) = owner {
                 return Self::resolve_method_return_type(&cls, method_name, class_loader)
-                    .map(|ret| replace_self_references(&ret, &cls.name));
+                    .map(|ret| replace_self_in_type(&ret, &cls.name));
             }
             return None;
         }
@@ -317,7 +283,7 @@ impl Backend {
 
             if let Some(cls) = owner {
                 return Self::resolve_method_return_type(&cls, method_name, class_loader)
-                    .map(|ret| replace_self_references(&ret, &cls.name));
+                    .map(|ret| replace_self_in_type(&ret, &cls.name));
             }
             return None;
         }

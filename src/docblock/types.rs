@@ -11,6 +11,54 @@ pub(crate) const SCALAR_TYPES: &[&str] = &[
     "false", "true", "array", "callable", "iterable", "resource",
 ];
 
+/// All built-in type keywords offered in PHPDoc type completion contexts.
+///
+/// This is a superset of [`SCALAR_TYPES`] that also includes PHPDoc-only
+/// pseudo-types (`mixed`, `class-string`, `non-empty-string`, etc.) and
+/// the special `self` / `static` keywords.  Kept here as a single source
+/// of truth so the list is maintained in one place rather than duplicated
+/// in the completion handler.
+pub(crate) const PHPDOC_TYPE_KEYWORDS: &[&str] = &[
+    // ── SCALAR_TYPES entries ────────────────────────────────────────
+    "int",
+    "integer",
+    "float",
+    "double",
+    "string",
+    "bool",
+    "boolean",
+    "void",
+    "never",
+    "null",
+    "false",
+    "true",
+    "array",
+    "callable",
+    "iterable",
+    "resource",
+    // ── Additional PHP built-in types ───────────────────────────────
+    "object",
+    "mixed",
+    "self",
+    "static",
+    // ── PHPStan / PHPDoc extended types ─────────────────────────────
+    "scalar",
+    "numeric",
+    "class-string",
+    "list",
+    "non-empty-list",
+    "non-empty-array",
+    "non-empty-string",
+    "positive-int",
+    "negative-int",
+    "non-negative-int",
+    "non-positive-int",
+    "numeric-string",
+    "array-key",
+    "key-of",
+    "value-of",
+];
+
 /// Split off the first type token from `s`, respecting `<…>` and `{…}`
 /// nesting (the latter is needed for PHPStan array shape syntax like
 /// `array{name: string, age: int}`).
@@ -368,7 +416,7 @@ pub(crate) fn parse_generic_args(type_str: &str) -> (&str, Vec<&str>) {
 
 /// Find the position of the matching `>` for an opening `<` that has
 /// already been consumed.  `s` starts right after the `<`.
-fn find_matching_close(s: &str) -> usize {
+pub(crate) fn find_matching_close(s: &str) -> usize {
     let mut depth = 1i32;
     for (i, ch) in s.char_indices() {
         match ch {
@@ -1271,3 +1319,82 @@ pub fn extract_generator_value_type_raw(raw_type: &str) -> Option<String> {
     let value_part = args.get(1).or(args.last()).copied()?;
     Some(clean_type(value_part.trim()))
 }
+
+/// Replace `self`, `static`, and `$this` tokens in a type string with
+/// a concrete class name, using word-boundary detection.
+///
+/// This handles all type string shapes: simple types (`self`), union
+/// types (`self|null`), nullable types (`?static`), and generic types
+/// (`Collection<$this>`).
+pub fn replace_self_in_type(type_str: &str, class_name: &str) -> String {
+    // Fast path: no substitution needed.
+    if !type_str.contains("self") && !type_str.contains("static") && !type_str.contains("$this") {
+        return type_str.to_string();
+    }
+
+    let bytes = type_str.as_bytes();
+    let len = bytes.len();
+    let mut out = String::with_capacity(len);
+    let mut i = 0;
+
+    while i < len {
+        // Try to match each keyword at the current position.
+        if let Some(replaced) = try_replace_keyword(bytes, i, len, b"$this") {
+            out.push_str(class_name);
+            i = replaced;
+            continue;
+        }
+        if let Some(replaced) = try_replace_keyword(bytes, i, len, b"static") {
+            out.push_str(class_name);
+            i = replaced;
+            continue;
+        }
+        if let Some(replaced) = try_replace_keyword(bytes, i, len, b"self") {
+            out.push_str(class_name);
+            i = replaced;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+
+    out
+}
+
+/// Check whether `keyword` appears at position `i` in `bytes` with valid
+/// word boundaries on both sides.  Returns `Some(end_pos)` if the keyword
+/// matches, where `end_pos` is the byte offset just past the keyword.
+fn try_replace_keyword(bytes: &[u8], i: usize, len: usize, keyword: &[u8]) -> Option<usize> {
+    let kw_len = keyword.len();
+    if i + kw_len > len {
+        return None;
+    }
+    if &bytes[i..i + kw_len] != keyword {
+        return None;
+    }
+    // `$this` starts with `$`, which is never part of a preceding
+    // identifier, so we only need a before-boundary check for `self`
+    // and `static`.
+    if keyword != b"$this" {
+        let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
+        if !before_ok {
+            return None;
+        }
+    }
+    let after = i + kw_len;
+    let after_ok = after >= len || !is_ident_char(bytes[after]);
+    if !after_ok {
+        return None;
+    }
+    Some(after)
+}
+
+/// Returns `true` if `b` is an ASCII alphanumeric character or `_`,
+/// i.e. a character that can appear in a PHP identifier.
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+#[cfg(test)]
+#[path = "types_tests.rs"]
+mod tests;

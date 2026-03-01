@@ -8,8 +8,6 @@
 //! go-to-definition, and the same type-resolution pipeline that
 //! powers completion.
 
-use std::panic;
-
 use tower_lsp::lsp_types::*;
 
 use crate::Backend;
@@ -27,44 +25,25 @@ impl Backend {
         let offset = Self::position_to_offset(content, position);
 
         // Fast path: consult precomputed symbol map.
-        if let Some(symbol) = self.lookup_symbol_map_for_hover(uri, offset) {
-            let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                self.hover_from_symbol(&symbol.kind, uri, content, offset)
-            }));
-            match result {
-                Ok(Some(hover)) => return Some(hover),
-                Ok(None) => {}
-                Err(_) => {
-                    log::error!(
-                        "PHPantom: panic during hover at {}:{}:{}",
-                        uri,
-                        position.line,
-                        position.character
-                    );
-                }
-            }
+        if let Some(symbol) = self.lookup_symbol_map_for_hover(uri, offset)
+            && let Some(Some(hover)) =
+                crate::util::catch_panic_unwind_safe("hover", uri, Some(position), || {
+                    self.hover_from_symbol(&symbol.kind, uri, content, offset)
+                })
+        {
+            return Some(hover);
         }
 
         // Retry with offset - 1 for cursor at end-of-token (same
         // heuristic as go-to-definition).
         if offset > 0
             && let Some(symbol) = self.lookup_symbol_map_for_hover(uri, offset - 1)
+            && let Some(Some(hover)) =
+                crate::util::catch_panic_unwind_safe("hover", uri, Some(position), || {
+                    self.hover_from_symbol(&symbol.kind, uri, content, offset - 1)
+                })
         {
-            let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                self.hover_from_symbol(&symbol.kind, uri, content, offset - 1)
-            }));
-            match result {
-                Ok(Some(hover)) => return Some(hover),
-                Ok(None) => {}
-                Err(_) => {
-                    log::error!(
-                        "PHPantom: panic during hover at {}:{}:{}",
-                        uri,
-                        position.line,
-                        position.character
-                    );
-                }
-            }
+            return Some(hover);
         }
 
         None
@@ -565,105 +544,4 @@ fn extract_docblock_description(docblock: Option<&str>) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extract_description_simple() {
-        let doc = "/** This is a simple description. */";
-        assert_eq!(
-            extract_docblock_description(Some(doc)),
-            Some("This is a simple description.".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_description_multiline() {
-        let doc = "/**\n * First line.\n * Second line.\n * @param string $x\n */";
-        assert_eq!(
-            extract_docblock_description(Some(doc)),
-            Some("First line.\nSecond line.".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_description_none_when_only_tags() {
-        let doc = "/**\n * @return string\n */";
-        assert_eq!(extract_docblock_description(Some(doc)), None);
-    }
-
-    #[test]
-    fn extract_description_none_when_empty() {
-        assert_eq!(extract_docblock_description(None), None);
-    }
-
-    #[test]
-    fn format_fqn_with_namespace() {
-        assert_eq!(
-            format_fqn("User", &Some("App\\Models".to_string())),
-            "App\\Models\\User"
-        );
-    }
-
-    #[test]
-    fn format_fqn_without_namespace() {
-        assert_eq!(format_fqn("User", &None), "User");
-    }
-
-    #[test]
-    fn format_params_empty() {
-        assert_eq!(format_params(&[]), "");
-    }
-
-    #[test]
-    fn format_params_with_types() {
-        let params = vec![
-            ParameterInfo {
-                name: "$name".to_string(),
-                type_hint: Some("string".to_string()),
-                is_required: true,
-                is_variadic: false,
-                is_reference: false,
-            },
-            ParameterInfo {
-                name: "$age".to_string(),
-                type_hint: Some("int".to_string()),
-                is_required: false,
-                is_variadic: false,
-                is_reference: false,
-            },
-        ];
-        assert_eq!(format_params(&params), "string $name, int $age = ...");
-    }
-
-    #[test]
-    fn format_params_variadic() {
-        let params = vec![ParameterInfo {
-            name: "$items".to_string(),
-            type_hint: Some("string".to_string()),
-            is_required: false,
-            is_variadic: true,
-            is_reference: false,
-        }];
-        assert_eq!(format_params(&params), "string ...$items");
-    }
-
-    #[test]
-    fn format_params_reference() {
-        let params = vec![ParameterInfo {
-            name: "$arr".to_string(),
-            type_hint: Some("array".to_string()),
-            is_required: true,
-            is_variadic: false,
-            is_reference: true,
-        }];
-        assert_eq!(format_params(&params), "array &$arr");
-    }
-
-    #[test]
-    fn format_visibility_all() {
-        assert_eq!(format_visibility(Visibility::Public), "public ");
-        assert_eq!(format_visibility(Visibility::Protected), "protected ");
-        assert_eq!(format_visibility(Visibility::Private), "private ");
-    }
-}
+mod tests;

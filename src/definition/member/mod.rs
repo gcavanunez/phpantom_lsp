@@ -1,19 +1,34 @@
-/// Member-access definition resolution.
-///
-/// This module handles go-to-definition for member references — methods,
-/// properties, and constants accessed via `->`, `?->`, or `::` operators.
-///
-/// Supported patterns:
-///   - `$this->method()`, `$this->property`
-///   - `$var->method()`, `$var->property`
-///   - `self::method()`, `self::CONST`, `self::$staticProp`
-///   - `static::method()`, `parent::method()`
-///   - `ClassName::method()`, `ClassName::CONST`, `ClassName::$staticProp`
-///   - Chained access: `$this->prop->method()`, `app()->method()`
-///
-/// Resolution walks the class hierarchy (parent classes, traits, mixins)
-/// to find the declaring class and locates the member position in its
-/// source file.
+//! Member-access definition resolution.
+//!
+//! This module handles go-to-definition for member references — methods,
+//! properties, and constants accessed via `->`, `?->`, or `::` operators.
+//!
+//! Supported patterns:
+//!   - `$this->method()`, `$this->property`
+//!   - `$var->method()`, `$var->property`
+//!   - `self::method()`, `self::CONST`, `self::$staticProp`
+//!   - `static::method()`, `parent::method()`
+//!   - `ClassName::method()`, `ClassName::CONST`, `ClassName::$staticProp`
+//!   - Chained access: `$this->prop->method()`, `app()->method()`
+//!
+//! Resolution walks the class hierarchy (parent classes, traits, mixins)
+//! to find the declaring class and locates the member position in its
+//! source file.
+//!
+//! Helper functions are split into submodules by responsibility:
+//!   - [`declaring`] — inheritance chain walking (`find_declaring_class`,
+//!     `find_declaring_in_traits`, `find_declaring_in_mixins`,
+//!     `resolve_trait_alias`)
+//!   - [`shape_keys`] — object shape property and Eloquent array entry
+//!     position lookup
+//!   - [`file_lookup`] — file loading (`find_class_file_content`,
+//!     `reload_raw_class`) and member position lookup
+//!     (`find_member_position`)
+
+mod declaring;
+mod file_lookup;
+mod shape_keys;
+
 use tower_lsp::lsp_types::*;
 
 use super::point_location;
@@ -24,11 +39,27 @@ use crate::subject_extraction::{
     collapse_continuation_lines, extract_arrow_subject, extract_double_colon_subject,
 };
 use crate::types::*;
-use crate::util::short_name;
 use crate::virtual_members::laravel::{
     ELOQUENT_BUILDER_FQN, accessor_method_candidates, count_property_to_relationship_method,
     extends_eloquent_model, is_accessor_method,
 };
+
+/// Pre-extracted context for a member definition lookup.
+///
+/// Bundles the four values that the caller assembles from the cursor
+/// context so that [`Backend::resolve_member_definition_with`] does not
+/// need seven separate parameters (plus `&self`).
+pub(super) struct MemberDefinitionCtx<'a> {
+    /// The member name under the cursor (e.g. `"method"`, `"prop"`).
+    pub member_name: &'a str,
+    /// The subject expression to the left of the access operator
+    /// (e.g. `"$this"`, `"$var->prop"`, `"ClassName"`).
+    pub subject: &'a str,
+    /// Whether the access uses `::` or `->` / `?->`.
+    pub access_kind: AccessKind,
+    /// Hint about whether the site looks like a method call or property access.
+    pub access_hint: MemberAccessHint,
+}
 
 /// The kind of class member being resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,35 +115,33 @@ impl Backend {
         // Determine whether this looks like a method call or property access.
         let access_hint = Self::detect_member_access_hint(content, position, member_name);
 
-        self.resolve_member_definition_with(
-            uri,
-            content,
-            position,
+        let ctx = MemberDefinitionCtx {
             member_name,
-            &subject,
+            subject: &subject,
             access_kind,
             access_hint,
-        )
+        };
+        self.resolve_member_definition_with(uri, content, position, &ctx)
     }
 
     /// Resolve a member access to its definition using pre-extracted context.
     ///
     /// This is the core implementation shared by the text-based path
     /// ([`resolve_member_definition`]) and the symbol-map path.  The caller
-    /// provides the subject text, access kind, and access hint so that
-    /// both code paths can use the same resolution logic without
-    /// re-extracting context from the source text.
-    #[allow(clippy::too_many_arguments)]
+    /// provides a [`MemberDefinitionCtx`] bundling the subject text, access
+    /// kind, and access hint so that both code paths can use the same
+    /// resolution logic without re-extracting context from the source text.
     pub(super) fn resolve_member_definition_with(
         &self,
         uri: &str,
         content: &str,
         position: Position,
-        member_name: &str,
-        subject: &str,
-        access_kind: AccessKind,
-        access_hint: MemberAccessHint,
+        mctx: &MemberDefinitionCtx<'_>,
     ) -> Option<Location> {
+        let member_name = mctx.member_name;
+        let subject = mctx.subject;
+        let access_kind = mctx.access_kind;
+        let access_hint = mctx.access_hint;
         // 2. Gather context needed for class resolution.
         let cursor_offset = Self::position_to_offset(content, position);
         let ctx = self.file_context(uri);
@@ -793,7 +822,7 @@ impl Backend {
         }
     }
 
-    // ─── Inheritance Chain Walking ──────────────────────────────────────────
+    // ─── Scope Name Mapping ─────────────────────────────────────────────────
 
     /// Map a virtual scope method name to the underlying `scopeXxx` method.
     ///
@@ -812,250 +841,7 @@ impl Backend {
         scope
     }
 
-    /// Find the position of a property key inside an `object{…}` shape
-    /// annotation within docblock comments.
-    ///
-    /// Scans `content` for docblock lines containing `object{` (or
-    /// `?object{`, `\object{`) and, within matching braces, looks for
-    /// `key_name:` or `key_name?:`.  Returns the `Position` of the
-    /// first character of the key name.
-    ///
-    /// When `near_offset` is provided, the match closest to that byte
-    /// offset (in either direction) is returned.  This handles both
-    /// inline `@var` annotations above the cursor and `@return`
-    /// docblocks on methods defined below the usage site.
-    fn find_object_shape_property_position(
-        content: &str,
-        key_name: &str,
-        near_offset: Option<usize>,
-    ) -> Option<Position> {
-        // We need to find `key_name:` or `key_name?:` inside an
-        // `object{…}` block that appears inside a docblock comment.
-        //
-        // Strategy: scan every line.  Track whether we are inside a
-        // `/** … */` comment.  When we see `object{` (case-insensitive
-        // base word) at brace depth 0, enter shape-scanning mode and
-        // look for the key.
-
-        let mut matches: Vec<(usize, u32, u32)> = Vec::new(); // (byte_offset, line, col)
-        let mut byte_offset: usize = 0;
-        let mut in_docblock = false;
-
-        for (line_idx, line) in content.lines().enumerate() {
-            let line_len = line.len() + 1; // +1 for newline
-
-            // Track docblock boundaries.
-            if line.contains("/**") {
-                in_docblock = true;
-            }
-
-            if in_docblock {
-                // Search for object shape property keys in this line.
-                // Look for `object{` patterns (possibly preceded by `?` or `\`).
-                if let Some(pos) = Self::find_shape_key_in_line(line, key_name) {
-                    let abs_offset = byte_offset + pos;
-                    matches.push((abs_offset, line_idx as u32, pos as u32));
-                }
-            }
-
-            if line.contains("*/") {
-                in_docblock = false;
-            }
-
-            byte_offset += line_len;
-        }
-
-        // Pick the match closest to the cursor.  When no near_offset
-        // is given, return the last match (highest line number).
-        let best = match near_offset {
-            Some(cursor) => matches
-                .into_iter()
-                .min_by_key(|(off, _, _)| cursor.abs_diff(*off)),
-            None => matches.into_iter().last(),
-        };
-
-        best.map(|(_, line, col)| Position {
-            line,
-            character: col,
-        })
-    }
-
-    /// Search a single line for a property key inside an `object{…}`
-    /// shape.  Returns the byte offset of the key within the line, or
-    /// `None`.
-    fn find_shape_key_in_line(line: &str, key_name: &str) -> Option<usize> {
-        let bytes = line.as_bytes();
-
-        // Find every `object{` (case-insensitive) in the line.
-        let lower = line.to_ascii_lowercase();
-        let mut search_from = 0usize;
-
-        while let Some(obj_pos) = lower[search_from..].find("object{") {
-            let abs_obj = search_from + obj_pos;
-            let brace_start = abs_obj + "object".len(); // index of `{`
-
-            // Walk from the `{` respecting nesting to find keys.
-            let mut depth = 0i32;
-            let mut i = brace_start;
-            while i < bytes.len() {
-                match bytes[i] {
-                    b'{' => depth += 1,
-                    b'}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    _ if depth == 1 => {
-                        // At depth 1 we are inside the outermost `object{…}`.
-                        // Check if the key starts here.
-                        if let Some(col) = Self::match_shape_key_at(line, i, key_name) {
-                            return Some(col);
-                        }
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-
-            search_from = abs_obj + 1;
-        }
-
-        None
-    }
-
-    /// Check whether `key_name` (possibly quoted) starts at position
-    /// `pos` within `line`.  Returns the column of the first character
-    /// of the key (inside quotes if quoted).
-    fn match_shape_key_at(line: &str, pos: usize, key_name: &str) -> Option<usize> {
-        let rest = &line[pos..];
-        let rest_trimmed = rest.trim_start();
-        let leading_ws = rest.len() - rest_trimmed.len();
-        let col_base = pos + leading_ws;
-
-        // Bare key: `name:` or `name?:`
-        if let Some(after) = rest_trimmed.strip_prefix(key_name)
-            && (after.starts_with(':') || after.starts_with("?:"))
-        {
-            return Some(col_base);
-        }
-
-        // Single-quoted key: `'name':` or `'name'?:`
-        if let Some(inner) = rest_trimmed.strip_prefix('\'')
-            && let Some(after_key) = inner.strip_prefix(key_name)
-            && (after_key.starts_with("':") || after_key.starts_with("'?:"))
-        {
-            // Point inside the quote at the first letter.
-            return Some(col_base + 1);
-        }
-
-        // Double-quoted key: `"name":` or `"name"?:`
-        if let Some(inner) = rest_trimmed.strip_prefix('"')
-            && let Some(after_key) = inner.strip_prefix(key_name)
-            && (after_key.starts_with("\":") || after_key.starts_with("\"?:"))
-        {
-            return Some(col_base + 1);
-        }
-
-        None
-    }
-
-    /// Find a string literal entry inside an Eloquent array property.
-    ///
-    /// Searches for `'member_name'` or `"member_name"` inside `$casts`,
-    /// `$attributes`, `$fillable`, `$guarded`, `$hidden`, and `$visible`
-    /// property declarations within the given class range.  Returns the
-    /// position of the string literal so go-to-definition can jump to it.
-    fn find_eloquent_array_entry(
-        content: &str,
-        member_name: &str,
-        class_range: Option<(usize, usize)>,
-    ) -> Option<Position> {
-        let single_pattern = format!("'{member_name}'");
-        let double_pattern = format!("\"{member_name}\"");
-        let targets = [
-            "$casts",
-            "$attributes",
-            "$fillable",
-            "$guarded",
-            "$hidden",
-            "$visible",
-        ];
-
-        // Track whether we're inside one of the target property arrays.
-        let mut in_target_property = false;
-        let mut byte_offset: usize = 0;
-
-        for (line_idx, line) in content.lines().enumerate() {
-            let line_len = line.len() + 1;
-            let in_range = match class_range {
-                Some((start, end)) => byte_offset >= start && byte_offset < end,
-                None => true,
-            };
-            if in_range {
-                let trimmed = line.trim();
-                // Detect property declarations for target arrays.
-                if targets.iter().any(|t| trimmed.contains(t)) {
-                    in_target_property = true;
-                }
-                // Also detect the casts() method body.
-                if trimmed.contains("function casts(") {
-                    in_target_property = true;
-                }
-
-                if in_target_property {
-                    // Look for the member name as a string key.
-                    if let Some(col) = line.find(&single_pattern) {
-                        // Position cursor inside the quotes on the first
-                        // letter of the column name.
-                        return Some(Position {
-                            line: line_idx as u32,
-                            character: (col + 1) as u32,
-                        });
-                    }
-                    if let Some(col) = line.find(&double_pattern) {
-                        return Some(Position {
-                            line: line_idx as u32,
-                            character: (col + 1) as u32,
-                        });
-                    }
-
-                    // A line ending with `];` or just `];` closes the array.
-                    if trimmed == "];" || trimmed.ends_with("];") {
-                        in_target_property = false;
-                    }
-                }
-            }
-            byte_offset += line_len;
-        }
-        None
-    }
-
-    /// Reload the raw (unmerged) `ClassInfo` for a candidate.
-    ///
-    /// Candidates returned by `resolve_target_classes` may be
-    /// fully-resolved classes with virtual/mixin members baked into
-    /// their `methods` list (this happens when `type_hint_to_classes`
-    /// calls `resolve_class_fully` to apply generic substitutions).
-    /// `find_declaring_class` needs the raw class so it can trace
-    /// member declarations through the real inheritance and mixin
-    /// chain instead of short-circuiting on a merged method.
-    ///
-    /// Returns `Some(raw)` when a reload succeeds, or `None` when the
-    /// class cannot be reloaded (e.g. synthetic/anonymous classes).
-    fn reload_raw_class(
-        candidate: &ClassInfo,
-        all_classes: &[ClassInfo],
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-    ) -> Option<ClassInfo> {
-        let fqn = match &candidate.file_namespace {
-            Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, candidate.name),
-            _ => candidate.name.clone(),
-        };
-        crate::completion::resolver::find_class_by_name(all_classes, &fqn)
-            .cloned()
-            .or_else(|| class_loader(&fqn))
-    }
+    // ─── Eloquent Builder Forwarding ────────────────────────────────────────
 
     /// Check if a method is available on the Eloquent Builder for a Model
     /// subclass.
@@ -1194,503 +980,5 @@ impl Backend {
         // Fallback: `#[Scope]` attribute — the method keeps its own name.
         let (declaring, fqn) = Self::find_declaring_class(&model, member_name, class_loader)?;
         Some((declaring, fqn, member_name.to_string()))
-    }
-
-    /// Resolve a trait `as` alias on a class.
-    ///
-    /// If `member_name` matches a trait alias declared on the class, returns
-    /// the original method name and (optionally) the source trait name.
-    /// Otherwise returns `member_name` unchanged with no trait hint.
-    fn resolve_trait_alias(class: &ClassInfo, member_name: &str) -> (String, Option<String>) {
-        for alias in &class.trait_aliases {
-            if alias.alias.as_deref() == Some(member_name) {
-                return (alias.method_name.clone(), alias.trait_name.clone());
-            }
-        }
-        (member_name.to_string(), None)
-    }
-
-    /// Walk up the inheritance chain to find the class that actually declares
-    /// the given member and the FQN (or best-known name) used to load it.
-    ///
-    /// Returns `Some((ClassInfo, fqn))` of the declaring class, or `None` if
-    /// the member cannot be found in any ancestor.  The `fqn` is the name
-    /// that was passed to `class_loader` to obtain the `ClassInfo`, which is
-    /// a fully-qualified name for parents and traits.  For the class itself
-    /// (when the member is declared directly), the FQN is reconstructed
-    /// from `file_namespace` + `name` when a namespace is available so
-    /// that `find_class_file_content` can disambiguate classes that share
-    /// the same short name (e.g. `Eloquent\Builder` vs `Query\Builder`).
-    fn find_declaring_class(
-        class: &ClassInfo,
-        member_name: &str,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-    ) -> Option<(ClassInfo, String)> {
-        // Check if this class directly declares the member.
-        if Self::classify_member(class, member_name, MemberAccessHint::Unknown).is_some() {
-            let fqn = match &class.file_namespace {
-                Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, class.name),
-                _ => class.name.clone(),
-            };
-            return Some((class.clone(), fqn));
-        }
-
-        // Check traits used by this class.
-        if let Some(found) =
-            Self::find_declaring_in_traits(&class.used_traits, member_name, class_loader, 0)
-        {
-            return Some(found);
-        }
-
-        // Walk up the parent chain.
-        let mut current = class.clone();
-        for _ in 0..MAX_INHERITANCE_DEPTH {
-            let parent_name = match current.parent_class.as_ref() {
-                Some(name) => name.clone(),
-                None => break,
-            };
-            let parent = match class_loader(&parent_name) {
-                Some(p) => p,
-                None => break,
-            };
-            if Self::classify_member(&parent, member_name, MemberAccessHint::Unknown).is_some() {
-                return Some((parent, parent_name));
-            }
-            // Check traits used by the parent class.
-            if let Some(found) =
-                Self::find_declaring_in_traits(&parent.used_traits, member_name, class_loader, 0)
-            {
-                return Some(found);
-            }
-            current = parent;
-        }
-
-        // Check implemented interfaces (own + from parents).
-        // Interfaces can declare `@method` / `@property` / `@property-read`
-        // tags that should be resolvable via go-to-definition.
-        {
-            let mut all_iface_names: Vec<String> = class.interfaces.clone();
-            let mut iface_current = class.clone();
-            for _ in 0..MAX_INHERITANCE_DEPTH {
-                let parent_name = match iface_current.parent_class.as_ref() {
-                    Some(name) => name.clone(),
-                    None => break,
-                };
-                let parent = match class_loader(&parent_name) {
-                    Some(p) => p,
-                    None => break,
-                };
-                for iface in &parent.interfaces {
-                    if !all_iface_names.contains(iface) {
-                        all_iface_names.push(iface.clone());
-                    }
-                }
-                iface_current = parent;
-            }
-            for iface_name in &all_iface_names {
-                if let Some(iface) = class_loader(iface_name) {
-                    if Self::classify_member(&iface, member_name, MemberAccessHint::Unknown)
-                        .is_some()
-                    {
-                        return Some((iface, iface_name.clone()));
-                    }
-                    // Walk the interface's own extends chain (interfaces
-                    // stored in `parent_class` or `interfaces`).
-                    let mut iface_ancestor = iface.clone();
-                    for _ in 0..MAX_INHERITANCE_DEPTH {
-                        for parent_iface in &iface_ancestor.interfaces {
-                            if let Some(pi) = class_loader(parent_iface)
-                                && Self::classify_member(
-                                    &pi,
-                                    member_name,
-                                    MemberAccessHint::Unknown,
-                                )
-                                .is_some()
-                            {
-                                return Some((pi, parent_iface.clone()));
-                            }
-                        }
-                        match iface_ancestor.parent_class.as_ref() {
-                            Some(pn) => match class_loader(pn) {
-                                Some(p) => iface_ancestor = p,
-                                None => break,
-                            },
-                            None => break,
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check @mixin classes — these have the lowest precedence.
-        if let Some(found) =
-            Self::find_declaring_in_mixins(&class.mixins, member_name, class_loader, 0)
-        {
-            return Some(found);
-        }
-
-        // Also check @mixin classes declared on ancestor classes.
-        // e.g. `User extends Model` where `Model` has `@mixin Builder`.
-        let mut ancestor = class.clone();
-        for _ in 0..MAX_INHERITANCE_DEPTH {
-            let parent_name = match ancestor.parent_class.as_ref() {
-                Some(name) => name.clone(),
-                None => break,
-            };
-            let parent = match class_loader(&parent_name) {
-                Some(p) => p,
-                None => break,
-            };
-            if !parent.mixins.is_empty()
-                && let Some(found) =
-                    Self::find_declaring_in_mixins(&parent.mixins, member_name, class_loader, 0)
-            {
-                return Some(found);
-            }
-            ancestor = parent;
-        }
-
-        None
-    }
-
-    /// Search through a list of trait names for one that declares `member_name`.
-    ///
-    /// Traits can themselves `use` other traits, so this recurses up to a
-    /// depth limit to handle trait composition.
-    ///
-    /// Returns `(ClassInfo, fqn)` where `fqn` is the fully-qualified name
-    /// that was used to load the declaring class from `class_loader`.
-    fn find_declaring_in_traits(
-        trait_names: &[String],
-        member_name: &str,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-        depth: usize,
-    ) -> Option<(ClassInfo, String)> {
-        if depth > MAX_TRAIT_DEPTH as usize {
-            return None;
-        }
-
-        for trait_name in trait_names {
-            let trait_info = if let Some(t) = class_loader(trait_name) {
-                t
-            } else {
-                continue;
-            };
-            if Self::classify_member(&trait_info, member_name, MemberAccessHint::Unknown).is_some()
-            {
-                return Some((trait_info, trait_name.clone()));
-            }
-            // Recurse into traits used by this trait.
-            if let Some(found) = Self::find_declaring_in_traits(
-                &trait_info.used_traits,
-                member_name,
-                class_loader,
-                depth + 1,
-            ) {
-                return Some(found);
-            }
-            // Walk the parent_class (extends) chain so that interface
-            // inheritance is resolved.  For example, BackedEnum extends
-            // UnitEnum — looking up `cases` on BackedEnum should find
-            // the declaring UnitEnum interface.
-            let mut current = trait_info;
-            let mut parent_depth = depth;
-            while let Some(ref parent_name) = current.parent_class {
-                parent_depth += 1;
-                if parent_depth > MAX_TRAIT_DEPTH as usize {
-                    break;
-                }
-                let parent = if let Some(p) = class_loader(parent_name) {
-                    p
-                } else {
-                    break;
-                };
-                if Self::classify_member(&parent, member_name, MemberAccessHint::Unknown).is_some()
-                {
-                    return Some((parent, parent_name.clone()));
-                }
-                if let Some(found) = Self::find_declaring_in_traits(
-                    &parent.used_traits,
-                    member_name,
-                    class_loader,
-                    parent_depth + 1,
-                ) {
-                    return Some(found);
-                }
-                current = parent;
-            }
-        }
-
-        None
-    }
-
-    /// Search through `@mixin` class names for one that declares `member_name`.
-    ///
-    /// Mixin classes are resolved with their full inheritance chain (parent
-    /// classes, traits) so that inherited members are found.  Only public
-    /// members are considered since mixins proxy via magic methods.
-    /// Mixin classes can themselves declare `@mixin`, so this recurses up
-    /// to a depth limit.
-    ///
-    /// Returns `(ClassInfo, fqn)` where `fqn` is the fully-qualified name
-    /// that was used to load the declaring class from `class_loader`.
-    fn find_declaring_in_mixins(
-        mixin_names: &[String],
-        member_name: &str,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-        depth: usize,
-    ) -> Option<(ClassInfo, String)> {
-        if depth > MAX_MIXIN_DEPTH as usize {
-            return None;
-        }
-
-        for mixin_name in mixin_names {
-            let mixin_class = if let Some(c) = class_loader(mixin_name) {
-                c
-            } else {
-                continue;
-            };
-
-            // Try to find the declaring class within the mixin's own
-            // hierarchy (itself, its traits, its parents).
-            if let Some((declaring_class, fqn)) =
-                Self::find_declaring_class(&mixin_class, member_name, class_loader)
-            {
-                // When find_declaring_class finds the member directly on
-                // the mixin class, it returns the short name (e.g.
-                // "Builder") because ClassInfo.name is always short.
-                // Replace it with the fully-qualified mixin_name so that
-                // find_class_file_content can disambiguate classes that
-                // share the same short name (e.g. Eloquent\Builder vs
-                // Query\Builder).
-                if !fqn.contains('\\') && fqn == mixin_class.name {
-                    return Some((declaring_class, mixin_name.clone()));
-                }
-                return Some((declaring_class, fqn));
-            }
-
-            // Recurse into mixins declared by this mixin class.
-            if !mixin_class.mixins.is_empty()
-                && let Some(found) = Self::find_declaring_in_mixins(
-                    &mixin_class.mixins,
-                    member_name,
-                    class_loader,
-                    depth + 1,
-                )
-            {
-                return Some(found);
-            }
-        }
-
-        None
-    }
-
-    // ─── File & Position Lookup ─────────────────────────────────────────────
-
-    /// Find the file URI and content for the file that contains a given class.
-    ///
-    /// `class_name` can be a short name (e.g. `"Kernel"`) or a
-    /// fully-qualified name (e.g. `"Illuminate\\Foundation\\Console\\Kernel"`).
-    /// When a namespace prefix is present the file's namespace (from
-    /// `namespace_map`) must match for the class to be returned.  This
-    /// prevents short-name collisions when a child class and its parent
-    /// share the same simple name but live in different namespaces.
-    ///
-    /// Searches the `ast_map` (which includes files loaded via PSR-4 by
-    /// `find_or_load_class`) and returns `(uri, content)`.
-    pub(crate) fn find_class_file_content(
-        &self,
-        class_name: &str,
-        current_uri: &str,
-        current_content: &str,
-    ) -> Option<(String, String)> {
-        let normalized = class_name.strip_prefix('\\').unwrap_or(class_name);
-        let last_segment = short_name(normalized);
-        let expected_ns: Option<&str> = if normalized.contains('\\') {
-            Some(&normalized[..normalized.len() - last_segment.len() - 1])
-        } else {
-            None
-        };
-
-        // Search the ast_map for the file containing this class.
-        let uri = {
-            let map = self.ast_map.lock().ok()?;
-            let nmap = self.namespace_map.lock().ok();
-
-            // Check whether a class with the right short name and
-            // namespace lives in this file.  Uses the per-class
-            // `file_namespace` field first (correct for multi-namespace
-            // files like example.php), falling back to the file-level
-            // `namespace_map` for single-namespace files.
-            let class_in_file = |file_uri: &str, classes: &[ClassInfo]| -> bool {
-                match expected_ns {
-                    None => classes.iter().any(|c| c.name == last_segment),
-                    Some(exp) => {
-                        // Prefer per-class file_namespace (handles
-                        // multi-namespace files correctly).
-                        let found_via_class_ns = classes.iter().any(|c| {
-                            c.name == last_segment && c.file_namespace.as_deref() == Some(exp)
-                        });
-                        if found_via_class_ns {
-                            return true;
-                        }
-                        // Fall back to file-level namespace_map for
-                        // classes that don't have file_namespace set
-                        // (e.g. single-namespace files, stubs).
-                        let file_ns = nmap
-                            .as_ref()
-                            .and_then(|nm| nm.get(file_uri))
-                            .and_then(|opt| opt.as_deref());
-                        file_ns == Some(exp) && classes.iter().any(|c| c.name == last_segment)
-                    }
-                }
-            };
-
-            // Check the current file first (common case: $this->method).
-            if let Some(classes) = map.get(current_uri) {
-                if class_in_file(current_uri, classes) {
-                    Some(current_uri.to_string())
-                } else {
-                    // Search other files.
-                    map.iter()
-                        .find(|(u, classes)| class_in_file(u, classes))
-                        .map(|(u, _)| u.clone())
-                }
-            } else {
-                map.iter()
-                    .find(|(u, classes)| class_in_file(u, classes))
-                    .map(|(u, _)| u.clone())
-            }
-        }?;
-
-        // Get the file content.
-        let file_content = if uri == current_uri {
-            current_content.to_string()
-        } else if uri.starts_with("phpantom-stub://") {
-            // Embedded stubs are stored under synthetic URIs and have no
-            // on-disk file.  Retrieve the raw stub source from the
-            // stub_index instead.
-            self.stub_index.get(last_segment).map(|s| s.to_string())?
-        } else {
-            self.get_file_content(&uri)?
-        };
-
-        Some((uri, file_content))
-    }
-
-    /// Find the position of a member declaration (method, property, or constant)
-    /// inside a PHP file.
-    ///
-    /// Find the position of a member declaration in source content.
-    ///
-    /// When `name_offset` is `Some(off)` with `off > 0`, the position is
-    /// computed directly from the stored byte offset (fast path).
-    ///
-    /// When the offset is unavailable (virtual `@method` / `@property`
-    /// members), falls back to scanning the file's docblock comments for
-    /// the tag that declares the member.
-    pub(crate) fn find_member_position(
-        content: &str,
-        member_name: &str,
-        kind: MemberKind,
-        name_offset: Option<u32>,
-    ) -> Option<Position> {
-        // ── Fast path: use stored AST offset ────────────────────────────
-        if let Some(off) = name_offset
-            && off > 0
-            && (off as usize) <= content.len()
-        {
-            let mut pos = crate::util::offset_to_position(content, off as usize);
-            // For properties, place the cursor on the first letter
-            // after `$` so that a second go-to-definition triggers
-            // type-hint resolution (matches the text-search behavior).
-            if kind == MemberKind::Property {
-                pos.character += 1;
-            }
-            return Some(pos);
-        }
-
-        let is_word_boundary = |c: u8| {
-            let ch = c as char;
-            !ch.is_alphanumeric() && ch != '_'
-        };
-
-        // Fallback: for properties, check if this is a magic property
-        // declared via a `@property` tag in the class docblock.
-        // Lines look like: ` * @property Type $propertyName`
-        // NOTE: docblock tags precede the class body, so they fall
-        // outside `[start_offset, end_offset)`.  Don't scope these
-        // fallback searches by class_range.
-        if kind == MemberKind::Property {
-            let var_pattern = format!("${}", member_name);
-            for (line_idx, line) in content.lines().enumerate() {
-                if let Some(col) = line.find(&var_pattern) {
-                    let after_pos = col + var_pattern.len();
-                    let after_ok =
-                        after_pos >= line.len() || is_word_boundary(line.as_bytes()[after_pos]);
-                    if !after_ok {
-                        continue;
-                    }
-
-                    let trimmed = line.trim().trim_start_matches('*').trim();
-                    if trimmed.starts_with("@property-read")
-                        || trimmed.starts_with("@property-write")
-                        || trimmed.starts_with("@property")
-                    {
-                        return Some(Position {
-                            line: line_idx as u32,
-                            character: (col + 1) as u32,
-                        });
-                    }
-                }
-            }
-        }
-
-        // Fallback: for methods, check if this is a magic method
-        // declared via a `@method` tag in the class docblock.
-        // Lines look like: ` * @method ReturnType methodName(params...)`
-        // NOTE: same as above — docblock tags are outside the class body
-        // range, so don't scope by class_range.
-        if kind == MemberKind::Method {
-            // The method name is followed by `(` in a @method tag.
-            let method_pattern = member_name;
-            for (line_idx, line) in content.lines().enumerate() {
-                // Search for ALL occurrences of the pattern within the line,
-                // not just the first one.  This is important when the method
-                // name collides with a type keyword (e.g. `string`) that also
-                // appears as the return type on the same line.
-                let mut search_start = 0;
-                while let Some(offset) = line[search_start..].find(method_pattern) {
-                    let col = search_start + offset;
-                    search_start = col + method_pattern.len();
-
-                    // Verify the character after the name is `(` (method call syntax).
-                    let after_pos = col + method_pattern.len();
-                    if after_pos >= line.len() {
-                        continue;
-                    }
-                    let after_char = line.as_bytes()[after_pos];
-                    if after_char != b'(' {
-                        continue;
-                    }
-
-                    // Verify the character before is a word boundary (whitespace)
-                    // to avoid matching partial names.
-                    if col > 0 && !is_word_boundary(line.as_bytes()[col - 1]) {
-                        continue;
-                    }
-
-                    let trimmed = line.trim().trim_start_matches('*').trim();
-                    if trimmed.starts_with("@method") {
-                        return Some(Position {
-                            line: line_idx as u32,
-                            character: col as u32,
-                        });
-                    }
-                }
-            }
-        }
-
-        None
     }
 }

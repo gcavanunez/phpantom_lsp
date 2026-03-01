@@ -711,10 +711,12 @@ impl Backend {
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
                         file_namespace: None,
-                        custom_collection,
-                        casts_definitions,
-                        attributes_definitions,
-                        column_names,
+                        laravel: LaravelMetadata {
+                            custom_collection,
+                            casts_definitions,
+                            attributes_definitions,
+                            column_names,
+                        },
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -787,10 +789,7 @@ impl Backend {
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
                         file_namespace: None,
-                        custom_collection: None,
-                        casts_definitions: Vec::new(),
-                        attributes_definitions: Vec::new(),
-                        column_names: Vec::new(),
+                        laravel: LaravelMetadata::default(),
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -845,10 +844,7 @@ impl Backend {
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
                         file_namespace: None,
-                        custom_collection: None,
-                        casts_definitions: Vec::new(),
-                        attributes_definitions: Vec::new(),
-                        column_names: Vec::new(),
+                        laravel: LaravelMetadata::default(),
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -921,10 +917,7 @@ impl Backend {
                         trait_aliases: vec![],
                         class_docblock: doc_info.raw_docblock,
                         file_namespace: None,
-                        custom_collection: None,
-                        casts_definitions: Vec::new(),
-                        attributes_definitions: Vec::new(),
-                        column_names: Vec::new(),
+                        laravel: LaravelMetadata::default(),
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -1011,10 +1004,7 @@ impl Backend {
             trait_aliases,
             class_docblock: None,
             file_namespace: None,
-            custom_collection: None,
-            casts_definitions: Vec::new(),
-            attributes_definitions: Vec::new(),
-            column_names: Vec::new(),
+            laravel: LaravelMetadata::default(),
         }
     }
 

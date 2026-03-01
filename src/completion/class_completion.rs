@@ -1,13 +1,17 @@
-/// Class name, constant, and function completions.
+/// Class name completions.
 ///
-/// This module handles building completion items for bare identifiers
-/// (class names, global constants, and standalone functions) when no
-/// member-access operator (`->` or `::`) is present.
+/// This module handles building completion items for class, interface,
+/// trait, and enum names when no member-access operator (`->` or `::`)
+/// is present.
 ///
 /// Also provides a Throwable-filtered variant for catch clause fallback
 /// and `throw new` completion, which only suggests exception classes
 /// from already-parsed sources and includes everything else (classmap,
 /// stubs) unfiltered.
+///
+/// Constant, function, and namespace completions live in their own
+/// sibling modules (`constant_completion`, `function_completion`,
+/// `namespace_completion`).
 use std::collections::{HashMap, HashSet};
 
 use tower_lsp::lsp_types::*;
@@ -20,7 +24,6 @@ use crate::util::short_name;
 use super::builder::{
     analyze_use_block, build_callable_snippet, build_use_edit, use_import_conflicts,
 };
-use super::use_edit::build_use_function_edit;
 
 /// The syntactic context in which a class name is being completed.
 ///
@@ -434,7 +437,7 @@ fn likely_non_instantiable(short_name: &str) -> bool {
 /// Check whether a class name is a synthetic anonymous class name
 /// (e.g. `__anonymous@27775`).  These are internal bookkeeping entries
 /// that should never appear in completion results.
-fn is_anonymous_class(name: &str) -> bool {
+pub(super) fn is_anonymous_class(name: &str) -> bool {
     name.starts_with("__anonymous@")
 }
 
@@ -445,7 +448,12 @@ fn is_anonymous_class(name: &str) -> bool {
 /// `App\Models\User`.  In non-FQN mode only the short name is checked
 /// to avoid flooding the response with every class under a broad
 /// namespace prefix.
-fn matches_class_prefix(short_name: &str, fqn: &str, prefix_lower: &str, is_fqn: bool) -> bool {
+pub(super) fn matches_class_prefix(
+    short_name: &str,
+    fqn: &str,
+    prefix_lower: &str,
+    is_fqn: bool,
+) -> bool {
     if is_fqn {
         short_name.to_lowercase().contains(prefix_lower)
             || fqn.to_lowercase().contains(prefix_lower)
@@ -496,7 +504,7 @@ fn shorten_fqn_via_use_map(fqn: &str, use_map: &HashMap<String, String>) -> Opti
 /// Returns `(label, insert_base, filter_text, use_import_fqn)`.
 /// `use_import_fqn` is `None` when no `use` statement is needed (FQN
 /// mode or same-namespace class).
-fn class_completion_texts(
+pub(super) fn class_completion_texts(
     short_name: &str,
     fqn: &str,
     is_fqn: bool,
@@ -536,6 +544,109 @@ fn class_completion_texts(
             filter,
             Some(fqn.to_string()),
         )
+    }
+}
+
+/// Shared context for building class completion items.
+///
+/// Bundles the parameters that are constant across all class sources
+/// within a single completion request, so that `apply_import_fixups`
+/// and `build_item` don't need seven-plus arguments each.
+pub(super) struct ClassItemCtx<'a> {
+    pub(super) is_fqn_prefix: bool,
+    pub(super) is_new: bool,
+    pub(super) fqn_replace_range: Option<Range>,
+    pub(super) file_use_map: &'a HashMap<String, String>,
+    pub(super) use_block: super::use_edit::UseBlockInfo,
+    pub(super) file_namespace: &'a Option<String>,
+}
+
+/// Per-item text fields produced by `class_completion_texts` and
+/// post-processed by `apply_import_fixups`.
+pub(super) struct ClassItemTexts {
+    pub(super) label: String,
+    pub(super) base_name: String,
+    pub(super) filter: String,
+    pub(super) use_import: Option<String>,
+}
+
+impl ClassItemCtx<'_> {
+    /// Fix up `base_name` and `use_import` after `class_completion_texts`
+    /// to handle import conflicts and FQN alias collisions.
+    ///
+    /// This logic was repeated across every class source (class_index,
+    /// classmap, stubs) in both `build_class_name_completions` and
+    /// `build_catch_class_name_completions`.
+    ///
+    /// - If the short name conflicts with an existing import, falls back
+    ///   to a fully-qualified reference (prepends `\`).
+    /// - In FQN mode, if the first namespace segment matches an existing
+    ///   alias (and the name wasn't intentionally shortened through that
+    ///   alias), prepends `\` so PHP resolves from the global namespace.
+    pub(super) fn apply_import_fixups(
+        &self,
+        base_name: &mut String,
+        use_import: &mut Option<String>,
+        was_shortened: bool,
+    ) {
+        if let Some(ref import_fqn) = *use_import
+            && use_import_conflicts(import_fqn, self.file_use_map)
+        {
+            *base_name = format!("\\{}", import_fqn);
+            *use_import = None;
+        }
+        if self.is_fqn_prefix
+            && !was_shortened
+            && !base_name.starts_with('\\')
+            && let Some(first_seg) = base_name.split('\\').next()
+            && self
+                .file_use_map
+                .keys()
+                .any(|a| a.eq_ignore_ascii_case(first_seg))
+        {
+            *base_name = format!("\\{}", base_name);
+        }
+    }
+
+    /// Build a `CompletionItem` for a class name completion.
+    ///
+    /// This is the shared construction logic used by both
+    /// `build_class_name_completions` and
+    /// `build_catch_class_name_completions` for class_index, classmap,
+    /// and stub sources.
+    pub(super) fn build_item(
+        &self,
+        texts: ClassItemTexts,
+        fqn: &str,
+        sort_text: String,
+        new_insert_fn: impl FnOnce(&str) -> (String, Option<InsertTextFormat>),
+        is_deprecated: bool,
+    ) -> CompletionItem {
+        let (insert_text, insert_text_format) = if self.is_new {
+            new_insert_fn(&texts.base_name)
+        } else {
+            (texts.base_name, None)
+        };
+        CompletionItem {
+            label: texts.label,
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some(fqn.to_string()),
+            insert_text: Some(insert_text.clone()),
+            insert_text_format,
+            filter_text: Some(texts.filter),
+            sort_text: Some(sort_text),
+            deprecated: if is_deprecated { Some(true) } else { None },
+            text_edit: self.fqn_replace_range.map(|range| {
+                CompletionTextEdit::Edit(TextEdit {
+                    range,
+                    new_text: insert_text.clone(),
+                })
+            }),
+            additional_text_edits: texts.use_import.as_ref().and_then(|import_fqn| {
+                build_use_edit(import_fqn, &self.use_block, self.file_namespace)
+            }),
+            ..CompletionItem::default()
+        }
     }
 }
 
@@ -657,7 +768,7 @@ impl Backend {
     /// to build a snippet with tab-stops for each required argument.
     /// When `None`, a plain `Name()$0` snippet is returned so the user
     /// still gets parentheses inserted automatically.
-    fn build_new_insert(
+    pub(super) fn build_new_insert(
         short_name: &str,
         ctor_params: Option<&[ParameterInfo]>,
     ) -> (String, Option<InsertTextFormat>) {
@@ -687,7 +798,7 @@ impl Backend {
     /// matching classes exceeds [`MAX_CLASS_COMPLETIONS`], the result is
     /// truncated and `is_incomplete` is `true`, signalling the client to
     /// re-request as the user types more characters.
-    const MAX_CLASS_COMPLETIONS: usize = 100;
+    pub(super) const MAX_CLASS_COMPLETIONS: usize = 100;
 
     /// Build completion items for class, interface, trait, and enum names
     /// matching `prefix`.
@@ -756,7 +867,14 @@ impl Backend {
         // Pre-compute the use-block info for alphabetical `use` insertion.
         // Only items from sources 3–5 (not already imported, not same
         // namespace) will carry an `additional_text_edits` entry.
-        let use_block = analyze_use_block(content);
+        let ctx = ClassItemCtx {
+            is_fqn_prefix,
+            is_new,
+            fqn_replace_range,
+            file_use_map,
+            use_block: analyze_use_block(content),
+            file_namespace: effective_namespace,
+        };
 
         // ── 1. Use-imported classes (highest priority) ──────────────
         for (short_name, fqn) in file_use_map {
@@ -942,36 +1060,13 @@ impl Backend {
                     use_import = None;
                     was_shortened = true;
                 }
-                // When the short name conflicts with an existing import,
-                // fall back to a fully-qualified reference at the usage
-                // site instead of inserting a duplicate `use` statement.
-                if let Some(ref import_fqn) = use_import
-                    && use_import_conflicts(import_fqn, file_use_map)
-                {
-                    base_name = format!("\\{}", import_fqn);
-                    use_import = None;
-                }
-                // In FQN mode, if the first namespace segment of the
-                // insert text matches an existing alias (and we didn't
-                // intentionally shorten through that alias), prepend `\`
-                // so PHP resolves the name from the global namespace.
-                if is_fqn_prefix
-                    && !was_shortened
-                    && !base_name.starts_with('\\')
-                    && let Some(first_seg) = base_name.split('\\').next()
-                    && file_use_map
-                        .keys()
-                        .any(|a| a.eq_ignore_ascii_case(first_seg))
-                {
-                    base_name = format!("\\{}", base_name);
-                }
-                let (insert_text, insert_text_format) = if is_new {
-                    // class_index is a FQN → URI map; the class may or
-                    // may not be fully loaded — just insert empty parens.
-                    (format!("{base_name}()$0"), Some(InsertTextFormat::SNIPPET))
-                } else {
-                    (base_name, None)
+                let mut texts = ClassItemTexts {
+                    label,
+                    base_name,
+                    filter,
+                    use_import,
                 };
+                ctx.apply_import_fixups(&mut texts.base_name, &mut texts.use_import, was_shortened);
                 // Demote names that heuristically mismatch the context
                 // so better-looking candidates appear first.
                 let sort_prefix = if context.likely_mismatch(sn) {
@@ -979,25 +1074,13 @@ impl Backend {
                 } else {
                     "2"
                 };
-                items.push(CompletionItem {
-                    label,
-                    kind: Some(CompletionItemKind::CLASS),
-                    detail: Some(fqn.clone()),
-                    insert_text: Some(insert_text.clone()),
-                    insert_text_format,
-                    filter_text: Some(filter),
-                    sort_text: Some(format!("{}_{}", sort_prefix, sn.to_lowercase())),
-                    text_edit: fqn_replace_range.map(|range| {
-                        CompletionTextEdit::Edit(TextEdit {
-                            range,
-                            new_text: insert_text,
-                        })
-                    }),
-                    additional_text_edits: use_import.as_ref().and_then(|import_fqn| {
-                        build_use_edit(import_fqn, &use_block, file_namespace)
-                    }),
-                    ..CompletionItem::default()
-                });
+                items.push(ctx.build_item(
+                    texts,
+                    fqn,
+                    format!("{}_{}", sort_prefix, sn.to_lowercase()),
+                    |name| (format!("{name}()$0"), Some(InsertTextFormat::SNIPPET)),
+                    false,
+                ));
             }
         }
 
@@ -1032,34 +1115,13 @@ impl Backend {
                     use_import = None;
                     was_shortened = true;
                 }
-                // When the short name conflicts with an existing import,
-                // fall back to a fully-qualified reference at the usage
-                // site instead of inserting a duplicate `use` statement.
-                if let Some(ref import_fqn) = use_import
-                    && use_import_conflicts(import_fqn, file_use_map)
-                {
-                    base_name = format!("\\{}", import_fqn);
-                    use_import = None;
-                }
-                // In FQN mode, if the first namespace segment of the
-                // insert text matches an existing alias (and we didn't
-                // intentionally shorten through that alias), prepend `\`
-                // so PHP resolves the name from the global namespace.
-                if is_fqn_prefix
-                    && !was_shortened
-                    && !base_name.starts_with('\\')
-                    && let Some(first_seg) = base_name.split('\\').next()
-                    && file_use_map
-                        .keys()
-                        .any(|a| a.eq_ignore_ascii_case(first_seg))
-                {
-                    base_name = format!("\\{}", base_name);
-                }
-                let (insert_text, insert_text_format) = if is_new {
-                    Self::build_new_insert(&base_name, None)
-                } else {
-                    (base_name, None)
+                let mut texts = ClassItemTexts {
+                    label,
+                    base_name,
+                    filter,
+                    use_import,
                 };
+                ctx.apply_import_fixups(&mut texts.base_name, &mut texts.use_import, was_shortened);
                 // Demote names that heuristically mismatch the context
                 // so better-looking candidates appear first.
                 let sort_prefix = if context.likely_mismatch(sn) {
@@ -1067,25 +1129,13 @@ impl Backend {
                 } else {
                     "3"
                 };
-                items.push(CompletionItem {
-                    label,
-                    kind: Some(CompletionItemKind::CLASS),
-                    detail: Some(fqn.clone()),
-                    insert_text: Some(insert_text.clone()),
-                    insert_text_format,
-                    filter_text: Some(filter),
-                    sort_text: Some(format!("{}_{}", sort_prefix, sn.to_lowercase())),
-                    text_edit: fqn_replace_range.map(|range| {
-                        CompletionTextEdit::Edit(TextEdit {
-                            range,
-                            new_text: insert_text,
-                        })
-                    }),
-                    additional_text_edits: use_import.as_ref().and_then(|import_fqn| {
-                        build_use_edit(import_fqn, &use_block, file_namespace)
-                    }),
-                    ..CompletionItem::default()
-                });
+                items.push(ctx.build_item(
+                    texts,
+                    fqn,
+                    format!("{}_{}", sort_prefix, sn.to_lowercase()),
+                    |name| Self::build_new_insert(name, None),
+                    false,
+                ));
             }
         }
 
@@ -1137,36 +1187,13 @@ impl Backend {
                 use_import = None;
                 was_shortened = true;
             }
-            // When the short name conflicts with an existing import,
-            // fall back to a fully-qualified reference at the usage
-            // site instead of inserting a duplicate `use` statement.
-            if let Some(ref import_fqn) = use_import
-                && use_import_conflicts(import_fqn, file_use_map)
-            {
-                base_name = format!("\\{}", import_fqn);
-                use_import = None;
-            }
-            // In FQN mode, if the first namespace segment of the
-            // insert text matches an existing alias (and we didn't
-            // intentionally shorten through that alias), prepend `\`
-            // so PHP resolves the name from the global namespace.
-            if is_fqn_prefix
-                && !was_shortened
-                && !base_name.starts_with('\\')
-                && let Some(first_seg) = base_name.split('\\').next()
-                && file_use_map
-                    .keys()
-                    .any(|a| a.eq_ignore_ascii_case(first_seg))
-            {
-                base_name = format!("\\{}", base_name);
-            }
-            let (insert_text, insert_text_format) = if is_new {
-                // Stub classes are not parsed yet — just insert empty
-                // parens without attempting a lookup.
-                (format!("{base_name}()$0"), Some(InsertTextFormat::SNIPPET))
-            } else {
-                (base_name, None)
+            let mut texts = ClassItemTexts {
+                label,
+                base_name,
+                filter,
+                use_import,
             };
+            ctx.apply_import_fixups(&mut texts.base_name, &mut texts.use_import, was_shortened);
             // Demote names that heuristically mismatch the context
             // so better-looking candidates appear first.
             let sort_prefix = if context.likely_mismatch(sn) {
@@ -1174,25 +1201,13 @@ impl Backend {
             } else {
                 "4"
             };
-            items.push(CompletionItem {
-                label,
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some(name.to_string()),
-                insert_text: Some(insert_text.clone()),
-                insert_text_format,
-                filter_text: Some(filter),
-                sort_text: Some(format!("{}_{}", sort_prefix, sn.to_lowercase())),
-                text_edit: fqn_replace_range.map(|range| {
-                    CompletionTextEdit::Edit(TextEdit {
-                        range,
-                        new_text: insert_text,
-                    })
-                }),
-                additional_text_edits: use_import
-                    .as_ref()
-                    .and_then(|import_fqn| build_use_edit(import_fqn, &use_block, file_namespace)),
-                ..CompletionItem::default()
-            });
+            items.push(ctx.build_item(
+                texts,
+                name,
+                format!("{}_{}", sort_prefix, sn.to_lowercase()),
+                |name| (format!("{name}()$0"), Some(InsertTextFormat::SNIPPET)),
+                false,
+            ));
         }
 
         // ── Namespace segment items (FQN mode only) ─────────────────
@@ -1297,43 +1312,6 @@ impl Backend {
         }
 
         (items, is_incomplete)
-    }
-
-    // ─── Catch clause / throw-new fallback completion ───────────────
-
-    /// Check whether a class is a confirmed `\Throwable` descendant using
-    /// only already-loaded data from the `ast_map`.
-    ///
-    /// Returns `true` only when the full parent chain can be walked to
-    /// one of the three Throwable root types (`Throwable`, `Exception`,
-    /// `Error`).  Returns `false` if the chain is broken (parent not
-    /// loaded) or terminates at a non-Throwable class.
-    ///
-    /// This is a strict check: the caller should only include the class
-    /// when this returns `true`.
-    ///
-    /// This never triggers disk I/O; it only consults `ast_map`.
-    fn is_throwable_descendant(&self, class_name: &str, depth: u32) -> bool {
-        if depth > 20 {
-            return false; // prevent infinite loops
-        }
-
-        let normalized = class_name.strip_prefix('\\').unwrap_or(class_name);
-        let short = short_name(normalized);
-
-        // These three types form the root of PHP's exception hierarchy.
-        if matches!(short, "Throwable" | "Exception" | "Error") {
-            return true;
-        }
-
-        // Look up ClassInfo from ast_map (no disk I/O).
-        match self.find_class_in_ast_map(class_name) {
-            Some(ci) => match &ci.parent_class {
-                Some(parent) => self.is_throwable_descendant(parent, depth + 1),
-                None => false, // no parent, not a Throwable type
-            },
-            None => false, // class not loaded — can't confirm
-        }
     }
 
     /// Check whether a FQN is likely a namespace (not a class).
@@ -1448,1524 +1426,8 @@ impl Backend {
         }
         false
     }
-
-    /// Check whether the class identified by `class_name` is a concrete,
-    /// non-abstract `class` (i.e. `ClassLikeKind::Class` and not
-    /// `is_abstract`) in the `ast_map`.
-    ///
-    /// Returns `false` for interfaces, traits, enums, abstract classes,
-    /// and classes that are not currently loaded.  This never triggers
-    /// disk I/O.
-    fn is_concrete_class_in_ast_map(&self, class_name: &str) -> bool {
-        self.find_class_in_ast_map(class_name)
-            .is_some_and(|c| c.kind == ClassLikeKind::Class && !c.is_abstract)
-    }
-
-    /// Collect the FQN of every class that is currently loaded in the
-    /// `ast_map`.  Used by `build_catch_class_name_completions` so that
-    /// classmap / stub sources can skip classes we already evaluated.
-    fn collect_loaded_fqns(&self) -> HashSet<String> {
-        let mut loaded = HashSet::new();
-        let Ok(amap) = self.ast_map.lock() else {
-            return loaded;
-        };
-        let nmap = self.namespace_map.lock().ok();
-        for (uri, classes) in amap.iter() {
-            let file_ns = nmap
-                .as_ref()
-                .and_then(|nm| nm.get(uri))
-                .and_then(|opt| opt.as_deref());
-            for cls in classes {
-                let fqn = if let Some(ns) = file_ns {
-                    format!("{}\\{}", ns, cls.name)
-                } else {
-                    cls.name.clone()
-                };
-                loaded.insert(fqn);
-            }
-        }
-        loaded
-    }
-
-    /// Build completion items for class names, filtered for Throwable
-    /// descendants.  Used as the catch clause fallback when no specific
-    /// `@throws` types were discovered in the try block, and for
-    /// `throw new` completion.
-    ///
-    /// The logic follows this priority:
-    ///
-    /// 1. **Loaded concrete classes** (use-imports, same-namespace,
-    ///    class_index): only classes (not interfaces/traits/enums) whose
-    ///    parent chain is fully walkable to `\Throwable` / `\Exception`
-    ///    / `\Error`.
-    /// 2. **Classmap** entries (not yet parsed) whose short name ends
-    ///    with `Exception` — filtered to exclude already-loaded FQNs.
-    /// 3. **Stub** entries whose short name ends with `Exception` —
-    ///    filtered to exclude already-loaded FQNs.
-    /// 4. **Classmap** entries that do *not* end with `Exception`.
-    /// 5. **Stub** entries that do *not* end with `Exception`.
-    pub(crate) fn build_catch_class_name_completions(
-        &self,
-        file_use_map: &HashMap<String, String>,
-        file_namespace: &Option<String>,
-        prefix: &str,
-        content: &str,
-        is_new: bool,
-        position: Position,
-    ) -> (Vec<CompletionItem>, bool) {
-        let has_leading_backslash = prefix.starts_with('\\');
-        let normalized = prefix.strip_prefix('\\').unwrap_or(prefix);
-        let prefix_lower = normalized.to_lowercase();
-        let is_fqn_prefix = has_leading_backslash || normalized.contains('\\');
-
-        // When the user is typing a namespace-qualified reference,
-        // provide an explicit replacement range so the editor replaces
-        // the entire typed prefix (including namespace separators).
-        let fqn_replace_range = if is_fqn_prefix {
-            Some(Range {
-                start: Position {
-                    line: position.line,
-                    character: position
-                        .character
-                        .saturating_sub(prefix.chars().count() as u32),
-                },
-                end: position,
-            })
-        } else {
-            None
-        };
-        let mut seen_fqns: HashSet<String> = HashSet::new();
-        let mut items: Vec<CompletionItem> = Vec::new();
-
-        let use_block = analyze_use_block(content);
-
-        // Build the set of every FQN currently in the ast_map so that
-        // classmap / stub sources can exclude already-evaluated classes.
-        let loaded_fqns = self.collect_loaded_fqns();
-
-        // ── 1a. Use-imported classes (must be concrete + Throwable) ─
-        for (short_name, fqn) in file_use_map {
-            if !matches_class_prefix(short_name, fqn, &prefix_lower, is_fqn_prefix) {
-                continue;
-            }
-            if !seen_fqns.insert(fqn.clone()) {
-                continue;
-            }
-            // Only concrete classes (not interfaces/traits/enums)
-            if !self.is_concrete_class_in_ast_map(fqn) {
-                continue;
-            }
-            // Strict check: only include if confirmed Throwable descendant
-            if !self.is_throwable_descendant(fqn, 0) {
-                continue;
-            }
-            let (label, base_name, filter, _use_import) = class_completion_texts(
-                short_name,
-                fqn,
-                is_fqn_prefix,
-                has_leading_backslash,
-                file_namespace,
-                &prefix_lower,
-            );
-            let (insert_text, insert_text_format) = if is_new {
-                Self::build_new_insert(&base_name, None)
-            } else {
-                (base_name, None)
-            };
-            items.push(CompletionItem {
-                label,
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some(fqn.clone()),
-                insert_text: Some(insert_text.clone()),
-                insert_text_format,
-                filter_text: Some(filter),
-                sort_text: Some(format!("0_{}", short_name.to_lowercase())),
-                text_edit: fqn_replace_range.map(|range| {
-                    CompletionTextEdit::Edit(TextEdit {
-                        range,
-                        new_text: insert_text.clone(),
-                    })
-                }),
-                ..CompletionItem::default()
-            });
-        }
-
-        // ── 1b. Same-namespace classes (must be concrete + Throwable)
-        // Collect candidates while holding the lock, then drop the lock
-        // before calling `is_throwable_descendant` (which re-locks
-        // `ast_map` internally — Rust's Mutex is not re-entrant).
-        if let Some(ns) = file_namespace
-            && let Ok(nmap) = self.namespace_map.lock()
-        {
-            let same_ns_uris: Vec<String> = nmap
-                .iter()
-                .filter_map(|(uri, opt_ns)| {
-                    if opt_ns.as_deref() == Some(ns.as_str()) {
-                        Some(uri.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            drop(nmap);
-
-            // Phase 1: collect candidate (name, fqn, is_deprecated)
-            // tuples under the ast_map lock — only concrete classes.
-            let mut candidates: Vec<(String, String, bool)> = Vec::new();
-            if let Ok(amap) = self.ast_map.lock() {
-                for uri in &same_ns_uris {
-                    if let Some(classes) = amap.get(uri) {
-                        for cls in classes {
-                            if is_anonymous_class(&cls.name) {
-                                continue;
-                            }
-                            if cls.kind != ClassLikeKind::Class || cls.is_abstract {
-                                continue;
-                            }
-                            let cls_fqn = format!("{}\\{}", ns, cls.name);
-                            if !matches_class_prefix(
-                                &cls.name,
-                                &cls_fqn,
-                                &prefix_lower,
-                                is_fqn_prefix,
-                            ) {
-                                continue;
-                            }
-                            let fqn = cls_fqn;
-                            if !seen_fqns.insert(fqn.clone()) {
-                                continue;
-                            }
-                            candidates.push((cls.name.clone(), fqn, cls.is_deprecated));
-                        }
-                    }
-                }
-            }
-            // Phase 2: filter by Throwable ancestry without holding locks.
-            for (name, fqn, is_deprecated) in candidates {
-                if !self.is_throwable_descendant(&fqn, 0) {
-                    continue;
-                }
-                let (label, base_name, filter, _use_import) = class_completion_texts(
-                    &name,
-                    &fqn,
-                    is_fqn_prefix,
-                    has_leading_backslash,
-                    file_namespace,
-                    &prefix_lower,
-                );
-                let (insert_text, insert_text_format) = if is_new {
-                    // Same-namespace classes are collected without
-                    // ClassInfo, so we cannot check __construct here.
-                    Self::build_new_insert(&base_name, None)
-                } else {
-                    (base_name, None)
-                };
-                items.push(CompletionItem {
-                    label,
-                    kind: Some(CompletionItemKind::CLASS),
-                    detail: Some(fqn),
-                    insert_text: Some(insert_text.clone()),
-                    insert_text_format,
-                    filter_text: Some(filter),
-                    sort_text: Some(format!("1_{}", name.to_lowercase())),
-                    deprecated: if is_deprecated { Some(true) } else { None },
-                    text_edit: fqn_replace_range.map(|range| {
-                        CompletionTextEdit::Edit(TextEdit {
-                            range,
-                            new_text: insert_text.clone(),
-                        })
-                    }),
-                    ..CompletionItem::default()
-                });
-            }
-        }
-
-        // ── 1c. class_index (must be concrete + Throwable) ──────────
-        if let Ok(idx) = self.class_index.lock() {
-            for fqn in idx.keys() {
-                let sn = short_name(fqn);
-                if !matches_class_prefix(sn, fqn, &prefix_lower, is_fqn_prefix) {
-                    continue;
-                }
-                if !seen_fqns.insert(fqn.clone()) {
-                    continue;
-                }
-                if !self.is_concrete_class_in_ast_map(fqn) {
-                    continue;
-                }
-                if !self.is_throwable_descendant(fqn, 0) {
-                    continue;
-                }
-                let (label, mut base_name, filter, mut use_import) = class_completion_texts(
-                    sn,
-                    fqn,
-                    is_fqn_prefix,
-                    has_leading_backslash,
-                    file_namespace,
-                    &prefix_lower,
-                );
-                // When the short name conflicts with an existing import,
-                // fall back to a fully-qualified reference at the usage
-                // site instead of inserting a duplicate `use` statement.
-                if let Some(ref import_fqn) = use_import
-                    && use_import_conflicts(import_fqn, file_use_map)
-                {
-                    base_name = format!("\\{}", import_fqn);
-                    use_import = None;
-                }
-                // In FQN mode, if the first namespace segment of the
-                // insert text matches an existing alias, prepend `\`
-                // so PHP resolves the name from the global namespace.
-                if is_fqn_prefix
-                    && !base_name.starts_with('\\')
-                    && let Some(first_seg) = base_name.split('\\').next()
-                    && file_use_map
-                        .keys()
-                        .any(|a| a.eq_ignore_ascii_case(first_seg))
-                {
-                    base_name = format!("\\{}", base_name);
-                }
-                let (insert_text, insert_text_format) = if is_new {
-                    (format!("{base_name}()$0"), Some(InsertTextFormat::SNIPPET))
-                } else {
-                    (base_name, None)
-                };
-                items.push(CompletionItem {
-                    label,
-                    kind: Some(CompletionItemKind::CLASS),
-                    detail: Some(fqn.clone()),
-                    insert_text: Some(insert_text.clone()),
-                    insert_text_format,
-                    filter_text: Some(filter),
-                    sort_text: Some(format!("2_{}", sn.to_lowercase())),
-                    text_edit: fqn_replace_range.map(|range| {
-                        CompletionTextEdit::Edit(TextEdit {
-                            range,
-                            new_text: insert_text,
-                        })
-                    }),
-                    additional_text_edits: use_import.as_ref().and_then(|import_fqn| {
-                        build_use_edit(import_fqn, &use_block, file_namespace)
-                    }),
-                    ..CompletionItem::default()
-                });
-            }
-        }
-
-        // ── 2. Classmap — names ending with "Exception" ─────────────
-        // ── 4. Classmap — names NOT ending with "Exception" ─────────
-        // We collect both buckets in a single pass over the classmap and
-        // assign different sort_text prefixes so "Exception" entries
-        // appear first.
-        if let Ok(cmap) = self.classmap.lock() {
-            for fqn in cmap.keys() {
-                if loaded_fqns.contains(fqn) {
-                    continue;
-                }
-                let sn = short_name(fqn);
-                if !matches_class_prefix(sn, fqn, &prefix_lower, is_fqn_prefix) {
-                    continue;
-                }
-                if !seen_fqns.insert(fqn.clone()) {
-                    continue;
-                }
-                let prefix_num = if sn.ends_with("Exception") { "3" } else { "5" };
-                let (label, mut base_name, filter, mut use_import) = class_completion_texts(
-                    sn,
-                    fqn,
-                    is_fqn_prefix,
-                    has_leading_backslash,
-                    file_namespace,
-                    &prefix_lower,
-                );
-                // When the short name conflicts with an existing import,
-                // fall back to a fully-qualified reference at the usage
-                // site instead of inserting a duplicate `use` statement.
-                if let Some(ref import_fqn) = use_import
-                    && use_import_conflicts(import_fqn, file_use_map)
-                {
-                    base_name = format!("\\{}", import_fqn);
-                    use_import = None;
-                }
-                // In FQN mode, if the first namespace segment of the
-                // insert text matches an existing alias, prepend `\`
-                // so PHP resolves the name from the global namespace.
-                if is_fqn_prefix
-                    && !base_name.starts_with('\\')
-                    && let Some(first_seg) = base_name.split('\\').next()
-                    && file_use_map
-                        .keys()
-                        .any(|a| a.eq_ignore_ascii_case(first_seg))
-                {
-                    base_name = format!("\\{}", base_name);
-                }
-                let (insert_text, insert_text_format) = if is_new {
-                    (format!("{base_name}()$0"), Some(InsertTextFormat::SNIPPET))
-                } else {
-                    (base_name, None)
-                };
-                items.push(CompletionItem {
-                    label,
-                    kind: Some(CompletionItemKind::CLASS),
-                    detail: Some(fqn.clone()),
-                    insert_text: Some(insert_text.clone()),
-                    insert_text_format,
-                    filter_text: Some(filter),
-                    sort_text: Some(format!("{}_{}", prefix_num, sn.to_lowercase())),
-                    text_edit: fqn_replace_range.map(|range| {
-                        CompletionTextEdit::Edit(TextEdit {
-                            range,
-                            new_text: insert_text,
-                        })
-                    }),
-                    additional_text_edits: use_import.as_ref().and_then(|import_fqn| {
-                        build_use_edit(import_fqn, &use_block, file_namespace)
-                    }),
-                    ..CompletionItem::default()
-                });
-            }
-        }
-
-        // ── 3. Stubs — names ending with "Exception" ────────────────
-        // ── 5. Stubs — names NOT ending with "Exception" ────────────
-        for &name in self.stub_index.keys() {
-            if loaded_fqns.contains(name) {
-                continue;
-            }
-            let sn = short_name(name);
-            if !matches_class_prefix(sn, name, &prefix_lower, is_fqn_prefix) {
-                continue;
-            }
-            if !seen_fqns.insert(name.to_string()) {
-                continue;
-            }
-            let prefix_num = if sn.ends_with("Exception") { "4" } else { "6" };
-            let (label, mut base_name, filter, mut use_import) = class_completion_texts(
-                sn,
-                name,
-                is_fqn_prefix,
-                has_leading_backslash,
-                file_namespace,
-                &prefix_lower,
-            );
-            // When the short name conflicts with an existing import,
-            // fall back to a fully-qualified reference at the usage
-            // site instead of inserting a duplicate `use` statement.
-            if let Some(ref import_fqn) = use_import
-                && use_import_conflicts(import_fqn, file_use_map)
-            {
-                base_name = format!("\\{}", import_fqn);
-                use_import = None;
-            }
-            // In FQN mode, if the first namespace segment of the
-            // insert text matches an existing alias, prepend `\`
-            // so PHP resolves the name from the global namespace.
-            if is_fqn_prefix
-                && !base_name.starts_with('\\')
-                && let Some(first_seg) = base_name.split('\\').next()
-                && file_use_map
-                    .keys()
-                    .any(|a| a.eq_ignore_ascii_case(first_seg))
-            {
-                base_name = format!("\\{}", base_name);
-            }
-            let (insert_text, insert_text_format) = if is_new {
-                (format!("{base_name}()$0"), Some(InsertTextFormat::SNIPPET))
-            } else {
-                (base_name, None)
-            };
-            items.push(CompletionItem {
-                label,
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some(name.to_string()),
-                insert_text: Some(insert_text.clone()),
-                insert_text_format,
-                filter_text: Some(filter),
-                sort_text: Some(format!("{}_{}", prefix_num, sn.to_lowercase())),
-                text_edit: fqn_replace_range.map(|range| {
-                    CompletionTextEdit::Edit(TextEdit {
-                        range,
-                        new_text: insert_text,
-                    })
-                }),
-                additional_text_edits: use_import
-                    .as_ref()
-                    .and_then(|import_fqn| build_use_edit(import_fqn, &use_block, file_namespace)),
-                ..CompletionItem::default()
-            });
-        }
-
-        let is_incomplete = items.len() > Self::MAX_CLASS_COMPLETIONS;
-        if is_incomplete {
-            items.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
-            items.truncate(Self::MAX_CLASS_COMPLETIONS);
-        }
-
-        (items, is_incomplete)
-    }
-
-    // ─── Constant name completion ───────────────────────────────────
-
-    /// Build completion items for standalone constants (`define()` constants)
-    /// from all known sources.
-    ///
-    /// Sources (in priority order):
-    ///   1. Constants discovered from parsed files (`global_defines`)
-    ///   2. Built-in PHP constants from embedded stubs (`stub_constant_index`)
-    ///
-    /// Each item uses the constant name as `label` and the source as `detail`.
-    /// Items are deduplicated by name.
-    ///
-    /// Returns `(items, is_incomplete)`.  When the total number of
-    /// matching constants exceeds [`MAX_CONSTANT_COMPLETIONS`], the result
-    /// is truncated and `is_incomplete` is `true`.
-    const MAX_CONSTANT_COMPLETIONS: usize = 100;
-
-    /// Build completion items for global constants matching `prefix`.
-    pub(crate) fn build_constant_completions(&self, prefix: &str) -> (Vec<CompletionItem>, bool) {
-        let prefix_lower = prefix.strip_prefix('\\').unwrap_or(prefix).to_lowercase();
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut items: Vec<CompletionItem> = Vec::new();
-
-        // ── 1. User-defined constants (from parsed files) ───────────
-        if let Ok(dmap) = self.global_defines.lock() {
-            for (name, _) in dmap.iter() {
-                if !name.to_lowercase().contains(&prefix_lower) {
-                    continue;
-                }
-                if !seen.insert(name.clone()) {
-                    continue;
-                }
-                items.push(CompletionItem {
-                    label: name.clone(),
-                    kind: Some(CompletionItemKind::CONSTANT),
-                    detail: Some("define constant".to_string()),
-                    insert_text: Some(name.clone()),
-                    filter_text: Some(name.clone()),
-                    sort_text: Some(format!("5_{}", name.to_lowercase())),
-                    ..CompletionItem::default()
-                });
-            }
-        }
-
-        // ── 2. Built-in PHP constants from stubs ────────────────────
-        for &name in self.stub_constant_index.keys() {
-            if !name.to_lowercase().contains(&prefix_lower) {
-                continue;
-            }
-            if !seen.insert(name.to_string()) {
-                continue;
-            }
-            items.push(CompletionItem {
-                label: name.to_string(),
-                kind: Some(CompletionItemKind::CONSTANT),
-                detail: Some("PHP constant".to_string()),
-                insert_text: Some(name.to_string()),
-                filter_text: Some(name.to_string()),
-                sort_text: Some(format!("6_{}", name.to_lowercase())),
-                ..CompletionItem::default()
-            });
-        }
-
-        let is_incomplete = items.len() > Self::MAX_CONSTANT_COMPLETIONS;
-        if is_incomplete {
-            items.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
-            items.truncate(Self::MAX_CONSTANT_COMPLETIONS);
-        }
-
-        (items, is_incomplete)
-    }
-
-    // ─── Function name completion ───────────────────────────────────
-
-    /// Build a label showing the full function signature.
-    ///
-    /// Example: `array_map(callable|null $callback, array $array, array ...$arrays): array`
-    pub(crate) fn build_function_label(func: &FunctionInfo) -> String {
-        let params: Vec<String> = func
-            .parameters
-            .iter()
-            .map(|p| {
-                let mut parts = Vec::new();
-                if let Some(ref th) = p.type_hint {
-                    parts.push(th.clone());
-                }
-                if p.is_reference {
-                    parts.push(format!("&{}", p.name));
-                } else if p.is_variadic {
-                    parts.push(format!("...{}", p.name));
-                } else {
-                    parts.push(p.name.clone());
-                }
-                let param_str = parts.join(" ");
-                if !p.is_required && !p.is_variadic {
-                    format!("{} = ...", param_str)
-                } else {
-                    param_str
-                }
-            })
-            .collect();
-
-        let ret = func
-            .return_type
-            .as_ref()
-            .map(|r| format!(": {}", r))
-            .unwrap_or_default();
-
-        format!("{}({}){}", func.name, params.join(", "), ret)
-    }
-
-    /// Build completion items for standalone functions from all known sources.
-    ///
-    /// Sources (in priority order):
-    ///   1. Functions discovered from parsed files (`global_functions`)
-    ///   2. Built-in PHP functions from embedded stubs (`stub_function_index`)
-    ///
-    /// For user-defined functions (source 1), the full signature is shown in
-    /// the label because we already have a parsed `FunctionInfo`.  For stub
-    /// functions (source 2), only the function name is shown to avoid the
-    /// cost of parsing every matching stub at completion time.
-    ///
-    /// Returns `(items, is_incomplete)`.  When the total number of
-    /// matching functions exceeds [`MAX_FUNCTION_COMPLETIONS`], the result
-    /// is truncated and `is_incomplete` is `true`.
-    const MAX_FUNCTION_COMPLETIONS: usize = 100;
-
-    /// Build completion items for standalone functions matching `prefix`.
-    ///
-    /// When `for_use_import` is `true` the items are tailored for a
-    /// `use function` statement: the insert text is the FQN (so that
-    /// `use function FQN;` is produced) and no parentheses are appended.
-    ///
-    /// When `for_use_import` is `false`, namespaced functions get an
-    /// `additional_text_edits` entry that inserts `use function FQN;`
-    /// at the correct position, mirroring how class auto-import works.
-    /// The `content` and `file_namespace` parameters are required for
-    /// this auto-import; pass `None` / empty when not needed.
-    pub(crate) fn build_function_completions(
-        &self,
-        prefix: &str,
-        for_use_import: bool,
-        content: Option<&str>,
-        file_namespace: &Option<String>,
-    ) -> (Vec<CompletionItem>, bool) {
-        let prefix_lower = prefix.strip_prefix('\\').unwrap_or(prefix).to_lowercase();
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut items: Vec<CompletionItem> = Vec::new();
-
-        // Pre-compute use-block info for auto-import insertion.
-        let use_block = content.map(analyze_use_block);
-
-        // ── 1. User-defined functions (from parsed files) ───────────
-        if let Ok(fmap) = self.global_functions.lock() {
-            for (key, (_uri, info)) in fmap.iter() {
-                // Match against both the FQN (key) and the short name so
-                // that typing either finds the function.
-                if !key.to_lowercase().contains(&prefix_lower)
-                    && !info.name.to_lowercase().contains(&prefix_lower)
-                {
-                    continue;
-                }
-                // Deduplicate on the map key (FQN for namespaced
-                // functions, bare name for global ones).  User-defined
-                // functions run first, so they shadow same-named stubs.
-                if !seen.insert(key.clone()) {
-                    continue;
-                }
-
-                let is_namespaced = info.namespace.is_some();
-                let fqn = key.clone();
-
-                if for_use_import {
-                    // `use function` context: insert the FQN so the
-                    // resulting statement reads `use function FQN;`.
-                    let label = if is_namespaced {
-                        fqn.clone()
-                    } else {
-                        Self::build_function_label(info)
-                    };
-                    let detail = if is_namespaced {
-                        Some(Self::build_function_label(info))
-                    } else {
-                        Some("function".to_string())
-                    };
-                    items.push(CompletionItem {
-                        label,
-                        kind: Some(CompletionItemKind::FUNCTION),
-                        detail,
-                        insert_text: Some(fqn.clone()),
-                        filter_text: Some(fqn.clone()),
-                        sort_text: Some(format!("4_{}", fqn.to_lowercase())),
-                        deprecated: if info.is_deprecated { Some(true) } else { None },
-                        ..CompletionItem::default()
-                    });
-                } else {
-                    // Inline context: insert the short name (with snippet
-                    // placeholders) and auto-import the FQN.
-                    let label = Self::build_function_label(info);
-                    let detail = if let Some(ref ns) = info.namespace {
-                        format!("function ({})", ns)
-                    } else {
-                        "function".to_string()
-                    };
-                    // No import needed when the function lives in the
-                    // same namespace as the current file.
-                    let same_ns = file_namespace
-                        .as_ref()
-                        .zip(info.namespace.as_ref())
-                        .is_some_and(|(file_ns, func_ns)| file_ns.eq_ignore_ascii_case(func_ns));
-                    let additional_text_edits = if is_namespaced && !same_ns {
-                        use_block
-                            .as_ref()
-                            .and_then(|ub| build_use_function_edit(&fqn, ub))
-                    } else {
-                        None
-                    };
-                    items.push(CompletionItem {
-                        label,
-                        kind: Some(CompletionItemKind::FUNCTION),
-                        detail: Some(detail),
-                        insert_text: Some(build_callable_snippet(&info.name, &info.parameters)),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        filter_text: Some(info.name.clone()),
-                        sort_text: Some(format!("4_{}", info.name.to_lowercase())),
-                        deprecated: if info.is_deprecated { Some(true) } else { None },
-                        additional_text_edits,
-                        ..CompletionItem::default()
-                    });
-                }
-            }
-        }
-
-        // ── 2. Built-in PHP functions from stubs ────────────────────
-        for &name in self.stub_function_index.keys() {
-            if !name.to_lowercase().contains(&prefix_lower) {
-                continue;
-            }
-            if !seen.insert(name.to_string()) {
-                continue;
-            }
-
-            let is_namespaced = name.contains('\\');
-            let sn = if is_namespaced {
-                short_name(name)
-            } else {
-                name
-            };
-
-            if for_use_import {
-                items.push(CompletionItem {
-                    label: name.to_string(),
-                    kind: Some(CompletionItemKind::FUNCTION),
-                    detail: Some("PHP function".to_string()),
-                    insert_text: Some(name.to_string()),
-                    filter_text: Some(name.to_string()),
-                    sort_text: Some(format!("5_{}", name.to_lowercase())),
-                    ..CompletionItem::default()
-                });
-            } else {
-                let detail = if is_namespaced {
-                    let ns = &name[..name.rfind('\\').unwrap()];
-                    format!("PHP function ({})", ns)
-                } else {
-                    "PHP function".to_string()
-                };
-                let additional_text_edits = if is_namespaced {
-                    use_block
-                        .as_ref()
-                        .and_then(|ub| build_use_function_edit(name, ub))
-                } else {
-                    None
-                };
-                items.push(CompletionItem {
-                    label: sn.to_string(),
-                    kind: Some(CompletionItemKind::FUNCTION),
-                    detail: Some(detail),
-                    insert_text: Some(format!("{sn}()$0")),
-                    insert_text_format: Some(InsertTextFormat::SNIPPET),
-                    filter_text: Some(sn.to_string()),
-                    sort_text: Some(format!("5_{}", sn.to_lowercase())),
-                    additional_text_edits,
-                    ..CompletionItem::default()
-                });
-            }
-        }
-
-        let is_incomplete = items.len() > Self::MAX_FUNCTION_COMPLETIONS;
-        if is_incomplete {
-            items.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
-            items.truncate(Self::MAX_FUNCTION_COMPLETIONS);
-        }
-
-        (items, is_incomplete)
-    }
-
-    // ─── Namespace declaration completion ───────────────────────────
-
-    /// Maximum number of namespace suggestions to return.
-    const MAX_NAMESPACE_COMPLETIONS: usize = 100;
-
-    /// Build completion items for a `namespace` declaration.
-    ///
-    /// Only namespaces that fall under a known PSR-4 prefix are
-    /// suggested.  The sources are:
-    ///   1. PSR-4 mapping prefixes themselves (exploded to every level)
-    ///   2. Namespace portions of FQNs from `namespace_map`,
-    ///      `class_index`, `classmap`, and `ast_map` — but only when
-    ///      they start with a PSR-4 prefix.
-    ///
-    /// Every accepted namespace is exploded to each intermediate level
-    /// (e.g. `A\B\C` also inserts `A\B` and `A`).
-    ///
-    /// Returns `(items, is_incomplete)`.
-    pub(crate) fn build_namespace_completions(
-        &self,
-        prefix: &str,
-        position: Position,
-    ) -> (Vec<CompletionItem>, bool) {
-        let prefix_lower = prefix.to_lowercase();
-        let mut namespaces: HashSet<String> = HashSet::new();
-
-        // Collect the project's own PSR-4 prefixes (without trailing
-        // `\`) so we can gate which cache entries are eligible.  Vendor
-        // packages are excluded — you would never declare a namespace
-        // that lives inside a vendor package.
-        let psr4_prefixes: Vec<String> = self
-            .psr4_mappings
-            .lock()
-            .ok()
-            .map(|mappings| {
-                mappings
-                    .iter()
-                    .filter(|m| !m.is_vendor)
-                    .map(|m| m.prefix.trim_end_matches('\\').to_string())
-                    .filter(|p| !p.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Helper: insert a namespace and all its parent namespaces.
-        fn insert_with_parents(ns: &str, set: &mut HashSet<String>) {
-            if ns.is_empty() {
-                return;
-            }
-            set.insert(ns.to_string());
-            let mut parts: Vec<&str> = ns.split('\\').collect();
-            while parts.len() > 1 {
-                parts.pop();
-                set.insert(parts.join("\\"));
-            }
-        }
-
-        /// Check whether `ns` falls under one of the PSR-4 prefixes.
-        fn under_psr4(ns: &str, prefixes: &[String]) -> bool {
-            prefixes
-                .iter()
-                .any(|p| ns == p || ns.starts_with(&format!("{}\\", p)))
-        }
-
-        // Helper: insert ns (and parents) only if under a PSR-4 prefix.
-        fn insert_if_under_psr4(ns: &str, set: &mut HashSet<String>, prefixes: &[String]) {
-            if under_psr4(ns, prefixes) {
-                insert_with_parents(ns, set);
-            }
-        }
-
-        // ── 1. PSR-4 prefixes (always included, exploded) ───────────
-        for p in &psr4_prefixes {
-            insert_with_parents(p, &mut namespaces);
-        }
-
-        // ── 2. namespace_map (already-opened files) ─────────────────
-        if let Ok(nmap) = self.namespace_map.lock() {
-            for ns in nmap.values().flatten() {
-                insert_if_under_psr4(ns, &mut namespaces, &psr4_prefixes);
-            }
-        }
-
-        // ── 3. ast_map namespace portions ───────────────────────────
-        if let Ok(amap) = self.ast_map.lock() {
-            let nmap = self.namespace_map.lock().ok();
-            for (uri, classes) in amap.iter() {
-                let file_ns = nmap
-                    .as_ref()
-                    .and_then(|nm| nm.get(uri))
-                    .and_then(|opt| opt.as_deref());
-                if let Some(ns) = file_ns {
-                    for cls in classes {
-                        let fqn = format!("{}\\{}", ns, cls.name);
-                        if let Some(ns_end) = fqn.rfind('\\') {
-                            insert_if_under_psr4(&fqn[..ns_end], &mut namespaces, &psr4_prefixes);
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── 4. class_index + classmap namespace portions ────────────
-        if let Ok(idx) = self.class_index.lock() {
-            for fqn in idx.keys() {
-                if let Some(ns_end) = fqn.rfind('\\') {
-                    insert_if_under_psr4(&fqn[..ns_end], &mut namespaces, &psr4_prefixes);
-                }
-            }
-        }
-        if let Ok(cmap) = self.classmap.lock() {
-            for fqn in cmap.keys() {
-                if let Some(ns_end) = fqn.rfind('\\') {
-                    insert_if_under_psr4(&fqn[..ns_end], &mut namespaces, &psr4_prefixes);
-                }
-            }
-        }
-
-        // When the typed prefix contains a backslash the editor may
-        // only replace the segment after the last `\`.  Provide an
-        // explicit replacement range covering the entire typed prefix
-        // so that picking `Tests\Feature\Domain` after typing
-        // `Tests\Feature\D` replaces the whole thing instead of
-        // inserting a duplicate prefix.
-        let replace_range = if prefix.contains('\\') {
-            Some(Range {
-                start: Position {
-                    line: position.line,
-                    character: position
-                        .character
-                        .saturating_sub(prefix.chars().count() as u32),
-                },
-                end: position,
-            })
-        } else {
-            None
-        };
-
-        // ── Filter and build items ──────────────────────────────────
-        let mut items: Vec<CompletionItem> = namespaces
-            .into_iter()
-            .filter(|ns| ns.to_lowercase().contains(&prefix_lower))
-            .map(|ns| {
-                let sn = ns.rsplit('\\').next().unwrap_or(&ns);
-                CompletionItem {
-                    label: ns.clone(),
-                    kind: Some(CompletionItemKind::MODULE),
-                    insert_text: Some(ns.clone()),
-                    filter_text: Some(ns.clone()),
-                    sort_text: Some(format!("0_{}", sn.to_lowercase())),
-                    text_edit: replace_range.map(|range| {
-                        CompletionTextEdit::Edit(TextEdit {
-                            range,
-                            new_text: ns,
-                        })
-                    }),
-                    ..CompletionItem::default()
-                }
-            })
-            .collect();
-
-        let is_incomplete = items.len() > Self::MAX_NAMESPACE_COMPLETIONS;
-        if is_incomplete {
-            items.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
-            items.truncate(Self::MAX_NAMESPACE_COMPLETIONS);
-        }
-
-        (items, is_incomplete)
-    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::ClassLikeKind;
-
-    // ── detect_stub_class_kind ──────────────────────────────────────
-
-    #[test]
-    fn test_detect_class_in_single_class_file() {
-        let source = "<?php\nclass DateTime {\n}\n";
-        let result = detect_stub_class_kind("DateTime", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Class, false, false)),
-            "should detect a plain class"
-        );
-    }
-
-    #[test]
-    fn test_detect_interface_in_single_file() {
-        let source = "<?php\ninterface JsonSerializable\n{\n}\n";
-        let result = detect_stub_class_kind("JsonSerializable", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Interface, false, false)),
-            "should detect an interface"
-        );
-    }
-
-    #[test]
-    fn test_detect_abstract_class() {
-        let source = "<?php\nabstract class SplHeap implements Iterator, Countable\n{\n}\n";
-        let result = detect_stub_class_kind("SplHeap", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Class, true, false)),
-            "should detect an abstract class"
-        );
-    }
-
-    #[test]
-    fn test_detect_final_class() {
-        let source = "<?php\nfinal class Closure {\n}\n";
-        let result = detect_stub_class_kind("Closure", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Class, false, true)),
-            "should detect a final class"
-        );
-    }
-
-    #[test]
-    fn test_detect_readonly_class() {
-        let source = "<?php\nreadonly class Value {\n}\n";
-        let result = detect_stub_class_kind("Value", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Class, false, false)),
-            "readonly class is neither abstract nor final"
-        );
-    }
-
-    #[test]
-    fn test_detect_final_readonly_class() {
-        let source = "<?php\nfinal readonly class Immutable {\n}\n";
-        let result = detect_stub_class_kind("Immutable", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Class, false, true)),
-            "should detect final through readonly"
-        );
-    }
-
-    #[test]
-    fn test_detect_abstract_readonly_class() {
-        let source = "<?php\nabstract readonly class Base {\n}\n";
-        let result = detect_stub_class_kind("Base", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Class, true, false)),
-            "should detect abstract through readonly"
-        );
-    }
-
-    #[test]
-    fn test_detect_trait() {
-        let source = "<?php\ntrait Stringable {\n}\n";
-        let result = detect_stub_class_kind("Stringable", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Trait, false, false)),
-            "should detect a trait"
-        );
-    }
-
-    #[test]
-    fn test_detect_enum() {
-        let source = "<?php\nenum Suit {\n}\n";
-        let result = detect_stub_class_kind("Suit", source);
-        assert_eq!(
-            result,
-            Some((ClassLikeKind::Enum, false, false)),
-            "should detect an enum"
-        );
-    }
-
-    #[test]
-    fn test_detect_class_in_multi_class_file() {
-        // Simulates SPL_c1.php which has many classes and a few interfaces.
-        let source = concat!(
-            "<?php\n",
-            "class SplFileInfo implements Stringable\n{\n}\n",
-            "class DirectoryIterator extends SplFileInfo implements SeekableIterator\n{\n}\n",
-            "class FilesystemIterator extends DirectoryIterator\n{\n}\n",
-            "abstract class SplHeap implements Iterator, Countable\n{\n}\n",
-            "interface SplObserver\n{\n}\n",
-            "interface SplSubject\n{\n}\n",
-            "class SplObjectStorage implements Countable\n{\n}\n",
-        );
-
-        assert_eq!(
-            detect_stub_class_kind("DirectoryIterator", source),
-            Some((ClassLikeKind::Class, false, false)),
-            "should find DirectoryIterator as a class in a multi-class file"
-        );
-        assert_eq!(
-            detect_stub_class_kind("SplHeap", source),
-            Some((ClassLikeKind::Class, true, false)),
-            "should find SplHeap as an abstract class"
-        );
-        assert_eq!(
-            detect_stub_class_kind("SplObserver", source),
-            Some((ClassLikeKind::Interface, false, false)),
-            "should find SplObserver as an interface"
-        );
-        assert_eq!(
-            detect_stub_class_kind("SplObjectStorage", source),
-            Some((ClassLikeKind::Class, false, false)),
-            "should find SplObjectStorage as a class"
-        );
-    }
-
-    #[test]
-    fn test_detect_does_not_match_substring() {
-        // "Iterator" appears as a substring in "DirectoryIterator" and
-        // "FilesystemIterator".  The word boundary check must prevent a
-        // false match.
-        let source = concat!(
-            "<?php\n",
-            "interface Iterator\n{\n}\n",
-            "class DirectoryIterator extends SplFileInfo\n{\n}\n",
-        );
-
-        assert_eq!(
-            detect_stub_class_kind("Iterator", source),
-            Some((ClassLikeKind::Interface, false, false)),
-            "should match the standalone 'Iterator' interface, not the substring in DirectoryIterator"
-        );
-    }
-
-    #[test]
-    fn test_detect_does_not_match_superstring() {
-        // Searching for "Directory" should NOT match "DirectoryIterator".
-        let source = "<?php\nclass DirectoryIterator extends SplFileInfo\n{\n}\n";
-        assert_eq!(
-            detect_stub_class_kind("Directory", source),
-            None,
-            "should not match 'Directory' inside 'DirectoryIterator'"
-        );
-    }
-
-    #[test]
-    fn test_detect_skips_name_in_comments() {
-        // The class name appears in a docblock comment, not a declaration.
-        let source = concat!(
-            "<?php\n",
-            "/**\n",
-            " * @see DirectoryIterator\n",
-            " */\n",
-            "class DirectoryIterator extends SplFileInfo\n{\n}\n",
-        );
-        assert_eq!(
-            detect_stub_class_kind("DirectoryIterator", source),
-            Some((ClassLikeKind::Class, false, false)),
-            "should skip the comment mention and find the actual class declaration"
-        );
-    }
-
-    #[test]
-    fn test_detect_skips_extends_mention() {
-        // "SplFileInfo" appears after `extends`, not as a declaration keyword.
-        let source = concat!(
-            "<?php\n",
-            "class DirectoryIterator extends SplFileInfo\n{\n}\n",
-        );
-        assert_eq!(
-            detect_stub_class_kind("SplFileInfo", source),
-            None,
-            "should not match SplFileInfo in 'extends SplFileInfo' (no declaration keyword before it)"
-        );
-    }
-
-    #[test]
-    fn test_detect_with_fqn_key() {
-        // The stub_index key might be a FQN like "Ds\\Set".
-        // detect_stub_class_kind should extract the short name "Set".
-        let source = concat!(
-            "<?php\n",
-            "namespace Ds;\n",
-            "class Set implements Collection\n{\n}\n",
-        );
-        assert_eq!(
-            detect_stub_class_kind("Ds\\Set", source),
-            Some((ClassLikeKind::Class, false, false)),
-            "should handle FQN keys by extracting the short name"
-        );
-    }
-
-    #[test]
-    fn test_detect_not_found() {
-        let source = "<?php\nclass Foo {\n}\n";
-        assert_eq!(
-            detect_stub_class_kind("Bar", source),
-            None,
-            "should return None when the class is not in the source"
-        );
-    }
-
-    #[test]
-    fn test_detect_class_with_extends_and_implements() {
-        let source = "<?php\nclass SplFixedArray implements Iterator, ArrayAccess, Countable, IteratorAggregate, JsonSerializable\n{\n}\n";
-        assert_eq!(
-            detect_stub_class_kind("SplFixedArray", source),
-            Some((ClassLikeKind::Class, false, false)),
-            "should detect a class with multiple implements"
-        );
-    }
-
-    // ── ClassNameContext::matches_kind_flags ─────────────────────────
-
-    #[test]
-    fn test_extends_class_rejects_interface() {
-        assert!(
-            !ClassNameContext::ExtendsClass.matches_kind_flags(
-                ClassLikeKind::Interface,
-                false,
-                false
-            ),
-            "ExtendsClass should reject interfaces"
-        );
-    }
-
-    #[test]
-    fn test_extends_class_rejects_final() {
-        assert!(
-            !ClassNameContext::ExtendsClass.matches_kind_flags(ClassLikeKind::Class, false, true),
-            "ExtendsClass should reject final classes"
-        );
-    }
-
-    #[test]
-    fn test_extends_class_accepts_abstract() {
-        assert!(
-            ClassNameContext::ExtendsClass.matches_kind_flags(ClassLikeKind::Class, true, false),
-            "ExtendsClass should accept abstract classes"
-        );
-    }
-
-    #[test]
-    fn test_implements_accepts_interface() {
-        assert!(
-            ClassNameContext::Implements.matches_kind_flags(ClassLikeKind::Interface, false, false),
-            "Implements should accept interfaces"
-        );
-    }
-
-    #[test]
-    fn test_implements_rejects_class() {
-        assert!(
-            !ClassNameContext::Implements.matches_kind_flags(ClassLikeKind::Class, false, false),
-            "Implements should reject classes"
-        );
-    }
-
-    #[test]
-    fn test_trait_use_accepts_trait() {
-        assert!(
-            ClassNameContext::TraitUse.matches_kind_flags(ClassLikeKind::Trait, false, false),
-            "TraitUse should accept traits"
-        );
-    }
-
-    #[test]
-    fn test_trait_use_rejects_class() {
-        assert!(
-            !ClassNameContext::TraitUse.matches_kind_flags(ClassLikeKind::Class, false, false),
-            "TraitUse should reject classes"
-        );
-    }
-
-    #[test]
-    fn test_instanceof_rejects_trait() {
-        assert!(
-            !ClassNameContext::Instanceof.matches_kind_flags(ClassLikeKind::Trait, false, false),
-            "Instanceof should reject traits"
-        );
-    }
-
-    #[test]
-    fn test_instanceof_accepts_enum() {
-        assert!(
-            ClassNameContext::Instanceof.matches_kind_flags(ClassLikeKind::Enum, false, false),
-            "Instanceof should accept enums"
-        );
-    }
-
-    #[test]
-    fn test_new_rejects_abstract() {
-        assert!(
-            !ClassNameContext::New.matches_kind_flags(ClassLikeKind::Class, true, false),
-            "New should reject abstract classes"
-        );
-    }
-
-    #[test]
-    fn test_new_rejects_interface() {
-        assert!(
-            !ClassNameContext::New.matches_kind_flags(ClassLikeKind::Interface, false, false),
-            "New should reject interfaces"
-        );
-    }
-
-    // ── UseImport / UseFunction / UseConst detection ────────────────
-
-    #[test]
-    fn test_detect_use_import_context() {
-        let content = "<?php\nuse App";
-        let pos = Position {
-            line: 1,
-            character: 7,
-        };
-        assert_eq!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::UseImport,
-            "Top-level `use` should produce UseImport"
-        );
-    }
-
-    #[test]
-    fn test_detect_use_function_context() {
-        let content = "<?php\nuse function array";
-        let pos = Position {
-            line: 1,
-            character: 19,
-        };
-        assert_eq!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::UseFunction,
-            "`use function` should produce UseFunction"
-        );
-    }
-
-    #[test]
-    fn test_detect_use_const_context() {
-        let content = "<?php\nuse const PHP";
-        let pos = Position {
-            line: 1,
-            character: 14,
-        };
-        assert_eq!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::UseConst,
-            "`use const` should produce UseConst"
-        );
-    }
-
-    #[test]
-    fn test_detect_use_inside_class_body_is_trait_use() {
-        let content = "<?php\nclass Foo {\n    use Some";
-        let pos = Position {
-            line: 2,
-            character: 12,
-        };
-        assert_eq!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::TraitUse,
-            "`use` inside class body should remain TraitUse"
-        );
-    }
-
-    #[test]
-    fn test_use_import_is_class_only() {
-        assert!(
-            ClassNameContext::UseImport.is_class_only(),
-            "UseImport should be class-only (no constants or functions)"
-        );
-    }
-
-    #[test]
-    fn test_use_function_is_not_class_only() {
-        assert!(
-            !ClassNameContext::UseFunction.is_class_only(),
-            "UseFunction should NOT be class-only (handler shows functions)"
-        );
-    }
-
-    #[test]
-    fn test_use_const_is_not_class_only() {
-        assert!(
-            !ClassNameContext::UseConst.is_class_only(),
-            "UseConst should NOT be class-only (handler shows constants)"
-        );
-    }
-
-    #[test]
-    fn test_use_import_accepts_all_kinds() {
-        assert!(ClassNameContext::UseImport.matches_kind_flags(ClassLikeKind::Class, false, false));
-        assert!(ClassNameContext::UseImport.matches_kind_flags(
-            ClassLikeKind::Interface,
-            false,
-            false
-        ));
-        assert!(ClassNameContext::UseImport.matches_kind_flags(ClassLikeKind::Trait, false, false));
-        assert!(ClassNameContext::UseImport.matches_kind_flags(ClassLikeKind::Enum, false, false));
-    }
-
-    #[test]
-    fn test_detect_use_function_with_fqn_partial() {
-        let content = "<?php\nuse function App\\Helpers\\format";
-        let pos = Position {
-            line: 1,
-            character: 35,
-        };
-        assert_eq!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::UseFunction,
-            "`use function` with namespace-qualified partial should produce UseFunction"
-        );
-    }
-
-    #[test]
-    fn test_detect_use_const_with_fqn_partial() {
-        let content = "<?php\nuse const App\\Config\\DB";
-        let pos = Position {
-            line: 1,
-            character: 26,
-        };
-        assert_eq!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::UseConst,
-            "`use const` with namespace-qualified partial should produce UseConst"
-        );
-    }
-
-    // ── NamespaceDeclaration detection ──────────────────────────────
-
-    #[test]
-    fn test_detect_namespace_declaration_context() {
-        let content = "<?php\nnamespace App";
-        let pos = Position {
-            line: 1,
-            character: 13,
-        };
-        assert_eq!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::NamespaceDeclaration,
-            "Top-level `namespace` should produce NamespaceDeclaration"
-        );
-    }
-
-    #[test]
-    fn test_detect_namespace_declaration_with_partial_fqn() {
-        let content = "<?php\nnamespace App\\Models";
-        let pos = Position {
-            line: 1,
-            character: 22,
-        };
-        assert_eq!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::NamespaceDeclaration,
-            "`namespace App\\Models` should produce NamespaceDeclaration"
-        );
-    }
-
-    #[test]
-    fn test_namespace_inside_class_body_is_not_declaration() {
-        let content = "<?php\nclass Foo {\n    public function bar() {\n        namespace\n";
-        let pos = Position {
-            line: 3,
-            character: 17,
-        };
-        assert_ne!(
-            detect_class_name_context(content, pos),
-            ClassNameContext::NamespaceDeclaration,
-            "`namespace` inside class body (brace depth >= 1) should not be NamespaceDeclaration"
-        );
-    }
-
-    // ── class_completion_texts edge cases ───────────────────────────
-
-    #[test]
-    fn test_class_completion_texts_fqn_same_namespace_simplifies() {
-        let ns = Some("Demo".to_string());
-        let (label, insert, _filter, use_import) =
-            class_completion_texts("Box", "Demo\\Box", true, true, &ns, "demo\\");
-        assert_eq!(label, "Box", "Label should be the relative name");
-        assert_eq!(insert, "Box", "Insert text should be the relative name");
-        assert!(
-            use_import.is_none(),
-            "No use import needed for same namespace"
-        );
-    }
-
-    #[test]
-    fn test_class_completion_texts_fqn_different_namespace_keeps_fqn() {
-        let ns = Some("Demo".to_string());
-        let (label, insert, _filter, use_import) =
-            class_completion_texts("Foo", "Other\\Foo", true, true, &ns, "other\\");
-        assert_eq!(label, "Other\\Foo", "Label should be the full FQN");
-        assert_eq!(
-            insert, "\\Other\\Foo",
-            "Insert should have leading backslash"
-        );
-        assert!(use_import.is_none(), "FQN mode never produces a use import");
-    }
-
-    #[test]
-    fn test_class_completion_texts_non_fqn_always_short_name() {
-        let ns: Option<String> = None;
-        let (label, insert, _filter, use_import) = class_completion_texts(
-            "Dechunk",
-            "http\\Encoding\\Dechunk",
-            false,
-            false,
-            &ns,
-            "dec",
-        );
-        assert_eq!(
-            label, "Dechunk",
-            "Non-FQN mode should always use the short name"
-        );
-        assert_eq!(insert, "Dechunk");
-        assert_eq!(
-            use_import.as_deref(),
-            Some("http\\Encoding\\Dechunk"),
-            "Non-FQN mode should import the full FQN"
-        );
-    }
-
-    #[test]
-    fn test_class_completion_texts_fqn_nested_same_namespace() {
-        let ns = Some("Demo".to_string());
-        let (label, insert, _filter, use_import) =
-            class_completion_texts("Thing", "Demo\\Sub\\Thing", true, true, &ns, "demo\\");
-        assert_eq!(
-            label, "Sub\\Thing",
-            "Nested same-namespace class should use relative path"
-        );
-        assert_eq!(insert, "Sub\\Thing");
-        assert!(use_import.is_none(), "No use import for same namespace");
-    }
-
-    #[test]
-    fn test_class_completion_texts_leading_backslash_single_segment_same_ns() {
-        // Typing `\Demo` (no trailing backslash) in namespace `Demo`.
-        // `is_fqn = true` because `has_leading_backslash` is true.
-        // `prefix_lower = "demo"` (the normalised, lower-cased prefix).
-        let ns = Some("Demo".to_string());
-        let (label, insert, _filter, use_import) =
-            class_completion_texts("Box", "Demo\\Box", true, true, &ns, "demo");
-        assert_eq!(
-            label, "Box",
-            "Same-namespace class should simplify to short name"
-        );
-        assert_eq!(
-            insert, "Box",
-            "Insert text should be 'Box', not '\\Box' or '\\Demo\\Box'"
-        );
-        assert!(
-            use_import.is_none(),
-            "No use import needed for same namespace"
-        );
-    }
-
-    #[test]
-    fn test_class_completion_texts_leading_backslash_single_segment_diff_ns() {
-        // Typing `\Other` in namespace `Demo` — different namespace.
-        let ns = Some("Demo".to_string());
-        let (label, insert, _filter, use_import) =
-            class_completion_texts("Foo", "Other\\Foo", true, true, &ns, "other");
-        assert_eq!(label, "Other\\Foo", "Label should be the full FQN");
-        assert_eq!(
-            insert, "\\Other\\Foo",
-            "Insert should have leading backslash for different namespace"
-        );
-        assert!(use_import.is_none(), "FQN mode never produces a use import");
-    }
-}
+#[path = "class_completion_tests.rs"]
+mod tests;

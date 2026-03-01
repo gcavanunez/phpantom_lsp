@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use crate::symbol_map::VarDefKind;
 use tower_lsp::lsp_types::*;
 
-use super::member::MemberAccessHint;
+use super::member::{MemberAccessHint, MemberDefinitionCtx};
 use super::point_location;
 use crate::Backend;
 use crate::composer;
@@ -231,15 +231,13 @@ impl Backend {
                 } else {
                     MemberAccessHint::PropertyAccess
                 };
-                self.resolve_member_definition_with(
-                    uri,
-                    content,
-                    position,
+                let mctx = MemberDefinitionCtx {
                     member_name,
-                    subject_text,
+                    subject: subject_text,
                     access_kind,
                     access_hint,
-                )
+                };
+                self.resolve_member_definition_with(uri, content, position, &mctx)
             }
 
             SymbolKind::SelfStaticParent { keyword } => {

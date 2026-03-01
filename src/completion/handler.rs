@@ -27,7 +27,6 @@
 /// are also housed here because they are exclusively used by the
 /// completion handler.
 use std::collections::{HashMap, HashSet};
-use std::panic;
 
 use super::resolver::ResolutionCtx;
 
@@ -37,44 +36,9 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::completion::class_completion::{ClassNameContext, detect_class_name_context};
 use crate::completion::named_args::{NamedArgContext, parse_existing_args};
+use crate::docblock::types::PHPDOC_TYPE_KEYWORDS;
 use crate::symbol_map::SymbolKind;
 use crate::types::{CompletionTarget, FileContext};
-
-/// PHP scalar and built-in types offered in docblock type positions.
-///
-/// These are prepended to class-name results so that typing `@param str`
-/// suggests `string` alongside any user-defined classes starting with `str`.
-const PHPDOC_SCALAR_TYPES: &[&str] = &[
-    "string",
-    "int",
-    "float",
-    "bool",
-    "array",
-    "object",
-    "mixed",
-    "void",
-    "null",
-    "callable",
-    "iterable",
-    "never",
-    "self",
-    "static",
-    "true",
-    "false",
-    "class-string",
-    "list",
-    "non-empty-list",
-    "non-empty-array",
-    "positive-int",
-    "negative-int",
-    "non-negative-int",
-    "non-positive-int",
-    "non-empty-string",
-    "numeric-string",
-    "array-key",
-    "scalar",
-    "numeric",
-];
 
 /// Filter out completion items for classes defined in the current file.
 ///
@@ -222,11 +186,7 @@ impl Backend {
         let position = params.text_document_position.position;
 
         // Get file content for offset calculation
-        let content = if let Ok(files) = self.open_files.lock() {
-            files.get(&uri).cloned()
-        } else {
-            None
-        };
+        let content = self.get_file_content(&uri);
 
         if let Some(content) = content {
             // Gather per-file context (classes, use-map, namespace) in one
@@ -407,7 +367,7 @@ impl Backend {
                 // Offer scalar / built-in types first, then class
                 // / interface / enum names from the project.
                 let partial_lower = partial.to_lowercase();
-                let mut items: Vec<CompletionItem> = PHPDOC_SCALAR_TYPES
+                let mut items: Vec<CompletionItem> = PHPDOC_TYPE_KEYWORDS
                     .iter()
                     .filter(|t| t.to_lowercase().starts_with(&partial_lower))
                     .enumerate()
@@ -753,203 +713,201 @@ impl Backend {
         // (resolve_call_return_types_expr → type_hint_to_classes →
         // class_loader → find_or_load_class → parse_php →
         // resolve_class_with_inheritance) does not.
-        let member_items_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            let candidates = if suppress {
-                vec![]
-            } else {
-                let rctx = ResolutionCtx {
-                    current_class,
-                    all_classes: &ctx.classes,
-                    content,
-                    cursor_offset,
-                    class_loader: &class_loader,
-                    function_loader: Some(&function_loader),
-                };
-                Self::resolve_target_classes(&target.subject, target.access_kind, &rctx)
-            };
-            if candidates.is_empty() {
-                return vec![];
-            }
-
-            // `parent::`, `self::`, and `static::` are syntactically
-            // `::` but semantically different from external static
-            // access: they show both static and instance members
-            // (PHP allows `self::nonStaticMethod()` etc. from an
-            // instance context).  `parent::` additionally excludes
-            // private members, which is handled by visibility
-            // filtering below.
-            let effective_access =
-                if matches!(target.subject.as_str(), "parent" | "self" | "static") {
-                    crate::AccessKind::ParentDoubleColon
+        let member_items = crate::util::catch_panic_unwind_safe(
+            "member-access completion",
+            uri,
+            Some(position),
+            || {
+                let candidates = if suppress {
+                    vec![]
                 } else {
-                    target.access_kind
+                    let rctx = ResolutionCtx {
+                        current_class,
+                        all_classes: &ctx.classes,
+                        content,
+                        cursor_offset,
+                        class_loader: &class_loader,
+                        function_loader: Some(&function_loader),
+                    };
+                    Self::resolve_target_classes(&target.subject, target.access_kind, &rctx)
                 };
+                if candidates.is_empty() {
+                    return vec![];
+                }
 
-            // Merge completion items from all candidate classes,
-            // deduplicating by label so ambiguous variables show
-            // the union of all possible members.
-            let mut all_items: Vec<CompletionItem> = Vec::new();
-            let num_candidates = candidates.len();
-            // Track how many candidate classes contributed each label
-            // so we can distinguish intersection vs branch-only members.
-            let mut occurrence_count: HashMap<String, usize> = HashMap::new();
-            let current_class_name = current_class.map(|cc| cc.name.as_str());
-            for target_class in &candidates {
-                let merged = Self::resolve_class_fully(target_class, &class_loader);
-
-                // Determine whether the cursor is inside the target
-                // class itself or inside a (transitive) subclass.
-                // This controls whether `__construct` is offered
-                // via `::` access.
-                let is_self_or_ancestor = if let Some(cc) = current_class {
-                    if cc.name == target_class.name {
-                        true
+                // `parent::`, `self::`, and `static::` are syntactically
+                // `::` but semantically different from external static
+                // access: they show both static and instance members
+                // (PHP allows `self::nonStaticMethod()` etc. from an
+                // instance context).  `parent::` additionally excludes
+                // private members, which is handled by visibility
+                // filtering below.
+                let effective_access =
+                    if matches!(target.subject.as_str(), "parent" | "self" | "static") {
+                        crate::AccessKind::ParentDoubleColon
                     } else {
-                        // Walk the parent chain of the current class
-                        // to see if the target is an ancestor.
-                        let mut ancestor_name = cc.parent_class.clone();
-                        let mut found = false;
-                        let mut depth = 0u32;
-                        while let Some(ref name) = ancestor_name {
-                            depth += 1;
-                            if depth > 20 {
-                                break;
-                            }
-                            let normalized = name.strip_prefix('\\').unwrap_or(name);
-                            // ClassInfo.name stores the short name (e.g. "BaseService")
-                            // while parent_class stores the FQN (e.g. "App\\BaseService").
-                            // Compare against both the full name and the short (last segment)
-                            // so that cross-file inheritance is detected correctly.
-                            let short = normalized.rsplit('\\').next().unwrap_or(normalized);
-                            if normalized == target_class.name || short == target_class.name {
-                                found = true;
-                                break;
-                            }
-                            ancestor_name =
-                                class_loader(name).and_then(|ci| ci.parent_class.clone());
-                        }
-                        found
-                    }
-                } else {
-                    false
-                };
+                        target.access_kind
+                    };
 
-                let items = Self::build_completion_items(
-                    &merged,
-                    effective_access,
-                    current_class_name,
-                    is_self_or_ancestor,
-                );
-                for item in items {
-                    if let Some(existing) = all_items
-                        .iter_mut()
-                        .find(|existing| existing.label == item.label)
-                    {
-                        *occurrence_count.entry(existing.label.clone()).or_insert(1) += 1;
-                        // Merge class names into the detail so the user
-                        // sees which types provide this member (e.g.
-                        // "User | AdminUser" for shared members vs
-                        // "AdminUser" for branch-only members).
-                        if let (Some(existing_detail), Some(new_detail)) =
-                            (&mut existing.detail, &item.detail)
+                // Merge completion items from all candidate classes,
+                // deduplicating by label so ambiguous variables show
+                // the union of all possible members.
+                let mut all_items: Vec<CompletionItem> = Vec::new();
+                let num_candidates = candidates.len();
+                // Track how many candidate classes contributed each label
+                // so we can distinguish intersection vs branch-only members.
+                let mut occurrence_count: HashMap<String, usize> = HashMap::new();
+                let current_class_name = current_class.map(|cc| cc.name.as_str());
+                for target_class in &candidates {
+                    let merged = Self::resolve_class_fully(target_class, &class_loader);
+
+                    // Determine whether the cursor is inside the target
+                    // class itself or inside a (transitive) subclass.
+                    // This controls whether `__construct` is offered
+                    // via `::` access.
+                    let is_self_or_ancestor = if let Some(cc) = current_class {
+                        if cc.name == target_class.name {
+                            true
+                        } else {
+                            // Walk the parent chain of the current class
+                            // to see if the target is an ancestor.
+                            let mut ancestor_name = cc.parent_class.clone();
+                            let mut found = false;
+                            let mut depth = 0u32;
+                            while let Some(ref name) = ancestor_name {
+                                depth += 1;
+                                if depth > 20 {
+                                    break;
+                                }
+                                let normalized = name.strip_prefix('\\').unwrap_or(name);
+                                // ClassInfo.name stores the short name (e.g. "BaseService")
+                                // while parent_class stores the FQN (e.g. "App\\BaseService").
+                                // Compare against both the full name and the short (last segment)
+                                // so that cross-file inheritance is detected correctly.
+                                let short = normalized.rsplit('\\').next().unwrap_or(normalized);
+                                if normalized == target_class.name || short == target_class.name {
+                                    found = true;
+                                    break;
+                                }
+                                ancestor_name =
+                                    class_loader(name).and_then(|ci| ci.parent_class.clone());
+                            }
+                            found
+                        }
+                    } else {
+                        false
+                    };
+
+                    let items = Self::build_completion_items(
+                        &merged,
+                        effective_access,
+                        current_class_name,
+                        is_self_or_ancestor,
+                    );
+                    for item in items {
+                        if let Some(existing) = all_items
+                            .iter_mut()
+                            .find(|existing| existing.label == item.label)
                         {
-                            // Extract "Foo" from "Class: Foo" or "Class: Foo — type".
-                            let em_dash = " \u{2014} ";
-                            let get_cls = |d: &str| -> Option<String> {
-                                d.strip_prefix("Class: ")
-                                    .map(|r| r.split(em_dash).next().unwrap_or(r).to_string())
-                            };
-                            if let (Some(ec), Some(nc)) =
-                                (get_cls(existing_detail), get_cls(new_detail))
-                                && !ec.split('|').any(|p| p == nc)
+                            *occurrence_count.entry(existing.label.clone()).or_insert(1) += 1;
+                            // Merge class names into the detail so the user
+                            // sees which types provide this member (e.g.
+                            // "User | AdminUser" for shared members vs
+                            // "AdminUser" for branch-only members).
+                            if let (Some(existing_detail), Some(new_detail)) =
+                                (&mut existing.detail, &item.detail)
                             {
-                                let merged = format!("{ec}|{nc}");
-                                if let Some(pos) = existing_detail.find(em_dash) {
-                                    let suffix = existing_detail[pos..].to_string();
-                                    *existing_detail = format!("Class: {merged}{suffix}");
-                                } else {
-                                    *existing_detail = format!("Class: {merged}");
+                                // Extract "Foo" from "Class: Foo" or "Class: Foo — type".
+                                let em_dash = " \u{2014} ";
+                                let get_cls = |d: &str| -> Option<String> {
+                                    d.strip_prefix("Class: ")
+                                        .map(|r| r.split(em_dash).next().unwrap_or(r).to_string())
+                                };
+                                if let (Some(ec), Some(nc)) =
+                                    (get_cls(existing_detail), get_cls(new_detail))
+                                    && !ec.split('|').any(|p| p == nc)
+                                {
+                                    let merged = format!("{ec}|{nc}");
+                                    if let Some(pos) = existing_detail.find(em_dash) {
+                                        let suffix = existing_detail[pos..].to_string();
+                                        *existing_detail = format!("Class: {merged}{suffix}");
+                                    } else {
+                                        *existing_detail = format!("Class: {merged}");
+                                    }
                                 }
                             }
+                        } else {
+                            occurrence_count.insert(item.label.clone(), 1);
+                            all_items.push(item);
                         }
-                    } else {
-                        occurrence_count.insert(item.label.clone(), 1);
+                    }
+                }
+
+                // ── Union sort: intersection members above branch-only ──
+                //
+                // When the variable has a union type (multiple candidates),
+                // members present on ALL types are more likely to be
+                // type-safe. Sort them above members that exist on only a
+                // subset of the union. Branch-only members also get a
+                // `label_details` description showing which class(es) they
+                // come from, giving an at-a-glance visual hint in the popup.
+                if num_candidates > 1 {
+                    // Partition into intersection and branch-only, each
+                    // sorted alphabetically by filter_text / label.
+                    let sort_key = |item: &CompletionItem| -> String {
+                        item.filter_text
+                            .as_deref()
+                            .unwrap_or(&item.label)
+                            .to_lowercase()
+                    };
+                    let mut intersection: Vec<CompletionItem> = Vec::new();
+                    let mut branch_only: Vec<CompletionItem> = Vec::new();
+                    for item in all_items {
+                        let count = occurrence_count.get(&item.label).copied().unwrap_or(1);
+                        if count >= num_candidates {
+                            intersection.push(item);
+                        } else {
+                            branch_only.push(item);
+                        }
+                    }
+                    intersection.sort_by_key(|item| sort_key(item));
+                    branch_only.sort_by_key(|item| sort_key(item));
+
+                    // Assign sort_text: "0_NNNNN" for intersection,
+                    // "1_NNNNN" for branch-only.
+                    all_items = Vec::with_capacity(intersection.len() + branch_only.len());
+                    for (i, mut item) in intersection.into_iter().enumerate() {
+                        item.sort_text = Some(format!("0_{:05}", i));
+                        all_items.push(item);
+                    }
+                    for (i, mut item) in branch_only.into_iter().enumerate() {
+                        item.sort_text = Some(format!("1_{:05}", i));
+                        // Add label_details showing the originating class(es)
+                        // so the user can tell at a glance which branch
+                        // provides this member.
+                        if let Some(ref detail) = item.detail {
+                            let em_dash = " \u{2014} ";
+                            let class_names = detail
+                                .strip_prefix("Class: ")
+                                .map(|r| r.split(em_dash).next().unwrap_or(r))
+                                .unwrap_or("");
+                            if !class_names.is_empty() {
+                                item.label_details = Some(CompletionItemLabelDetails {
+                                    detail: None,
+                                    description: Some(class_names.to_string()),
+                                });
+                            }
+                        }
                         all_items.push(item);
                     }
                 }
-            }
 
-            // ── Union sort: intersection members above branch-only ──
-            //
-            // When the variable has a union type (multiple candidates),
-            // members present on ALL types are more likely to be
-            // type-safe. Sort them above members that exist on only a
-            // subset of the union. Branch-only members also get a
-            // `label_details` description showing which class(es) they
-            // come from, giving an at-a-glance visual hint in the popup.
-            if num_candidates > 1 {
-                // Partition into intersection and branch-only, each
-                // sorted alphabetically by filter_text / label.
-                let sort_key = |item: &CompletionItem| -> String {
-                    item.filter_text
-                        .as_deref()
-                        .unwrap_or(&item.label)
-                        .to_lowercase()
-                };
-                let mut intersection: Vec<CompletionItem> = Vec::new();
-                let mut branch_only: Vec<CompletionItem> = Vec::new();
-                for item in all_items {
-                    let count = occurrence_count.get(&item.label).copied().unwrap_or(1);
-                    if count >= num_candidates {
-                        intersection.push(item);
-                    } else {
-                        branch_only.push(item);
-                    }
-                }
-                intersection.sort_by_key(|item| sort_key(item));
-                branch_only.sort_by_key(|item| sort_key(item));
+                all_items
+            },
+        );
 
-                // Assign sort_text: "0_NNNNN" for intersection,
-                // "1_NNNNN" for branch-only.
-                all_items = Vec::with_capacity(intersection.len() + branch_only.len());
-                for (i, mut item) in intersection.into_iter().enumerate() {
-                    item.sort_text = Some(format!("0_{:05}", i));
-                    all_items.push(item);
-                }
-                for (i, mut item) in branch_only.into_iter().enumerate() {
-                    item.sort_text = Some(format!("1_{:05}", i));
-                    // Add label_details showing the originating class(es)
-                    // so the user can tell at a glance which branch
-                    // provides this member.
-                    if let Some(ref detail) = item.detail {
-                        let em_dash = " \u{2014} ";
-                        let class_names = detail
-                            .strip_prefix("Class: ")
-                            .map(|r| r.split(em_dash).next().unwrap_or(r))
-                            .unwrap_or("");
-                        if !class_names.is_empty() {
-                            item.label_details = Some(CompletionItemLabelDetails {
-                                detail: None,
-                                description: Some(class_names.to_string()),
-                            });
-                        }
-                    }
-                    all_items.push(item);
-                }
-            }
-
-            all_items
-        }));
-
-        match member_items_result {
-            Ok(all_items) if !all_items.is_empty() => Some(CompletionResponse::Array(all_items)),
-            Err(_) => {
-                log::error!(
-                    "PHPantom: panic during member-access completion for '{}'",
-                    target.subject
-                );
-                None
-            }
+        match member_items {
+            Some(all_items) if !all_items.is_empty() => Some(CompletionResponse::Array(all_items)),
             _ => None,
         }
     }

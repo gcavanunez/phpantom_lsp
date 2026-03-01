@@ -24,7 +24,10 @@ src/
 ├── stubs.rs                # Embedded phpstorm-stubs (build-time generated index)
 ├── resolution.rs           # Multi-phase class/function lookup and name resolution
 ├── inheritance.rs          # Base class inheritance merging (traits, parent chain)
-├── symbol_map.rs           # Precomputed per-file symbol location map (SymbolSpan, VarDefSite, CallSite, SymbolMap)
+├── symbol_map/
+│   ├── mod.rs              # Data structures (SymbolSpan, SymbolKind, VarDefSite, CallSite, SymbolMap) and impl
+│   ├── docblock.rs         # Docblock symbol extraction (type span emission, @template/@method tag scanning, navigability filter)
+│   └── extraction.rs       # AST walk that builds a SymbolMap (extract_symbol_map and all extract_from_* helpers)
 ├── virtual_members/
 │   ├── mod.rs              # VirtualMemberProvider trait, VirtualMembers struct, merge logic
 │   ├── laravel.rs          # LaravelModelProvider (relationships, scopes, casts, accessors)
@@ -51,9 +54,14 @@ src/
 │   ├── resolver.rs         # Resolve subject → ClassInfo (type resolution engine), shared resolve_callable_target
 │   ├── source_helpers.rs   # Source-text scanning helpers (closure/callable return types, new-expression parsing, array access)
 │   ├── builder.rs          # Build LSP CompletionItems from resolved ClassInfo
-│   ├── class_completion.rs # Class name, constant, and function completions
+│   ├── class_completion.rs # Class name completions (class, interface, trait, enum)
+│   ├── constant_completion.rs  # Global constant name completions
+│   ├── function_completion.rs  # Standalone function name completions
+│   ├── namespace_completion.rs # Namespace declaration completions
 │   ├── variable_completion.rs  # Variable name completions and scope collection
 │   ├── variable_resolution.rs  # Variable type resolution via assignment scanning
+│   ├── class_string_resolution.rs  # Class-string variable resolution ($cls = User::class)
+│   ├── raw_type_inference.rs   # Raw type inference for variable assignments (array shapes, array functions, generators)
 │   ├── foreach_resolution.rs   # Foreach value/key and array destructuring type resolution
 │   ├── closure_resolution.rs   # Closure and arrow-function parameter resolution
 │   ├── type_narrowing.rs       # instanceof / assert / custom type guard narrowing
@@ -74,7 +82,10 @@ src/
 │   ├── mod.rs              # Submodule declarations
 │   ├── resolve.rs          # Core go-to-definition: symbol-map dispatch + text-based fallback
 │   ├── member.rs           # Member-access resolution (->method, ::$prop, ::CONST) with stored offsets
-│   ├── variable.rs         # Variable definition resolution (symbol-map → AST walk → text fallback)
+│   ├── variable/
+│   │   ├── mod.rs          # VarDefSearchResult enum, Backend methods, tests
+│   │   ├── var_definition.rs # AST walk finding variable definition sites
+│   │   └── type_hint.rs    # AST walk extracting type hints at definition sites
 │   └── implementation.rs   # Go-to-implementation (interface/abstract → concrete classes)
 build.rs                    # Parses PhpStormStubsMap.php, generates stub index
 stubs/                      # Composer vendor dir for jetbrains/phpstorm-stubs

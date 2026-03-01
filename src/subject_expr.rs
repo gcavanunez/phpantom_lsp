@@ -1,0 +1,560 @@
+//! Structured subject expression parsing.
+//!
+//! This module defines [`SubjectExpr`], a typed enum that represents the
+//! structured form of a completion subject string.  It replaces ad-hoc
+//! string-shape dispatch (checking `starts_with('$')`, `contains("->")`,
+//! `ends_with(')')`, etc.) with exhaustive `match` in the resolver.
+//!
+//! The parser ([`SubjectExpr::parse`]) accepts the raw subject strings
+//! produced by the symbol map or text scanner and returns the
+//! corresponding variant.
+
+// ─── Structured Subject Expression ──────────────────────────────────────────
+
+/// Structured representation of a completion subject expression.
+///
+/// Replaces the string-shape dispatch (checking `starts_with('$')`,
+/// `contains("->")`, `ends_with(')')`, etc.) with a typed enum so that
+/// `resolve_target_classes` and `resolve_call_return_types_expr` can use
+/// exhaustive `match` instead of fragile if-else chains.
+///
+/// Constructed via [`SubjectExpr::parse`] from the raw subject string
+/// that the symbol map or text scanner produces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubjectExpr {
+    /// `$this` keyword.
+    This,
+    /// `self` keyword (may appear before `::` or as a subject).
+    SelfKw,
+    /// `static` keyword.
+    StaticKw,
+    /// `parent` keyword.
+    Parent,
+    /// A bare `$variable` (no chain, no brackets).
+    Variable(String),
+    /// A property chain: `base->property` or `base?->property`.
+    ///
+    /// The `base` is itself a `SubjectExpr` (e.g. `$this`, `$var`,
+    /// or another `PropertyChain`), and `property` is the trailing
+    /// identifier after the last `->`.
+    PropertyChain {
+        /// The expression to the left of the last `->`.
+        base: Box<SubjectExpr>,
+        /// The property name to the right of the last `->`.
+        property: String,
+    },
+    /// A method/function call expression: `base(args)`.
+    ///
+    /// `callee` is the structured expression for the call target
+    /// (which may be an instance method chain, a static method, or a
+    /// bare function name) and `args_text` is the raw text between
+    /// the parentheses (preserved for conditional return type
+    /// resolution and template substitution).
+    CallExpr {
+        /// The structured callee expression (e.g. `MethodCall`,
+        /// `StaticMethodCall`, `FunctionCall`, or a nested `CallExpr`).
+        callee: Box<SubjectExpr>,
+        /// Raw text of the arguments between `(` and `)`.
+        args_text: String,
+    },
+    /// Instance method call target: `base->method`.
+    ///
+    /// This variant represents the *callee* of a call expression
+    /// (i.e. what appears to the left of `(…)`), not the full call.
+    /// The full call is wrapped in [`CallExpr`](SubjectExpr::CallExpr).
+    MethodCall {
+        /// The expression to the left of `->`.
+        base: Box<SubjectExpr>,
+        /// The method name to the right of `->`.
+        method: String,
+    },
+    /// Static method call target: `ClassName::method`.
+    ///
+    /// Like `MethodCall`, this is the callee portion; the full call
+    /// with arguments is wrapped in `CallExpr`.
+    StaticMethodCall {
+        /// The class name (or keyword) to the left of `::`.
+        class: String,
+        /// The method name to the right of `::`.
+        method: String,
+    },
+    /// Static member access (enum case or constant): `ClassName::MEMBER`.
+    ///
+    /// Used when the RHS of `::` is a non-call identifier (e.g.
+    /// `Status::Active`, `MyClass::SOME_CONST`).
+    StaticAccess {
+        /// The class name to the left of `::`.
+        class: String,
+        /// The member name to the right of `::`.
+        member: String,
+    },
+    /// Constructor call target: `new ClassName`.
+    ///
+    /// The wrapping `CallExpr` (if any) carries the constructor
+    /// arguments.
+    NewExpr {
+        /// The class name being instantiated.
+        class_name: String,
+    },
+    /// A bare class name used as a subject (e.g. after `new` or before `::`).
+    ClassName(String),
+    /// A bare function name used as a call target.
+    FunctionCall(String),
+    /// Array index access: `base['key']` or `base[]`.
+    ArrayAccess {
+        /// The base expression being indexed.
+        base: Box<SubjectExpr>,
+        /// The bracket segments in left-to-right order.
+        segments: Vec<BracketSegment>,
+    },
+    /// Inline array literal with index access: `[expr1, expr2][0]`.
+    InlineArray {
+        /// The raw element expressions inside the `[…]` literal.
+        elements: Vec<String>,
+        /// The bracket segments after the literal.
+        index_segments: Vec<BracketSegment>,
+    },
+}
+
+/// A single bracket segment in an array access chain.
+///
+/// Used by [`SubjectExpr::ArrayAccess`] and [`SubjectExpr::InlineArray`]
+/// to represent each `[…]` dereference in a chain like `$var['a'][0][]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BracketSegment {
+    /// A string-key access, e.g. `['items']`.
+    StringKey(String),
+    /// A numeric or variable index access, e.g. `[0]` or `[$i]` or `[]`.
+    ElementAccess,
+}
+
+impl SubjectExpr {
+    /// Parse a raw subject string into a structured `SubjectExpr`.
+    ///
+    /// This is the bridge between the text-based world (symbol map
+    /// `subject_text`, text scanner output) and the structured enum.
+    /// The parser handles the same patterns that `resolve_target_classes`
+    /// and `resolve_call_return_types_expr` previously checked with
+    /// `starts_with`, `contains`, `rfind`, etc.
+    pub fn parse(subject: &str) -> Self {
+        let subject = subject.trim();
+        if subject.is_empty() {
+            return SubjectExpr::ClassName(String::new());
+        }
+
+        // ── Keywords ────────────────────────────────────────────────
+        match subject {
+            "$this" => return SubjectExpr::This,
+            "self" => return SubjectExpr::SelfKw,
+            "static" => return SubjectExpr::StaticKw,
+            "parent" => return SubjectExpr::Parent,
+            _ => {}
+        }
+
+        // ── `new ClassName(…)` or `(new ClassName(…))` ──────────────
+        if let Some(class_name) = parse_new_expression_class(subject) {
+            return SubjectExpr::NewExpr { class_name };
+        }
+
+        // ── Inline array literal with index: `[expr][0]` ───────────
+        if subject.starts_with('[')
+            && subject.contains("][")
+            && let Some(result) = parse_inline_array(subject)
+        {
+            return result;
+        }
+
+        // ── Call expression: ends with `)` ──────────────────────────
+        // Must be checked before property chains so that
+        // `$this->getFactory()` is parsed as a call, not a property.
+        if subject.ends_with(')')
+            && let Some((call_body, args_text)) = split_call_subject_raw(subject)
+        {
+            let callee = parse_callee(call_body);
+            return SubjectExpr::CallExpr {
+                callee: Box::new(callee),
+                args_text: args_text.to_string(),
+            };
+        }
+
+        // ── `$var::member` — class-string variable static access ────
+        // When a variable is followed by `::`, it holds a class-string
+        // (e.g. `$cls = Pen::class; $cls::make()`).  Parse as
+        // `StaticMethodCall` so that callable resolution can route
+        // through `resolve_target_classes` with `DoubleColon` access.
+        if subject.starts_with('$')
+            && subject.contains("::")
+            && !subject.ends_with(')')
+            && let Some((var_part, member)) = subject.split_once("::")
+            && !member.contains("->")
+        {
+            return SubjectExpr::StaticMethodCall {
+                class: var_part.to_string(),
+                method: member.to_string(),
+            };
+        }
+
+        // ── Enum case / static access: `ClassName::Member` ─────────
+        // Only match when there is no `->` after `::` (that would be a
+        // chain like `ClassName::make()->prop`).
+        if !subject.starts_with('$')
+            && subject.contains("::")
+            && !subject.ends_with(')')
+            && let Some((class_part, member)) = subject.split_once("::")
+            && !member.contains("->")
+        {
+            return SubjectExpr::StaticAccess {
+                class: class_part.to_string(),
+                member: member.to_string(),
+            };
+        }
+
+        // ── Property chain (split at last depth-0 arrow) ───────────
+        if subject.contains("->")
+            && let Some((base_str, prop)) = split_last_arrow_raw(subject)
+        {
+            let base = SubjectExpr::parse(base_str);
+            return SubjectExpr::PropertyChain {
+                base: Box::new(base),
+                property: prop.to_string(),
+            };
+        }
+
+        // ── Variable with bracket access: `$var['key']` ────────────
+        if subject.starts_with('$')
+            && subject.contains('[')
+            && let Some(result) = parse_variable_array_access(subject)
+        {
+            return result;
+        }
+
+        // ── Bare variable: `$var` ──────────────────────────────────
+        if subject.starts_with('$') {
+            return SubjectExpr::Variable(subject.to_string());
+        }
+
+        // ── Bare class name ────────────────────────────────────────
+        SubjectExpr::ClassName(subject.to_string())
+    }
+
+    /// Return the raw text representation of this expression.
+    ///
+    /// This is used as a bridge while callers are migrated: they can
+    /// parse a string into `SubjectExpr`, match on it, and still pass
+    /// the original text to functions that haven't been converted yet.
+    pub fn to_subject_text(&self) -> String {
+        match self {
+            SubjectExpr::This => "$this".to_string(),
+            SubjectExpr::SelfKw => "self".to_string(),
+            SubjectExpr::StaticKw => "static".to_string(),
+            SubjectExpr::Parent => "parent".to_string(),
+            SubjectExpr::Variable(v) => v.clone(),
+            SubjectExpr::PropertyChain { base, property } => {
+                format!("{}->{}", base.to_subject_text(), property)
+            }
+            SubjectExpr::CallExpr { callee, args_text } => {
+                format!("{}({})", callee.to_subject_text(), args_text)
+            }
+            SubjectExpr::MethodCall { base, method } => {
+                format!("{}->{}", base.to_subject_text(), method)
+            }
+            SubjectExpr::StaticMethodCall { class, method } => {
+                format!("{}::{}", class, method)
+            }
+            SubjectExpr::StaticAccess { class, member } => {
+                format!("{}::{}", class, member)
+            }
+            SubjectExpr::NewExpr { class_name } => {
+                format!("new {}", class_name)
+            }
+            SubjectExpr::ClassName(name) => name.clone(),
+            SubjectExpr::FunctionCall(name) => name.clone(),
+            SubjectExpr::ArrayAccess { base, segments } => {
+                let mut s = base.to_subject_text();
+                for seg in segments {
+                    match seg {
+                        BracketSegment::StringKey(k) => {
+                            s.push_str(&format!("['{}']", k));
+                        }
+                        BracketSegment::ElementAccess => {
+                            s.push_str("[]");
+                        }
+                    }
+                }
+                s
+            }
+            SubjectExpr::InlineArray {
+                elements,
+                index_segments,
+            } => {
+                let mut s = format!("[{}]", elements.join(", "));
+                for seg in index_segments {
+                    match seg {
+                        BracketSegment::StringKey(k) => {
+                            s.push_str(&format!("['{}']", k));
+                        }
+                        BracketSegment::ElementAccess => {
+                            s.push_str("[]");
+                        }
+                    }
+                }
+                s
+            }
+        }
+    }
+
+    /// Returns `true` if this expression is one of the "current class"
+    /// keywords (`$this`, `self`, `static`).
+    pub fn is_self_like(&self) -> bool {
+        matches!(
+            self,
+            SubjectExpr::This | SubjectExpr::SelfKw | SubjectExpr::StaticKw
+        )
+    }
+
+    /// Parse the callee portion of a call expression (everything before
+    /// the opening `(`).
+    ///
+    /// This distinguishes instance method calls (`base->method`), static
+    /// method calls (`Class::method`), constructor calls (`new Class`),
+    /// and bare function names.
+    pub fn parse_callee(call_body: &str) -> SubjectExpr {
+        parse_callee(call_body)
+    }
+}
+
+// ─── SubjectExpr parsing helpers ────────────────────────────────────────────
+
+/// Parse the callee portion of a call expression (everything before the
+/// opening `(`).
+///
+/// This distinguishes instance method calls (`base->method`), static
+/// method calls (`Class::method`), constructor calls (`new Class`),
+/// and bare function names.
+fn parse_callee(call_body: &str) -> SubjectExpr {
+    let call_body = call_body.trim();
+
+    // ── `new ClassName` ─────────────────────────────────────────
+    if let Some(class_name) = call_body
+        .strip_prefix("new ")
+        .map(|s| s.trim().trim_start_matches('\\'))
+        .filter(|s| !s.is_empty())
+    {
+        // Strip trailing parens content if any (e.g. from `(new Foo(…))`)
+        let clean = class_name
+            .find(|c: char| c == '(' || c.is_whitespace())
+            .map_or(class_name, |pos| &class_name[..pos]);
+        return SubjectExpr::NewExpr {
+            class_name: clean.to_string(),
+        };
+    }
+
+    // ── Instance method: `base->method` ─────────────────────────
+    // Use rfind to find the last `->` at depth 0 (outside parens).
+    if let Some((base_str, method)) = split_last_arrow_raw(call_body) {
+        let base = SubjectExpr::parse(base_str);
+        return SubjectExpr::MethodCall {
+            base: Box::new(base),
+            method: method.to_string(),
+        };
+    }
+
+    // ── Static method: `Class::method` ──────────────────────────
+    if let Some(pos) = call_body.rfind("::") {
+        let class_part = &call_body[..pos];
+        let method_name = &call_body[pos + 2..];
+        return SubjectExpr::StaticMethodCall {
+            class: class_part.to_string(),
+            method: method_name.to_string(),
+        };
+    }
+
+    // ── Bare variable: `$fn` ────────────────────────────────────
+    if call_body.starts_with('$') {
+        return SubjectExpr::Variable(call_body.to_string());
+    }
+
+    // ── Bare function name ──────────────────────────────────────
+    SubjectExpr::FunctionCall(call_body.to_string())
+}
+
+/// Split a subject at the **last** `->` or `?->` at depth 0.
+///
+/// Returns `(base, property)` or `None` if no arrow is found.
+/// Arrows inside balanced parentheses are ignored.
+fn split_last_arrow_raw(subject: &str) -> Option<(&str, &str)> {
+    let bytes = subject.as_bytes();
+    let mut depth = 0i32;
+    let mut last_arrow: Option<(usize, usize)> = None;
+
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'-' if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b'>' => {
+                let arrow_start = if i > 0 && bytes[i - 1] == b'?' {
+                    i - 1
+                } else {
+                    i
+                };
+                let prop_start = i + 2;
+                last_arrow = Some((arrow_start, prop_start));
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let (arrow_start, prop_start) = last_arrow?;
+    if prop_start >= subject.len() {
+        return None;
+    }
+    let base = &subject[..arrow_start];
+    let prop = &subject[prop_start..];
+    if base.is_empty() || prop.is_empty() {
+        return None;
+    }
+    Some((base, prop))
+}
+
+/// Split a call expression at the matching `(` for the trailing `)`.
+///
+/// Returns `(call_body, args_text)` where `call_body` is the expression
+/// before `(` and `args_text` is the trimmed content between `(` and `)`.
+fn split_call_subject_raw(subject: &str) -> Option<(&str, &str)> {
+    let inner = subject.strip_suffix(')')?;
+    let bytes = inner.as_bytes();
+    let mut depth: u32 = 0;
+    let mut open = None;
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    let call_body = &inner[..open];
+    let args_text = inner[open + 1..].trim();
+    if call_body.is_empty() {
+        return None;
+    }
+    Some((call_body, args_text))
+}
+
+/// Parse a `new ClassName` or `(new ClassName(…))` expression and extract
+/// the class name.
+fn parse_new_expression_class(s: &str) -> Option<String> {
+    // Strip balanced outer parentheses.
+    let inner = if s.starts_with('(') && s.ends_with(')') {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    };
+    let rest = inner.trim().strip_prefix("new ")?;
+    let rest = rest.trim_start();
+    let end = rest
+        .find(|c: char| c == '(' || c.is_whitespace())
+        .unwrap_or(rest.len());
+    let class_name = rest[..end].trim_start_matches('\\');
+    if class_name.is_empty()
+        || !class_name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '\\')
+    {
+        return None;
+    }
+    Some(class_name.to_string())
+}
+
+/// Parse a variable with bracket access like `$var['key'][0]`.
+fn parse_variable_array_access(subject: &str) -> Option<SubjectExpr> {
+    let first_bracket = subject.find('[')?;
+    let base_var = &subject[..first_bracket];
+    if base_var.len() < 2 {
+        return None;
+    }
+
+    let mut segments = Vec::new();
+    let mut rest = &subject[first_bracket..];
+
+    while rest.starts_with('[') {
+        let close = rest.find(']')?;
+        let inner = rest[1..close].trim();
+
+        if let Some(key) = inner
+            .strip_prefix('\'')
+            .and_then(|s| s.strip_suffix('\''))
+            .or_else(|| inner.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+        {
+            segments.push(BracketSegment::StringKey(key.to_string()));
+        } else {
+            segments.push(BracketSegment::ElementAccess);
+        }
+
+        rest = &rest[close + 1..];
+    }
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    Some(SubjectExpr::ArrayAccess {
+        base: Box::new(SubjectExpr::parse(base_var)),
+        segments,
+    })
+}
+
+/// Parse an inline array literal with index access: `[expr1, expr2][0]`.
+fn parse_inline_array(subject: &str) -> Option<SubjectExpr> {
+    let split_pos = subject.find("][")?;
+    let literal_text = &subject[..split_pos + 1];
+    if !literal_text.starts_with('[') || !literal_text.ends_with(']') {
+        return None;
+    }
+    let inner = literal_text[1..literal_text.len() - 1].trim();
+    let elements: Vec<String> = inner.split(',').map(|e| e.trim().to_string()).collect();
+
+    // Parse the bracket segments after the literal.
+    let index_part = &subject[split_pos + 1..];
+    let mut index_segments = Vec::new();
+    let mut rest = index_part;
+    while rest.starts_with('[') {
+        let close = rest.find(']')?;
+        let idx_inner = rest[1..close].trim();
+        if let Some(key) = idx_inner
+            .strip_prefix('\'')
+            .and_then(|s| s.strip_suffix('\''))
+            .or_else(|| {
+                idx_inner
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+            })
+        {
+            index_segments.push(BracketSegment::StringKey(key.to_string()));
+        } else {
+            index_segments.push(BracketSegment::ElementAccess);
+        }
+        rest = &rest[close + 1..];
+    }
+
+    Some(SubjectExpr::InlineArray {
+        elements,
+        index_segments,
+    })
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "subject_expr_tests.rs"]
+mod tests;

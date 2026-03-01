@@ -7,7 +7,6 @@
 /// helpers (`resolve_parent_class_names`, `resolve_name`) used to convert
 /// short class names to fully-qualified names.
 use std::collections::HashMap;
-use std::panic;
 
 use crate::docblock::types::is_scalar;
 use crate::symbol_map::extract_symbol_map;
@@ -38,16 +37,9 @@ impl Backend {
         let content_owned = content.to_string();
         let uri_owned = uri.to_string();
 
-        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        crate::util::catch_panic_unwind_safe("parse", uri, None, || {
             self.update_ast_inner(&uri_owned, &content_owned);
-        }));
-
-        if result.is_err() {
-            log::error!(
-                "PHPantom: parser panicked while parsing {}. Skipping file.",
-                uri
-            );
-        }
+        });
     }
 
     /// Inner implementation of [`update_ast`] that performs the actual
@@ -389,9 +381,9 @@ impl Backend {
                 .collect();
 
             // Resolve custom collection class name to FQN
-            if let Some(ref coll) = class.custom_collection {
+            if let Some(ref coll) = class.laravel.custom_collection {
                 let resolved = Self::resolve_name(coll, use_map, namespace);
-                class.custom_collection = Some(resolved);
+                class.laravel.custom_collection = Some(resolved);
             }
 
             // Resolve type arguments in @extends, @implements, and @use

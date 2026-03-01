@@ -1,0 +1,126 @@
+use super::*;
+use crate::test_fixtures::{make_class, no_loader};
+use crate::types::ClassInfo;
+
+// ── is_eloquent_model ───────────────────────────────────────────────
+
+#[test]
+fn recognises_fqn() {
+    assert!(is_eloquent_model("Illuminate\\Database\\Eloquent\\Model"));
+}
+
+#[test]
+fn recognises_fqn_with_leading_backslash() {
+    assert!(is_eloquent_model("\\Illuminate\\Database\\Eloquent\\Model"));
+}
+
+#[test]
+fn rejects_unrelated_class() {
+    assert!(!is_eloquent_model("App\\Models\\User"));
+}
+
+// ── extends_eloquent_model ──────────────────────────────────────────
+
+#[test]
+fn direct_child_of_model() {
+    let mut user = make_class("App\\Models\\User");
+    user.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
+
+    let model = make_class("Illuminate\\Database\\Eloquent\\Model");
+    let loader = |name: &str| -> Option<ClassInfo> {
+        if name == "Illuminate\\Database\\Eloquent\\Model" {
+            Some(model.clone())
+        } else {
+            None
+        }
+    };
+
+    assert!(extends_eloquent_model(&user, &loader));
+}
+
+#[test]
+fn indirect_child_of_model() {
+    let mut user = make_class("App\\Models\\Admin");
+    user.parent_class = Some("App\\Models\\User".to_string());
+
+    let mut base = make_class("App\\Models\\User");
+    base.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
+
+    let model = make_class("Illuminate\\Database\\Eloquent\\Model");
+
+    let loader = |name: &str| -> Option<ClassInfo> {
+        match name {
+            "App\\Models\\User" => Some(base.clone()),
+            "Illuminate\\Database\\Eloquent\\Model" => Some(model.clone()),
+            _ => None,
+        }
+    };
+
+    assert!(extends_eloquent_model(&user, &loader));
+}
+
+#[test]
+fn not_a_model() {
+    let service = make_class("App\\Services\\UserService");
+    assert!(!extends_eloquent_model(&service, &no_loader));
+}
+
+// ── camel_to_snake ──────────────────────────────────────────────
+
+#[test]
+fn camel_to_snake_simple() {
+    assert_eq!(camel_to_snake("FullName"), "full_name");
+}
+
+#[test]
+fn camel_to_snake_single_word() {
+    assert_eq!(camel_to_snake("Name"), "name");
+}
+
+#[test]
+fn camel_to_snake_already_lower() {
+    assert_eq!(camel_to_snake("name"), "name");
+}
+
+#[test]
+fn camel_to_snake_camel_case() {
+    assert_eq!(camel_to_snake("firstName"), "first_name");
+}
+
+#[test]
+fn camel_to_snake_multiple_words() {
+    assert_eq!(camel_to_snake("isAdminUser"), "is_admin_user");
+}
+
+#[test]
+fn camel_to_snake_with_digit() {
+    assert_eq!(camel_to_snake("item2Name"), "item2_name");
+}
+
+#[test]
+fn camel_to_snake_acronym() {
+    assert_eq!(camel_to_snake("URLName"), "url_name");
+}
+
+// ── legacy_accessor_method_name ─────────────────────────────────
+
+#[test]
+fn legacy_accessor_prop_name_simple() {
+    assert_eq!(legacy_accessor_method_name("name"), "getNameAttribute");
+}
+
+#[test]
+fn legacy_accessor_prop_name_multi_word() {
+    assert_eq!(
+        legacy_accessor_method_name("display_name"),
+        "getDisplayNameAttribute"
+    );
+}
+
+#[test]
+fn legacy_accessor_prop_name_three_words() {
+    assert_eq!(
+        legacy_accessor_method_name("full_legal_name"),
+        "getFullLegalNameAttribute"
+    );
+}

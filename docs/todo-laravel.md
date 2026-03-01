@@ -74,7 +74,27 @@ benefit) and an **Effort** estimate (implementation complexity):
 
 ---
 
-#### 1. `$dates` array (deprecated)
+#### 1. `morphedByMany` missing from relationship method map
+
+| | |
+|---|---|
+| **Impact** | ★★ — Any model using `morphedByMany` (the inverse of a polymorphic many-to-many) gets no virtual property or `_count` property for that relationship. |
+| **Effort** | ★ — One-line addition to `RELATIONSHIP_METHOD_MAP` in `virtual_members/laravel.rs`. |
+
+`morphedByMany` is the inverse side of a polymorphic many-to-many
+relationship. It returns a `MorphToMany` instance (the same class as
+`morphToMany`), but the method name is not listed in
+`RELATIONSHIP_METHOD_MAP`. This means body inference
+(`infer_relationship_from_body`) does not recognise
+`$this->morphedByMany(Tag::class)` calls, so no virtual property or
+`_count` property is synthesized.
+
+**Where to change:** Add `("morphedByMany", "MorphToMany")` to
+`RELATIONSHIP_METHOD_MAP` in `src/virtual_members/laravel.rs`.
+No other changes needed since `MorphToMany` is already in
+`COLLECTION_RELATIONSHIPS`.
+
+#### 2. `$dates` array (deprecated)
 
 | | |
 |---|---|
@@ -93,7 +113,7 @@ Merge these into `casts_definitions` at a lower priority than explicit
 `$casts` entries, or add a separate field on `ClassInfo` and handle
 priority in the provider.
 
-#### 2. Custom Eloquent builders (`HasBuilder` / `#[UseEloquentBuilder]`)
+#### 3. Custom Eloquent builders (`HasBuilder` / `#[UseEloquentBuilder]`)
 
 | | |
 |---|---|
@@ -131,7 +151,7 @@ declares a custom builder via `@use HasBuilder<X>` in `use_generics`
 or a `newEloquentBuilder()` method with a non-default return type.
 If found, load and resolve that builder class instead.
 
-#### 3. `abort_if`/`abort_unless` type narrowing
+#### 4. `abort_if`/`abort_unless` type narrowing
 
 | | |
 |---|---|
@@ -175,7 +195,7 @@ to subsequent code:
 This is similar to the existing guard clause narrowing but triggered
 by specific function names rather than `if` + early return.
 
-#### 4. `collect()` and other helper functions lose generic type info
+#### 5. `collect()` and other helper functions lose generic type info
 
 | | |
 |---|---|
@@ -223,7 +243,7 @@ before passing it to `type_hint_to_classes`.  See the general TODO
 item (§ PHP Language Feature Gaps, "Function-level `@template`
 generic resolution") for the full implementation plan.
 
-#### 5. Factory `has*`/`for*` relationship methods
+#### 6. Factory `has*`/`for*` relationship methods
 
 | | |
 |---|---|
@@ -261,7 +281,7 @@ The `has*` variant should accept optional `int $count` and
 `array|callable $state` parameters; `for*` should accept
 `array|callable $state`.
 
-#### 6. `$pivot` property on BelongsToMany related models
+#### 7. `$pivot` property on BelongsToMany related models
 
 | | |
 |---|---|
@@ -307,7 +327,7 @@ the `BelongsToMany` relationship stubs. If the user's stub set
 includes these annotations, it already works through our PHPDoc
 provider.
 
-#### 7. `withSum()` / `withAvg()` / `withMin()` / `withMax()` aggregate properties
+#### 8. `withSum()` / `withAvg()` / `withMin()` / `withMax()` aggregate properties
 
 | | |
 |---|---|
@@ -323,7 +343,7 @@ aggregate function (`withSum`/`withAvg` → `float`,
 
 The `@property` workaround applies here too.
 
-#### 8. Higher-order collection proxies
+#### 9. Higher-order collection proxies
 
 | | |
 |---|---|
@@ -346,7 +366,7 @@ and `HigherOrderCollectionProxyExtension`, which resolve the proxy's
 template types and delegate property/method lookups to the collection's
 value type.
 
-#### 9. `SoftDeletes` trait methods on Builder
+#### 10. `SoftDeletes` trait methods on Builder
 
 | | |
 |---|---|
@@ -374,7 +394,7 @@ type — e.g. `Builder<static>` instead of `Builder<User>`.  This is
 a minor gap but not worth a dedicated fix until custom builder
 support (gap §7) is implemented.
 
-#### 10. `View::withX()` and `RedirectResponse::withX()` dynamic methods
+#### 11. `View::withX()` and `RedirectResponse::withX()` dynamic methods
 
 | | |
 |---|---|
@@ -406,7 +426,7 @@ hard-coding the two known classes.  A simpler approach: add
 `@method` tags to bundled stubs for the most common dynamic `with*`
 methods, or document this as a known limitation.
 
-#### 11. `$appends` array
+#### 12. `$appends` array
 
 | | |
 |---|---|
@@ -418,3 +438,24 @@ included in `toArray()` / `toJson()`. These reference existing
 accessors, so in most cases the accessor method itself already produces
 the virtual property. Parsing `$appends` would only help when the
 accessor is defined in an unloaded parent class.
+
+#### 13. Relationship classification matches short name only
+
+| | |
+|---|---|
+| **Impact** | ★ — Nearly all codebases use Laravel's built-in relationship classes, so false positives are rare in practice. |
+| **Effort** | ★★ — Need to resolve the return type's FQN before matching, which may require a class loader call. |
+
+`classify_relationship` in `virtual_members/laravel.rs` strips the
+return type down to its short name (via `short_name`) and matches
+against a hardcoded list (`HasMany`, `BelongsTo`, etc.). This means
+any class whose short name collides with a Laravel relationship class
+(e.g. a custom `App\Relations\HasMany` that does not extend
+Eloquent's) would be incorrectly classified as a relationship.
+
+The fix would be to resolve the return type to its FQN (using the
+class loader or use-map) and verify it lives under
+`Illuminate\Database\Eloquent\Relations\` (or extends a class that
+does) before classifying. The short-name-only path could remain as a
+fast-path fallback when the FQN is already in the
+`Illuminate\Database\Eloquent\Relations` namespace.

@@ -13,9 +13,24 @@
 //! The inline `/** @throws */` annotation is an escape hatch that lets
 //! developers document exceptions from dependencies that don't have
 //! `@throws` tags themselves.
+//!
+//! Also provides a Throwable-filtered class completion variant for catch
+//! clause fallback and `throw new` completion, which only suggests
+//! exception classes from already-parsed sources and includes everything
+//! else (classmap, stubs) unfiltered.
+
+use std::collections::{HashMap, HashSet};
 
 use tower_lsp::lsp_types::*;
 
+use crate::Backend;
+use crate::types::*;
+use crate::util::short_name;
+
+use super::builder::analyze_use_block;
+use super::class_completion::{
+    ClassItemCtx, ClassItemTexts, class_completion_texts, is_anonymous_class, matches_class_prefix,
+};
 use super::comment_position::position_to_byte_offset;
 use super::throws_analysis;
 
@@ -345,429 +360,414 @@ fn find_try_block_body(_content: &str, before_catch: &str) -> Option<String> {
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::completion::throws_analysis;
+// ─── Throwable-filtered class completion ────────────────────────────────────
 
-    #[test]
-    fn test_find_method_throws_tags_with_private() {
-        let content = concat!(
-            "<?php\n",
-            "class Foo {\n",
-            "    /** @throws ValidationException */\n",
-            "    private function riskyOperation(): void {}\n",
-            "}\n",
-        );
-        let result = throws_analysis::find_method_throws_tags(content, "riskyOperation");
-        assert_eq!(
-            result,
-            vec!["ValidationException"],
-            "Should find @throws through 'private' modifier"
-        );
+impl Backend {
+    /// Check whether a class is a confirmed `\Throwable` descendant using
+    /// only already-loaded data from the `ast_map`.
+    ///
+    /// Returns `true` only when the full parent chain can be walked to
+    /// one of the three Throwable root types (`Throwable`, `Exception`,
+    /// `Error`).  Returns `false` if the chain is broken (parent not
+    /// loaded) or terminates at a non-Throwable class.
+    ///
+    /// This is a strict check: the caller should only include the class
+    /// when this returns `true`.
+    ///
+    /// This never triggers disk I/O; it only consults `ast_map`.
+    fn is_throwable_descendant(&self, class_name: &str, depth: u32) -> bool {
+        if depth > 20 {
+            return false; // prevent infinite loops
+        }
+
+        let normalized = class_name.strip_prefix('\\').unwrap_or(class_name);
+        let short = short_name(normalized);
+
+        // These three types form the root of PHP's exception hierarchy.
+        if matches!(short, "Throwable" | "Exception" | "Error") {
+            return true;
+        }
+
+        // Look up ClassInfo from ast_map (no disk I/O).
+        match self.find_class_in_ast_map(class_name) {
+            Some(ci) => match &ci.parent_class {
+                Some(parent) => self.is_throwable_descendant(parent, depth + 1),
+                None => false, // no parent, not a Throwable type
+            },
+            None => false, // class not loaded — can't confirm
+        }
     }
 
-    #[test]
-    fn test_find_method_throws_tags_with_protected_static() {
-        let content = concat!(
-            "<?php\n",
-            "class Foo {\n",
-            "    /** @throws RuntimeException */\n",
-            "    protected static function dangerousCall(): void {}\n",
-            "}\n",
-        );
-        let result = throws_analysis::find_method_throws_tags(content, "dangerousCall");
-        assert_eq!(
-            result,
-            vec!["RuntimeException"],
-            "Should find @throws through 'protected static' modifiers"
-        );
+    /// Check whether the class identified by `class_name` is a concrete,
+    /// non-abstract `class` (i.e. `ClassLikeKind::Class` and not
+    /// `is_abstract`) in the `ast_map`.
+    ///
+    /// Returns `false` for interfaces, traits, enums, abstract classes,
+    /// and classes that are not currently loaded.  This never triggers
+    /// disk I/O.
+    fn is_concrete_class_in_ast_map(&self, class_name: &str) -> bool {
+        self.find_class_in_ast_map(class_name)
+            .is_some_and(|c| c.kind == ClassLikeKind::Class && !c.is_abstract)
     }
 
-    #[test]
-    fn test_find_method_throws_tags_without_modifier() {
-        let content = concat!(
-            "<?php\n",
-            "/** @throws LogicException */\n",
-            "function standalone(): void {}\n",
-        );
-        let result = throws_analysis::find_method_throws_tags(content, "standalone");
-        assert_eq!(
-            result,
-            vec!["LogicException"],
-            "Should find @throws on a standalone function (no modifier)"
-        );
-    }
-
-    #[test]
-    fn test_propagated_throws_with_visibility_in_catch() {
-        // Full file content — cursor will be inside catch()
-        //                                                    v cursor (line 5, char 17)
-        // Line 0: <?php
-        // Line 1: class Foo {
-        // Line 2:     public function doStuff(): void {
-        // Line 3:         try {
-        // Line 4:             $this->riskyOperation();
-        // Line 5:         } catch () {}
-        // Line 6:     }
-        // Line 7:
-        // Line 8:     /** @throws ValidationException */
-        // Line 9:     private function riskyOperation(): void {}
-        // Line 10: }
-        let full_content = concat!(
-            "<?php\n",
-            "class Foo {\n",
-            "    public function doStuff(): void {\n",
-            "        try {\n",
-            "            $this->riskyOperation();\n",
-            "        } catch () {}\n",
-            "    }\n",
-            "\n",
-            "    /** @throws ValidationException */\n",
-            "    private function riskyOperation(): void {}\n",
-            "}\n",
-        );
-
-        // Character 17 is between `(` (char 16) and `)` (char 17) on line 5
-        let pos = Position {
-            line: 5,
-            character: 17,
+    /// Collect the FQN of every class that is currently loaded in the
+    /// `ast_map`.  Used by `build_catch_class_name_completions` so that
+    /// classmap / stub sources can skip classes we already evaluated.
+    fn collect_loaded_fqns(&self) -> HashSet<String> {
+        let mut loaded = HashSet::new();
+        let Ok(amap) = self.ast_map.lock() else {
+            return loaded;
         };
-        let ctx = detect_catch_context(full_content, pos);
-        assert!(ctx.is_some(), "Should detect catch context");
-        let ctx = ctx.unwrap();
-        assert!(
-            ctx.suggested_types
-                .contains(&"ValidationException".to_string()),
-            "Should suggest ValidationException from propagated @throws on private method, got: {:?}",
-            ctx.suggested_types
-        );
+        let nmap = self.namespace_map.lock().ok();
+        for (uri, classes) in amap.iter() {
+            let file_ns = nmap
+                .as_ref()
+                .and_then(|nm| nm.get(uri))
+                .and_then(|opt| opt.as_deref());
+            for cls in classes {
+                let fqn = if let Some(ns) = file_ns {
+                    format!("{}\\{}", ns, cls.name)
+                } else {
+                    cls.name.clone()
+                };
+                loaded.insert(fqn);
+            }
+        }
+        loaded
     }
 
-    #[test]
-    fn test_propagated_throws_with_protected_static_in_catch() {
-        let full_content = concat!(
-            "<?php\n",
-            "class Bar {\n",
-            "    public function handle(): void {\n",
-            "        try {\n",
-            "            $this->dangerousCall();\n",
-            "        } catch () {}\n",
-            "    }\n",
-            "\n",
-            "    /** @throws RuntimeException */\n",
-            "    protected static function dangerousCall(): void {}\n",
-            "}\n",
-        );
+    /// Build completion items for class names, filtered for Throwable
+    /// descendants.  Used as the catch clause fallback when no specific
+    /// `@throws` types were discovered in the try block, and for
+    /// `throw new` completion.
+    ///
+    /// The logic follows this priority:
+    ///
+    /// 1. **Loaded concrete classes** (use-imports, same-namespace,
+    ///    class_index): only classes (not interfaces/traits/enums) whose
+    ///    parent chain is fully walkable to `\Throwable` / `\Exception`
+    ///    / `\Error`.
+    /// 2. **Classmap** entries (not yet parsed) whose short name ends
+    ///    with `Exception` — filtered to exclude already-loaded FQNs.
+    /// 3. **Stub** entries whose short name ends with `Exception` —
+    ///    filtered to exclude already-loaded FQNs.
+    /// 4. **Classmap** entries that do *not* end with `Exception`.
+    /// 5. **Stub** entries that do *not* end with `Exception`.
+    pub(crate) fn build_catch_class_name_completions(
+        &self,
+        file_use_map: &HashMap<String, String>,
+        file_namespace: &Option<String>,
+        prefix: &str,
+        content: &str,
+        is_new: bool,
+        position: Position,
+    ) -> (Vec<CompletionItem>, bool) {
+        let has_leading_backslash = prefix.starts_with('\\');
+        let normalized = prefix.strip_prefix('\\').unwrap_or(prefix);
+        let prefix_lower = normalized.to_lowercase();
+        let is_fqn_prefix = has_leading_backslash || normalized.contains('\\');
 
-        let pos = Position {
-            line: 5,
-            character: 17,
+        // When the user is typing a namespace-qualified reference,
+        // provide an explicit replacement range so the editor replaces
+        // the entire typed prefix (including namespace separators).
+        let fqn_replace_range = if is_fqn_prefix {
+            Some(Range {
+                start: Position {
+                    line: position.line,
+                    character: position
+                        .character
+                        .saturating_sub(prefix.chars().count() as u32),
+                },
+                end: position,
+            })
+        } else {
+            None
         };
-        let ctx = detect_catch_context(full_content, pos);
-        assert!(ctx.is_some(), "Should detect catch context");
-        let ctx = ctx.unwrap();
-        assert!(
-            ctx.suggested_types
-                .contains(&"RuntimeException".to_string()),
-            "Should suggest RuntimeException through protected static modifier, got: {:?}",
-            ctx.suggested_types
-        );
-    }
+        let mut seen_fqns: HashSet<String> = HashSet::new();
+        let mut items: Vec<CompletionItem> = Vec::new();
 
-    #[test]
-    fn test_find_inline_throws_annotations_in_catch() {
-        let body = r#"
-            /** @throws ModelNotFoundException */
-            $model = SomeService::find($id);
-            /** @throws \App\Exceptions\AuthException */
-            $auth = doSomething();
-        "#;
-        let result = throws_analysis::find_inline_throws_annotations(body);
-        // Raw names are returned; short-name extraction happens in detect_catch_context
-        assert_eq!(
-            result,
-            vec!["ModelNotFoundException", "App\\Exceptions\\AuthException"]
-        );
-    }
-
-    #[test]
-    fn test_find_inline_throws_multiline_docblock_in_catch() {
-        let body = r#"
-            /**
-             * @throws RuntimeException
-             */
-            doStuff();
-        "#;
-        let result = throws_analysis::find_inline_throws_annotations(body);
-        assert_eq!(result, vec!["RuntimeException"]);
-    }
-
-    #[test]
-    fn test_parse_catch_paren_content_empty() {
-        let (partial, already) = parse_catch_paren_content("");
-        assert_eq!(partial, "");
-        assert!(already.is_empty());
-    }
-
-    #[test]
-    fn test_parse_catch_paren_content_partial() {
-        let (partial, already) = parse_catch_paren_content("IOEx");
-        assert_eq!(partial, "IOEx");
-        assert!(already.is_empty());
-    }
-
-    #[test]
-    fn test_parse_catch_paren_content_multi_catch() {
-        let (partial, already) = parse_catch_paren_content("IOException | ");
-        assert_eq!(partial, "");
-        assert_eq!(already, vec!["IOException"]);
-    }
-
-    #[test]
-    fn test_parse_catch_paren_content_multi_catch_with_partial() {
-        let (partial, already) = parse_catch_paren_content("IOException | Time");
-        assert_eq!(partial, "Time");
-        assert_eq!(already, vec!["IOException"]);
-    }
-
-    #[test]
-    fn test_parse_catch_paren_content_three_types() {
-        let (partial, already) = parse_catch_paren_content("IOException | TimeoutException | ");
-        assert_eq!(partial, "");
-        assert_eq!(already, vec!["IOException", "TimeoutException"]);
-    }
-
-    #[test]
-    fn test_detect_catch_context_always_includes_throwable() {
-        let content = concat!(
-            "<?php\n",
-            "try {\n",
-            "    throw new RuntimeException('error');\n",
-            "} catch (",
-        );
-        let pos = Position {
-            line: 3,
-            character: 10,
+        let ctx = ClassItemCtx {
+            is_fqn_prefix,
+            is_new,
+            fqn_replace_range,
+            file_use_map,
+            use_block: analyze_use_block(content),
+            file_namespace,
         };
-        let ctx = detect_catch_context(content, pos).unwrap();
-        assert!(
-            ctx.suggested_types.contains(&"\\Throwable".to_string()),
-            "Should always include \\Throwable, got: {:?}",
-            ctx.suggested_types
-        );
-        assert!(ctx.has_specific_types);
-    }
 
-    #[test]
-    fn test_detect_catch_context_no_specific_types_sets_flag() {
-        let content = concat!("<?php\n", "try {\n", "    doSomething();\n", "} catch (",);
-        let pos = Position {
-            line: 3,
-            character: 10,
-        };
-        let ctx = detect_catch_context(content, pos).unwrap();
-        assert!(
-            !ctx.has_specific_types,
-            "Should have no specific types when try block has no throws"
-        );
-        // Throwable is still offered
-        assert!(ctx.suggested_types.contains(&"\\Throwable".to_string()));
-    }
+        // Build the set of every FQN currently in the ast_map so that
+        // classmap / stub sources can exclude already-evaluated classes.
+        let loaded_fqns = self.collect_loaded_fqns();
 
-    #[test]
-    fn test_detect_catch_context_simple() {
-        let content = concat!(
-            "<?php\n",
-            "try {\n",
-            "    throw new RuntimeException('error');\n",
-            "} catch (",
-        );
-        let pos = Position {
-            line: 3,
-            character: 10,
-        };
-        let ctx = detect_catch_context(content, pos);
-        assert!(ctx.is_some(), "Should detect catch context");
-        let ctx = ctx.unwrap();
-        assert!(
-            ctx.suggested_types
-                .contains(&"RuntimeException".to_string()),
-            "Should suggest RuntimeException, got: {:?}",
-            ctx.suggested_types
-        );
-    }
+        // ── 1a. Use-imported classes (must be concrete + Throwable) ─
+        for (short_name, fqn) in file_use_map {
+            if !matches_class_prefix(short_name, fqn, &prefix_lower, is_fqn_prefix) {
+                continue;
+            }
+            if !seen_fqns.insert(fqn.clone()) {
+                continue;
+            }
+            // Only concrete classes (not interfaces/traits/enums)
+            if !self.is_concrete_class_in_ast_map(fqn) {
+                continue;
+            }
+            // Strict check: only include if confirmed Throwable descendant
+            if !self.is_throwable_descendant(fqn, 0) {
+                continue;
+            }
+            let (label, base_name, filter, _use_import) = class_completion_texts(
+                short_name,
+                fqn,
+                is_fqn_prefix,
+                has_leading_backslash,
+                file_namespace,
+                &prefix_lower,
+            );
+            let (insert_text, insert_text_format) = if is_new {
+                Self::build_new_insert(&base_name, None)
+            } else {
+                (base_name, None)
+            };
+            items.push(CompletionItem {
+                label,
+                kind: Some(CompletionItemKind::CLASS),
+                detail: Some(fqn.clone()),
+                insert_text: Some(insert_text.clone()),
+                insert_text_format,
+                filter_text: Some(filter),
+                sort_text: Some(format!("0_{}", short_name.to_lowercase())),
+                text_edit: fqn_replace_range.map(|range| {
+                    CompletionTextEdit::Edit(TextEdit {
+                        range,
+                        new_text: insert_text.clone(),
+                    })
+                }),
+                ..CompletionItem::default()
+            });
+        }
 
-    #[test]
-    fn test_detect_catch_context_with_inline_throws() {
-        let content = concat!(
-            "<?php\n",
-            "try {\n",
-            "    /** @throws ModelNotFoundException */\n",
-            "    $model = SomeService::find($id);\n",
-            "} catch (",
-        );
-        let pos = Position {
-            line: 4,
-            character: 10,
-        };
-        let ctx = detect_catch_context(content, pos);
-        assert!(ctx.is_some(), "Should detect catch context");
-        let ctx = ctx.unwrap();
-        assert!(
-            ctx.suggested_types
-                .contains(&"ModelNotFoundException".to_string()),
-            "Should suggest ModelNotFoundException from inline @throws, got: {:?}",
-            ctx.suggested_types
-        );
-    }
+        // ── 1b. Same-namespace classes (must be concrete + Throwable)
+        // Collect candidates while holding the lock, then drop the lock
+        // before calling `is_throwable_descendant` (which re-locks
+        // `ast_map` internally — Rust's Mutex is not re-entrant).
+        if let Some(ns) = file_namespace
+            && let Ok(nmap) = self.namespace_map.lock()
+        {
+            let same_ns_uris: Vec<String> = nmap
+                .iter()
+                .filter_map(|(uri, opt_ns)| {
+                    if opt_ns.as_deref() == Some(ns.as_str()) {
+                        Some(uri.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            drop(nmap);
 
-    #[test]
-    fn test_detect_catch_context_multi_throw() {
-        let content = concat!(
-            "<?php\n",
-            "try {\n",
-            "    throw new IOException('io');\n",
-            "    throw new TimeoutException('timeout');\n",
-            "} catch (",
-        );
-        let pos = Position {
-            line: 4,
-            character: 10,
-        };
-        let ctx = detect_catch_context(content, pos);
-        assert!(ctx.is_some());
-        let ctx = ctx.unwrap();
-        assert!(ctx.suggested_types.contains(&"IOException".to_string()));
-        assert!(
-            ctx.suggested_types
-                .contains(&"TimeoutException".to_string())
-        );
-    }
+            // Phase 1: collect candidate (name, fqn, is_deprecated)
+            // tuples under the ast_map lock — only concrete classes.
+            let mut candidates: Vec<(String, String, bool)> = Vec::new();
+            if let Ok(amap) = self.ast_map.lock() {
+                for uri in &same_ns_uris {
+                    if let Some(classes) = amap.get(uri) {
+                        for cls in classes {
+                            if is_anonymous_class(&cls.name) {
+                                continue;
+                            }
+                            if cls.kind != ClassLikeKind::Class || cls.is_abstract {
+                                continue;
+                            }
+                            let cls_fqn = format!("{}\\{}", ns, cls.name);
+                            if !matches_class_prefix(
+                                &cls.name,
+                                &cls_fqn,
+                                &prefix_lower,
+                                is_fqn_prefix,
+                            ) {
+                                continue;
+                            }
+                            let fqn = cls_fqn;
+                            if !seen_fqns.insert(fqn.clone()) {
+                                continue;
+                            }
+                            candidates.push((cls.name.clone(), fqn, cls.is_deprecated));
+                        }
+                    }
+                }
+            }
+            // Phase 2: filter by Throwable ancestry without holding locks.
+            for (name, fqn, is_deprecated) in candidates {
+                if !self.is_throwable_descendant(&fqn, 0) {
+                    continue;
+                }
+                let (label, base_name, filter, _use_import) = class_completion_texts(
+                    &name,
+                    &fqn,
+                    is_fqn_prefix,
+                    has_leading_backslash,
+                    file_namespace,
+                    &prefix_lower,
+                );
+                let (insert_text, insert_text_format) = if is_new {
+                    // Same-namespace classes are collected without
+                    // ClassInfo, so we cannot check __construct here.
+                    Self::build_new_insert(&base_name, None)
+                } else {
+                    (base_name, None)
+                };
+                items.push(CompletionItem {
+                    label,
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some(fqn),
+                    insert_text: Some(insert_text.clone()),
+                    insert_text_format,
+                    filter_text: Some(filter),
+                    sort_text: Some(format!("1_{}", name.to_lowercase())),
+                    deprecated: if is_deprecated { Some(true) } else { None },
+                    text_edit: fqn_replace_range.map(|range| {
+                        CompletionTextEdit::Edit(TextEdit {
+                            range,
+                            new_text: insert_text.clone(),
+                        })
+                    }),
+                    ..CompletionItem::default()
+                });
+            }
+        }
 
-    #[test]
-    fn test_detect_catch_context_second_catch() {
-        let content = concat!(
-            "<?php\n",
-            "try {\n",
-            "    throw new IOException('io');\n",
-            "    throw new TimeoutException('timeout');\n",
-            "} catch (IOException $e) {\n",
-            "    // handled\n",
-            "} catch (",
-        );
-        let pos = Position {
-            line: 6,
-            character: 10,
-        };
-        let ctx = detect_catch_context(content, pos);
-        assert!(ctx.is_some(), "Should detect second catch context");
-        let ctx = ctx.unwrap();
-        // Both types are in the try block
-        assert!(ctx.suggested_types.contains(&"IOException".to_string()));
-        assert!(
-            ctx.suggested_types
-                .contains(&"TimeoutException".to_string())
-        );
-    }
+        // ── 1c. class_index (must be concrete + Throwable) ──────────
+        if let Ok(idx) = self.class_index.lock() {
+            for fqn in idx.keys() {
+                let sn = short_name(fqn);
+                if !matches_class_prefix(sn, fqn, &prefix_lower, is_fqn_prefix) {
+                    continue;
+                }
+                if !seen_fqns.insert(fqn.clone()) {
+                    continue;
+                }
+                if !self.is_concrete_class_in_ast_map(fqn) {
+                    continue;
+                }
+                if !self.is_throwable_descendant(fqn, 0) {
+                    continue;
+                }
+                let (label, base_name, filter, use_import) = class_completion_texts(
+                    sn,
+                    fqn,
+                    is_fqn_prefix,
+                    has_leading_backslash,
+                    file_namespace,
+                    &prefix_lower,
+                );
+                let mut texts = ClassItemTexts {
+                    label,
+                    base_name,
+                    filter,
+                    use_import,
+                };
+                ctx.apply_import_fixups(&mut texts.base_name, &mut texts.use_import, false);
+                items.push(ctx.build_item(
+                    texts,
+                    fqn,
+                    format!("2_{}", sn.to_lowercase()),
+                    |name| (format!("{name}()$0"), Some(InsertTextFormat::SNIPPET)),
+                    false,
+                ));
+            }
+        }
 
-    #[test]
-    fn test_detect_catch_context_partial_typed() {
-        let content = concat!(
-            "<?php\n",
-            "try {\n",
-            "    throw new RuntimeException('error');\n",
-            "    throw new InvalidArgumentException('bad');\n",
-            "} catch (Run",
-        );
-        let pos = Position {
-            line: 4,
-            character: 13,
-        };
-        let ctx = detect_catch_context(content, pos);
-        assert!(ctx.is_some());
-        let ctx = ctx.unwrap();
-        assert_eq!(ctx.partial, "Run");
-        // Both are suggested (filtering happens in build_catch_completions)
-        assert!(
-            ctx.suggested_types
-                .contains(&"RuntimeException".to_string())
-        );
-        assert!(
-            ctx.suggested_types
-                .contains(&"InvalidArgumentException".to_string())
-        );
-    }
+        // ── 2. Classmap — names ending with "Exception" ─────────────
+        // ── 4. Classmap — names NOT ending with "Exception" ─────────
+        // We collect both buckets in a single pass over the classmap and
+        // assign different sort_text prefixes so "Exception" entries
+        // appear first.
+        if let Ok(cmap) = self.classmap.lock() {
+            for fqn in cmap.keys() {
+                if loaded_fqns.contains(fqn) {
+                    continue;
+                }
+                let sn = short_name(fqn);
+                if !matches_class_prefix(sn, fqn, &prefix_lower, is_fqn_prefix) {
+                    continue;
+                }
+                if !seen_fqns.insert(fqn.clone()) {
+                    continue;
+                }
+                let prefix_num = if sn.ends_with("Exception") { "3" } else { "5" };
+                let (label, base_name, filter, use_import) = class_completion_texts(
+                    sn,
+                    fqn,
+                    is_fqn_prefix,
+                    has_leading_backslash,
+                    file_namespace,
+                    &prefix_lower,
+                );
+                let mut texts = ClassItemTexts {
+                    label,
+                    base_name,
+                    filter,
+                    use_import,
+                };
+                ctx.apply_import_fixups(&mut texts.base_name, &mut texts.use_import, false);
+                items.push(ctx.build_item(
+                    texts,
+                    fqn,
+                    format!("{}_{}", prefix_num, sn.to_lowercase()),
+                    |name| (format!("{name}()$0"), Some(InsertTextFormat::SNIPPET)),
+                    false,
+                ));
+            }
+        }
 
-    #[test]
-    fn test_detect_catch_context_not_catch() {
-        let content = concat!("<?php\n", "function foo(",);
-        let pos = Position {
-            line: 1,
-            character: 14,
-        };
-        let ctx = detect_catch_context(content, pos);
-        assert!(ctx.is_none(), "Should not detect catch context in function");
-    }
+        // ── 3. Stubs — names ending with "Exception" ────────────────
+        // ── 5. Stubs — names NOT ending with "Exception" ────────────
+        for &name in self.stub_index.keys() {
+            if loaded_fqns.contains(name) {
+                continue;
+            }
+            let sn = short_name(name);
+            if !matches_class_prefix(sn, name, &prefix_lower, is_fqn_prefix) {
+                continue;
+            }
+            if !seen_fqns.insert(name.to_string()) {
+                continue;
+            }
+            let prefix_num = if sn.ends_with("Exception") { "4" } else { "6" };
+            let (label, base_name, filter, use_import) = class_completion_texts(
+                sn,
+                name,
+                is_fqn_prefix,
+                has_leading_backslash,
+                file_namespace,
+                &prefix_lower,
+            );
+            let mut texts = ClassItemTexts {
+                label,
+                base_name,
+                filter,
+                use_import,
+            };
+            ctx.apply_import_fixups(&mut texts.base_name, &mut texts.use_import, false);
+            items.push(ctx.build_item(
+                texts,
+                name,
+                format!("{}_{}", prefix_num, sn.to_lowercase()),
+                |name| (format!("{name}()$0"), Some(InsertTextFormat::SNIPPET)),
+                false,
+            ));
+        }
 
-    #[test]
-    fn test_build_catch_completions_filters_by_partial() {
-        let ctx = CatchContext {
-            partial: "Run".to_string(),
-            suggested_types: vec![
-                "RuntimeException".to_string(),
-                "InvalidArgumentException".to_string(),
-            ],
-            has_specific_types: true,
-        };
-        let items = build_catch_completions(&ctx);
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "RuntimeException");
-    }
+        let is_incomplete = items.len() > Self::MAX_CLASS_COMPLETIONS;
+        if is_incomplete {
+            items.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
+            items.truncate(Self::MAX_CLASS_COMPLETIONS);
+        }
 
-    #[test]
-    fn test_build_catch_completions_empty_partial_shows_all() {
-        let ctx = CatchContext {
-            partial: String::new(),
-            suggested_types: vec![
-                "RuntimeException".to_string(),
-                "InvalidArgumentException".to_string(),
-            ],
-            has_specific_types: true,
-        };
-        let items = build_catch_completions(&ctx);
-        assert_eq!(items.len(), 2);
-    }
-
-    #[test]
-    fn test_detect_catch_context_multi_catch_pipe() {
-        let content = concat!(
-            "<?php\n",
-            "try {\n",
-            "    throw new IOException('io');\n",
-            "    throw new TimeoutException('timeout');\n",
-            "    throw new RuntimeException('rt');\n",
-            "} catch (IOException | ",
-        );
-        let pos = Position {
-            line: 5,
-            character: 23,
-        };
-        let ctx = detect_catch_context(content, pos);
-        assert!(ctx.is_some());
-        let ctx = ctx.unwrap();
-        // IOException should be filtered out since it's already listed
-        assert!(
-            !ctx.suggested_types.contains(&"IOException".to_string()),
-            "IOException should be filtered out"
-        );
-        assert!(
-            ctx.suggested_types
-                .contains(&"TimeoutException".to_string())
-        );
-        assert!(
-            ctx.suggested_types
-                .contains(&"RuntimeException".to_string())
-        );
+        (items, is_incomplete)
     }
 }
+
+#[cfg(test)]
+#[path = "catch_completion_tests.rs"]
+mod tests;
