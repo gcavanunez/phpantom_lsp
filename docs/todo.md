@@ -788,13 +788,32 @@ branches in `TypeSpecifier::specifyTypesInCondition`.
 
 ---
 
+### 24. Go-to-definition for array shape keys via bracket access
+**Impact: Low · Effort: Medium**
+
+Array shape keys accessed via bracket notation (`$status['code']`)
+have no go-to-definition support. The type comes from a
+`@phpstan-type` / `@phpstan-import-type` alias or a direct
+`@var` / `@return` annotation resolved to
+`array{code: int, label: string}`, but Ctrl+Click on the string
+key inside `['code']` does nothing.
+
+Object shape properties (`$profile->name` from
+`@return object{name: string}`) already jump to the property key
+in the docblock. Extending the same approach to bracket-access
+array shapes would require detecting the array key context in the
+GTD path (similar to array shape completion) and searching for the
+key inside the matching `array{…}` annotation.
+
+---
+
 <!-- ============================================================ -->
 <!--  TIER 5 — LOW IMPACT                                         -->
 <!-- ============================================================ -->
 
 ## Low Impact
 
-### 24. Short-name collisions in `find_implementors`
+### 25. Short-name collisions in `find_implementors`
 **Impact: Low · Effort: Low**
 
 `class_implements_or_extends` matches interfaces by both short name and
@@ -810,7 +829,7 @@ before comparison.
 
 ---
 
-### 25. Fiber type resolution
+### 26. Fiber type resolution
 **Impact: Low · Effort: Low**
 
 `Generator<TKey, TValue, TSend, TReturn>` has dedicated support for
@@ -825,7 +844,7 @@ Generator extraction in `docblock/types.rs`.
 
 ---
 
-### 26. Non-empty-string propagation through string functions
+### 27. Non-empty-string propagation through string functions
 **Impact: Low · Effort: Low**
 
 PHPStan tracks `non-empty-string` through string-manipulating
@@ -843,7 +862,7 @@ See `NonEmptyStringFunctionsReturnTypeExtension` in PHPStan.
 
 ---
 
-### 27. `Closure::bind()` / `Closure::fromCallable()` return type preservation
+### 28. `Closure::bind()` / `Closure::fromCallable()` return type preservation
 **Impact: Low · Effort: Low-Medium**
 
 Variables holding closure literals, arrow functions, and first-class
@@ -859,7 +878,7 @@ See `ClosureBindDynamicReturnTypeExtension` and
 
 ---
 
-### 28. Remove deprecated text-search fallbacks
+### 29. Remove deprecated text-search fallbacks
 **Impact: Low · Effort: Medium**
 
 The go-to-definition subsystem now uses the precomputed `SymbolMap` as
@@ -891,7 +910,7 @@ would let that deprecated function be removed entirely.
 
 ---
 
-### 29. Non-array functions with dynamic return types
+### 30. Non-array functions with dynamic return types
 **Impact: Low · Effort: High**
 
 PHPStan also provides dynamic return type extensions for many non-array
@@ -922,7 +941,7 @@ return types (less impactful for class-based completion).
 
 ---
 
-### 30. Language construct signature help and hover
+### 31. Language construct signature help and hover
 **Impact: Low · Effort: Low**
 
 PHP language constructs that use parentheses (`unset()`, `isset()`, `empty()`,
@@ -939,14 +958,14 @@ need a similar hardcoded lookup.
 
 ---
 
-### 31. Diagnostics
+### 32. Diagnostics
 **Impact: Low (large scope) · Effort: Very High**
 
 No error reporting (undefined methods, type mismatches, etc.).
 
 ---
 
-### 32. Code Actions
+### 33. Code Actions
 **Impact: Low · Effort: Very High**
 
 No quick fixes or refactoring suggestions. No `codeActionProvider` in
@@ -954,7 +973,7 @@ No quick fixes or refactoring suggestions. No `codeActionProvider` in
 `WorkspaceEdit` generation infrastructure beyond trivial `TextEdit`s for
 use-statement insertion.
 
-#### 32a. Extract Function refactoring
+#### 33a. Extract Function refactoring
 
 Select a range of statements inside a method/function and extract them into a
 new function. The LSP would need to:
@@ -975,7 +994,7 @@ new function. The LSP would need to:
 |---|---|
 | Hover (§1) | "Resolve type at arbitrary position" — needed to type params |
 | Document Symbols (§12) | AST range → symbol mapping — needed to find enclosing function and valid insertion points |
-| Find References (§8) | Variable usage tracking across a scope — the same "which variables are used where" analysis |
+| Find References (§7) | Variable usage tracking across a scope — the same "which variables are used where" analysis |
 | Simple code actions (add use stmt, implement interface) | Builds the code action + `WorkspaceEdit` plumbing |
 
 ---

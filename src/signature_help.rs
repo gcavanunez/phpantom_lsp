@@ -364,7 +364,8 @@ impl Backend {
 
         // ── Instance method: `$subject->method` ─────────────────────
         if let Some(pos) = expr.rfind("->") {
-            let subject = &expr[..pos];
+            // Strip trailing `?` from subject when the operator was `?->`
+            let subject = expr[..pos].strip_suffix('?').unwrap_or(&expr[..pos]);
             let method_name = &expr[pos + 2..];
 
             let owner_classes: Vec<ClassInfo> =

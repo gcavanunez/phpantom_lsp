@@ -475,7 +475,11 @@ impl Backend {
         let function_loader = ctx.function_loader;
         // ── Instance method call: $this->method / $var->method ──
         if let Some(pos) = call_body.rfind("->") {
-            let lhs = &call_body[..pos];
+            // Strip trailing `?` from LHS when the operator was `?->`
+            // (e.g. `$maybe?->getCanvas` splits into lhs=`$maybe?`).
+            let lhs = call_body[..pos]
+                .strip_suffix('?')
+                .unwrap_or(&call_body[..pos]);
             let method_name = &call_body[pos + 2..];
 
             // Resolve the left-hand side to a class (recursively handles
@@ -1482,7 +1486,10 @@ impl Backend {
         {
             // Instance method chain: `expr->method()`
             if let Some(pos) = call_body.rfind("->") {
-                let lhs = &call_body[..pos];
+                // Strip trailing `?` from LHS when the operator was `?->`
+                let lhs = call_body[..pos]
+                    .strip_suffix('?')
+                    .unwrap_or(&call_body[..pos]);
                 let method_name = &call_body[pos + 2..];
 
                 let lhs_classes = Self::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
@@ -1518,7 +1525,10 @@ impl Backend {
 
         // ── Property access: `$this->prop` or `$var->prop` ──────────────
         if let Some(pos) = arg_text.rfind("->") {
-            let lhs = &arg_text[..pos];
+            // Strip trailing `?` from LHS when the operator was `?->`
+            let lhs = arg_text[..pos]
+                .strip_suffix('?')
+                .unwrap_or(&arg_text[..pos]);
             let prop_name = &arg_text[pos + 2..];
             if !prop_name.is_empty() && prop_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 let lhs_classes = Self::resolve_target_classes(lhs, AccessKind::Arrow, ctx);

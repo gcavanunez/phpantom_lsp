@@ -15988,3 +15988,273 @@ async fn test_variable_assigned_from_array_access_on_variable_method() {
         _ => panic!("Expected CompletionResponse::Array"),
     }
 }
+
+// ─── Array Functions with $var->property Arguments ──────────────────────────
+
+/// `array_filter($src->members, ...)` where `$src` is a local variable
+/// (not `$this`) should preserve the element type from the property's
+/// `@var` annotation.
+#[tokio::test]
+async fn test_completion_array_filter_var_property_arg() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///af_var_prop.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Pen {\n",
+        "    public function write(): void {}\n",
+        "}\n",
+        "class Source {\n",
+        "    /** @var list<Pen> */\n",
+        "    public array $members;\n",
+        "}\n",
+        "class Demo {\n",
+        "    public function test(Source $src): void {\n",
+        "        $active = array_filter($src->members, fn(Pen $p) => true);\n",
+        "        $active[0]->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Line 11: `        $active[0]->`
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 11,
+                character: 20,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should return results for array_filter with $src->members arg"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+            assert!(
+                labels.iter().any(|l| l.starts_with("write")),
+                "Should include write() from Pen, got: {:?}",
+                labels
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// `array_values($src->members)` where `$src` is a local variable
+/// should preserve the element type.
+#[tokio::test]
+async fn test_completion_array_values_var_property_arg() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///av_var_prop.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Pen {\n",
+        "    public function write(): void {}\n",
+        "}\n",
+        "class Source {\n",
+        "    /** @var list<Pen> */\n",
+        "    public array $members;\n",
+        "}\n",
+        "class Demo {\n",
+        "    public function test(Source $src): void {\n",
+        "        $vals = array_values($src->members);\n",
+        "        $vals[0]->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Line 11: `        $vals[0]->`
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 11,
+                character: 18,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should return results for array_values with $src->members arg"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+            assert!(
+                labels.iter().any(|l| l.starts_with("write")),
+                "Should include write() from Pen, got: {:?}",
+                labels
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// `end($src->members)->write()` — inline call without an intermediate
+/// variable should resolve the element type.
+#[tokio::test]
+async fn test_completion_end_inline_var_property_arg() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///end_var_prop.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Pen {\n",
+        "    public function write(): void {}\n",
+        "}\n",
+        "class Source {\n",
+        "    /** @var list<Pen> */\n",
+        "    public array $members;\n",
+        "}\n",
+        "class Demo {\n",
+        "    public function test(Source $src): void {\n",
+        "        end($src->members)->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Line 10: `        end($src->members)->`
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 10,
+                character: 28,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should return results for end($src->members)->"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+            assert!(
+                labels.iter().any(|l| l.starts_with("write")),
+                "Should include write() from Pen, got: {:?}",
+                labels
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// `array_map(fn($pen) => $pen, $src->members)` where `$src` is a
+/// local variable should infer the element type from the property.
+#[tokio::test]
+async fn test_completion_array_map_var_property_arg() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///am_var_prop.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Pen {\n",
+        "    public function write(): void {}\n",
+        "}\n",
+        "class Source {\n",
+        "    /** @var list<Pen> */\n",
+        "    public array $members;\n",
+        "}\n",
+        "class Demo {\n",
+        "    public function test(Source $src): void {\n",
+        "        $mapped = array_map(fn($pen) => $pen, $src->members);\n",
+        "        $mapped[0]->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Line 11: `        $mapped[0]->`
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 11,
+                character: 20,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should return results for array_map with $src->members arg"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+            assert!(
+                labels.iter().any(|l| l.starts_with("write")),
+                "Should include write() from Pen via array_map fallback, got: {:?}",
+                labels
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}

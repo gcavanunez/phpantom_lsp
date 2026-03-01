@@ -2589,3 +2589,543 @@ async fn test_goto_definition_define_constant_at_definition_returns_none() {
         "GTD on a constant usage should still resolve to the define() call"
     );
 }
+
+// ─── Member Definition: Array Function Results ──────────────────────────────
+
+/// GTD on `$last->write()` where `$last = array_pop($pens)` and
+/// `$pens = $this->getPens()` (same file, no namespaces).
+#[tokio::test]
+async fn test_goto_definition_method_on_array_pop_same_file() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///array_pop_gtd.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                               // 0
+        "class Pen {\n",                                         // 1
+        "    public function write(): void {}\n",                // 2
+        "}\n",                                                   // 3
+        "class Holder {\n",                                      // 4
+        "    /** @return list<Pen> */\n",                        // 5
+        "    public function getPens(): array { return []; }\n", // 6
+        "    public function test(): void {\n",                  // 7
+        "        $pens = $this->getPens();\n",                   // 8
+        "        $last = array_pop($pens);\n",                   // 9
+        "        $last->write();\n",                             // 10
+        "    }\n",                                               // 11
+        "}\n",                                                   // 12
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on "write" in `$last->write()` on line 10
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 10,
+                character: 16,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve $last->write() via array_pop + $this->getPens()"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            assert_eq!(location.uri, uri);
+            assert_eq!(
+                location.range.start.line, 2,
+                "write() is declared on line 2"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+/// GTD on `$last->write()` where `$last = array_pop($pens)` and
+/// `$pens = $src->roster()` — `$src` is a variable (not `$this`),
+/// and classes live in a namespace across files.
+#[tokio::test]
+async fn test_goto_definition_method_on_array_pop_var_method_cross_file() {
+    let (backend, _dir) = create_psr4_workspace(
+        r#"{
+            "autoload": {
+                "psr-4": {
+                    "Demo\\": "src/"
+                }
+            }
+        }"#,
+        &[
+            (
+                "src/Pen.php",
+                concat!(
+                    "<?php\n",
+                    "namespace Demo;\n",
+                    "\n",
+                    "class Pen {\n",
+                    "    public function write(): void {}\n",
+                    "}\n",
+                ),
+            ),
+            (
+                "src/Source.php",
+                concat!(
+                    "<?php\n",
+                    "namespace Demo;\n",
+                    "\n",
+                    "class Source {\n",
+                    "    /** @return list<Pen> */\n",
+                    "    public function roster(): array { return []; }\n",
+                    "}\n",
+                ),
+            ),
+        ],
+    );
+
+    let uri = Url::parse("file:///consumer.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                        // 0
+        "namespace Demo;\n",                              // 1
+        "\n",                                             // 2
+        "class Consumer {\n",                             // 3
+        "    public function run(Source $src): void {\n", // 4
+        "        $pens = $src->roster();\n",              // 5
+        "        $last = array_pop($pens);\n",            // 6
+        "        $last->write();\n",                      // 7
+        "    }\n",                                        // 8
+        "}\n",                                            // 9
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on "write" in `$last->write()` on line 7
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 7,
+                character: 16,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve $last->write() via array_pop + $src->roster() cross-file"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            let path = location.uri.to_file_path().unwrap();
+            assert!(
+                path.ends_with("src/Pen.php"),
+                "Should point to Pen.php, got: {:?}",
+                path
+            );
+            assert_eq!(
+                location.range.start.line, 4,
+                "write() is declared on line 4 of Pen.php"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+/// GTD on `$last->write()` where `$last = array_pop($pens)`,
+/// `$pens = $src->roster()`, and the consumer lives in a *different*
+/// namespace from Source/Pen and uses an explicit `use` import.
+#[tokio::test]
+async fn test_goto_definition_method_on_array_pop_different_namespace() {
+    let (backend, _dir) = create_psr4_workspace(
+        r#"{
+            "autoload": {
+                "psr-4": {
+                    "Demo\\": "src/Demo/",
+                    "App\\": "src/App/"
+                }
+            }
+        }"#,
+        &[
+            (
+                "src/Demo/Pen.php",
+                concat!(
+                    "<?php\n",
+                    "namespace Demo;\n",
+                    "\n",
+                    "class Pen {\n",
+                    "    public function write(): void {}\n",
+                    "}\n",
+                ),
+            ),
+            (
+                "src/Demo/Source.php",
+                concat!(
+                    "<?php\n",
+                    "namespace Demo;\n",
+                    "\n",
+                    "class Source {\n",
+                    "    /** @return list<Pen> */\n",
+                    "    public function roster(): array { return []; }\n",
+                    "}\n",
+                ),
+            ),
+        ],
+    );
+
+    let uri = Url::parse("file:///consumer.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                        // 0
+        "namespace App;\n",                               // 1
+        "\n",                                             // 2
+        "use Demo\\Source;\n",                            // 3
+        "\n",                                             // 4
+        "class Consumer {\n",                             // 5
+        "    public function run(Source $src): void {\n", // 6
+        "        $pens = $src->roster();\n",              // 7
+        "        $last = array_pop($pens);\n",            // 8
+        "        $last->write();\n",                      // 9
+        "    }\n",                                        // 10
+        "}\n",                                            // 11
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on "write" in `$last->write()` on line 9
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 9,
+                character: 16,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve $last->write() via array_pop + $src->roster() across namespaces"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            let path = location.uri.to_file_path().unwrap();
+            assert!(
+                path.ends_with("src/Demo/Pen.php"),
+                "Should point to Demo/Pen.php, got: {:?}",
+                path
+            );
+            assert_eq!(
+                location.range.start.line, 4,
+                "write() is declared on line 4 of Pen.php"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+// ─── Member Definition: Generator Yield Inference ───────────────────────────
+
+/// GTD on `$user->getEmail()` where `$user` is inferred from generator
+/// yield type `@return \Generator<int, User>` (same file, method body).
+#[tokio::test]
+async fn test_goto_definition_method_on_generator_yield_variable() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///gen_yield_gtd.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                        // 0
+        "class User {\n",                                 // 1
+        "    public string $name;\n",                     // 2
+        "    public function getEmail(): string {}\n",    // 3
+        "}\n",                                            // 4
+        "class UserRepository {\n",                       // 5
+        "    /** @return \\Generator<int, User> */\n",    // 6
+        "    public function findAll(): \\Generator {\n", // 7
+        "        yield $user;\n",                         // 8
+        "        $user->getEmail();\n",                   // 9
+        "    }\n",                                        // 10
+        "}\n",                                            // 11
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on "getEmail" in `$user->getEmail()` on line 9
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 9,
+                character: 16,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve $user->getEmail() via generator yield type inference"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            assert_eq!(location.uri, uri);
+            assert_eq!(
+                location.range.start.line, 3,
+                "getEmail() is declared on line 3"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+/// GTD on `$product->title` where `$product` is inferred from a
+/// key-value yield: `yield 0 => $product` with
+/// `@return \Generator<int, Product>`.
+#[tokio::test]
+async fn test_goto_definition_property_on_generator_yield_pair_variable() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///gen_yield_pair_gtd.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                        // 0
+        "class Product {\n",                              // 1
+        "    public string $title;\n",                    // 2
+        "}\n",                                            // 3
+        "class ProductLoader {\n",                        // 4
+        "    /** @return \\Generator<int, Product> */\n", // 5
+        "    public function loadAll(): \\Generator {\n", // 6
+        "        yield 0 => $product;\n",                 // 7
+        "        $product->title;\n",                     // 8
+        "    }\n",                                        // 9
+        "}\n",                                            // 10
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on "title" in `$product->title` on line 8
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 8,
+                character: 20,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve $product->title via generator yield pair type inference"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            assert_eq!(location.uri, uri);
+            assert_eq!(location.range.start.line, 2, "$title is declared on line 2");
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+/// GTD on `$customer->name` where `$customer` is inferred from a
+/// top-level generator function (not a method).
+#[tokio::test]
+async fn test_goto_definition_method_on_generator_yield_top_level_function() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///gen_yield_toplevel_gtd.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                       // 0
+        "class Customer {\n",                            // 1
+        "    public string $name;\n",                    // 2
+        "    public function greet(): string {}\n",      // 3
+        "}\n",                                           // 4
+        "/** @return \\Generator<int, Customer> */\n",   // 5
+        "function generateCustomers(): \\Generator {\n", // 6
+        "    yield $customer;\n",                        // 7
+        "    $customer->greet();\n",                     // 8
+        "}\n",                                           // 9
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on "greet" in `$customer->greet()` on line 8
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 8,
+                character: 17,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve $customer->greet() via generator yield inference in top-level function"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            assert_eq!(location.uri, uri);
+            assert_eq!(
+                location.range.start.line, 3,
+                "greet() is declared on line 3"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}
+
+/// GTD on `$user->getEmail()` where `$user` is inferred from generator
+/// yield type and User is defined in another file via PSR-4.
+#[tokio::test]
+async fn test_goto_definition_method_on_generator_yield_cross_file() {
+    let (backend, _dir) = create_psr4_workspace(
+        r#"{
+            "autoload": {
+                "psr-4": {
+                    "App\\": "src/"
+                }
+            }
+        }"#,
+        &[(
+            "src/User.php",
+            concat!(
+                "<?php\n",
+                "namespace App;\n",
+                "\n",
+                "class User {\n",
+                "    public function getEmail(): string {}\n",
+                "}\n",
+            ),
+        )],
+    );
+
+    let uri = Url::parse("file:///repo.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                        // 0
+        "namespace App;\n",                               // 1
+        "\n",                                             // 2
+        "class UserRepository {\n",                       // 3
+        "    /** @return \\Generator<int, User> */\n",    // 4
+        "    public function findAll(): \\Generator {\n", // 5
+        "        yield $user;\n",                         // 6
+        "        $user->getEmail();\n",                   // 7
+        "    }\n",                                        // 8
+        "}\n",                                            // 9
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Click on "getEmail" in `$user->getEmail()` on line 7
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 7,
+                character: 16,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+
+    let result = backend.goto_definition(params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Should resolve $user->getEmail() via generator yield inference cross-file"
+    );
+
+    match result.unwrap() {
+        GotoDefinitionResponse::Scalar(location) => {
+            let path = location.uri.to_file_path().unwrap();
+            assert!(
+                path.ends_with("src/User.php"),
+                "Should point to User.php, got: {:?}",
+                path
+            );
+            assert_eq!(
+                location.range.start.line, 4,
+                "getEmail() is declared on line 4 of User.php"
+            );
+        }
+        other => panic!("Expected Scalar location, got: {:?}", other),
+    }
+}

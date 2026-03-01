@@ -298,6 +298,21 @@ impl Backend {
                 return Some(point_location(parsed_uri, member_position));
             }
 
+            // ── Object shape property fallback ──────────────────────
+            // Synthetic `__object_shape` classes have no backing file.
+            // Search the current file's docblocks for an `object{…}`
+            // annotation that contains the property key and jump there.
+            if declaring_fqn == "__object_shape"
+                && let Some(position) = Self::find_object_shape_property_position(
+                    content,
+                    &search_name,
+                    Some(cursor_offset as usize),
+                )
+                && let Ok(parsed_uri) = Url::parse(uri)
+            {
+                return Some(point_location(parsed_uri, position));
+            }
+
             // ── Eloquent array entry fallback ───────────────────────
             // Virtual properties from $casts, $attributes, $fillable,
             // $guarded, $hidden, and $visible don't have a method or property
@@ -457,6 +472,18 @@ impl Backend {
         };
 
         let member_kind = Self::classify_member(&declaring_class, &search_name, access_hint)?;
+
+        // ── Object shape property fallback (fallback path) ──────
+        if declaring_fqn == "__object_shape"
+            && let Some(position) = Self::find_object_shape_property_position(
+                content,
+                &search_name,
+                Some(cursor_offset as usize),
+            )
+            && let Ok(parsed_uri) = Url::parse(uri)
+        {
+            return Some(point_location(parsed_uri, position));
+        }
 
         let (class_uri, class_content) =
             self.find_class_file_content(&declaring_fqn, uri, content)?;
@@ -718,16 +745,6 @@ impl Backend {
 
     // ─── Inheritance Chain Walking ──────────────────────────────────────────
 
-    /// Walk up the inheritance chain to find the class that actually declares
-    /// the given member.
-    ///
-    /// Returns `Some(ClassInfo)` of the declaring class, or `None` if the
-    /// member cannot be found in any ancestor.
-    /// Resolve a trait `as` alias on a class.
-    ///
-    /// If `member_name` matches a trait alias declared on the class, returns
-    /// the original method name and (optionally) the source trait name.
-    /// Otherwise returns `member_name` unchanged with no trait hint.
     /// Map a virtual scope method name to the underlying `scopeXxx` method.
     ///
     /// Laravel scope methods are defined as `scopeActive(Builder $query)`
@@ -745,31 +762,154 @@ impl Backend {
         scope
     }
 
-    /// Check if a method is available on the Eloquent Builder for a Model
-    /// subclass.
+    /// Find the position of a property key inside an `object{…}` shape
+    /// annotation within docblock comments.
     ///
-    /// Laravel's `Model::__callStatic()` forwards static calls to
-    /// `Builder`, but the real `Model` class has no `@mixin Builder`
-    /// annotation.  This function bridges that gap for go-to-definition
-    /// by loading the Builder and searching its inheritance chain
-    /// (including `@mixin Query\Builder` and traits like
-    /// `BuildsQueries`) for the requested method.
+    /// Scans `content` for docblock lines containing `object{` (or
+    /// `?object{`, `\object{`) and, within matching braces, looks for
+    /// `key_name:` or `key_name?:`.  Returns the `Position` of the
+    /// first character of the key name.
     ///
-    /// Returns `Some((ClassInfo, fqn))` of the declaring class when the
-    /// method is found, or `None` if the class is not an Eloquent Model
-    /// subclass or the method does not exist on Builder.
-    /// Reload the raw (unmerged) `ClassInfo` for a candidate.
-    ///
-    /// Candidates returned by `resolve_target_classes` may be
-    /// fully-resolved classes with virtual/mixin members baked into
-    /// their `methods` list (this happens when `type_hint_to_classes`
-    /// calls `resolve_class_fully` to apply generic substitutions).
-    /// `find_declaring_class` needs the raw class so it can trace
-    /// member declarations through the real inheritance and mixin
-    /// chain instead of short-circuiting on a merged method.
-    ///
-    /// Returns `Some(raw)` when a reload succeeds, or `None` when the
-    /// class cannot be reloaded (e.g. synthetic/anonymous classes).
+    /// When `near_offset` is provided, the match closest to that byte
+    /// offset (in either direction) is returned.  This handles both
+    /// inline `@var` annotations above the cursor and `@return`
+    /// docblocks on methods defined below the usage site.
+    fn find_object_shape_property_position(
+        content: &str,
+        key_name: &str,
+        near_offset: Option<usize>,
+    ) -> Option<Position> {
+        // We need to find `key_name:` or `key_name?:` inside an
+        // `object{…}` block that appears inside a docblock comment.
+        //
+        // Strategy: scan every line.  Track whether we are inside a
+        // `/** … */` comment.  When we see `object{` (case-insensitive
+        // base word) at brace depth 0, enter shape-scanning mode and
+        // look for the key.
+
+        let mut matches: Vec<(usize, u32, u32)> = Vec::new(); // (byte_offset, line, col)
+        let mut byte_offset: usize = 0;
+        let mut in_docblock = false;
+
+        for (line_idx, line) in content.lines().enumerate() {
+            let line_len = line.len() + 1; // +1 for newline
+
+            // Track docblock boundaries.
+            if line.contains("/**") {
+                in_docblock = true;
+            }
+
+            if in_docblock {
+                // Search for object shape property keys in this line.
+                // Look for `object{` patterns (possibly preceded by `?` or `\`).
+                if let Some(pos) = Self::find_shape_key_in_line(line, key_name) {
+                    let abs_offset = byte_offset + pos;
+                    matches.push((abs_offset, line_idx as u32, pos as u32));
+                }
+            }
+
+            if line.contains("*/") {
+                in_docblock = false;
+            }
+
+            byte_offset += line_len;
+        }
+
+        // Pick the match closest to the cursor.  When no near_offset
+        // is given, return the last match (highest line number).
+        let best = match near_offset {
+            Some(cursor) => matches
+                .into_iter()
+                .min_by_key(|(off, _, _)| cursor.abs_diff(*off)),
+            None => matches.into_iter().last(),
+        };
+
+        best.map(|(_, line, col)| Position {
+            line,
+            character: col,
+        })
+    }
+
+    /// Search a single line for a property key inside an `object{…}`
+    /// shape.  Returns the byte offset of the key within the line, or
+    /// `None`.
+    fn find_shape_key_in_line(line: &str, key_name: &str) -> Option<usize> {
+        let bytes = line.as_bytes();
+
+        // Find every `object{` (case-insensitive) in the line.
+        let lower = line.to_ascii_lowercase();
+        let mut search_from = 0usize;
+
+        while let Some(obj_pos) = lower[search_from..].find("object{") {
+            let abs_obj = search_from + obj_pos;
+            let brace_start = abs_obj + "object".len(); // index of `{`
+
+            // Walk from the `{` respecting nesting to find keys.
+            let mut depth = 0i32;
+            let mut i = brace_start;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ if depth == 1 => {
+                        // At depth 1 we are inside the outermost `object{…}`.
+                        // Check if the key starts here.
+                        if let Some(col) = Self::match_shape_key_at(line, i, key_name) {
+                            return Some(col);
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+
+            search_from = abs_obj + 1;
+        }
+
+        None
+    }
+
+    /// Check whether `key_name` (possibly quoted) starts at position
+    /// `pos` within `line`.  Returns the column of the first character
+    /// of the key (inside quotes if quoted).
+    fn match_shape_key_at(line: &str, pos: usize, key_name: &str) -> Option<usize> {
+        let rest = &line[pos..];
+        let rest_trimmed = rest.trim_start();
+        let leading_ws = rest.len() - rest_trimmed.len();
+        let col_base = pos + leading_ws;
+
+        // Bare key: `name:` or `name?:`
+        if let Some(after) = rest_trimmed.strip_prefix(key_name)
+            && (after.starts_with(':') || after.starts_with("?:"))
+        {
+            return Some(col_base);
+        }
+
+        // Single-quoted key: `'name':` or `'name'?:`
+        if let Some(inner) = rest_trimmed.strip_prefix('\'')
+            && let Some(after_key) = inner.strip_prefix(key_name)
+            && (after_key.starts_with("':") || after_key.starts_with("'?:"))
+        {
+            // Point inside the quote at the first letter.
+            return Some(col_base + 1);
+        }
+
+        // Double-quoted key: `"name":` or `"name"?:`
+        if let Some(inner) = rest_trimmed.strip_prefix('"')
+            && let Some(after_key) = inner.strip_prefix(key_name)
+            && (after_key.starts_with("\":") || after_key.starts_with("\"?:"))
+        {
+            return Some(col_base + 1);
+        }
+
+        None
+    }
+
     /// Find a string literal entry inside an Eloquent array property.
     ///
     /// Searches for `'member_name'` or `"member_name"` inside `$casts`,
@@ -841,6 +981,18 @@ impl Backend {
         None
     }
 
+    /// Reload the raw (unmerged) `ClassInfo` for a candidate.
+    ///
+    /// Candidates returned by `resolve_target_classes` may be
+    /// fully-resolved classes with virtual/mixin members baked into
+    /// their `methods` list (this happens when `type_hint_to_classes`
+    /// calls `resolve_class_fully` to apply generic substitutions).
+    /// `find_declaring_class` needs the raw class so it can trace
+    /// member declarations through the real inheritance and mixin
+    /// chain instead of short-circuiting on a merged method.
+    ///
+    /// Returns `Some(raw)` when a reload succeeds, or `None` when the
+    /// class cannot be reloaded (e.g. synthetic/anonymous classes).
     fn reload_raw_class(
         candidate: &ClassInfo,
         all_classes: &[ClassInfo],
@@ -855,6 +1007,19 @@ impl Backend {
             .or_else(|| class_loader(&fqn))
     }
 
+    /// Check if a method is available on the Eloquent Builder for a Model
+    /// subclass.
+    ///
+    /// Laravel's `Model::__callStatic()` forwards static calls to
+    /// `Builder`, but the real `Model` class has no `@mixin Builder`
+    /// annotation.  This function bridges that gap for go-to-definition
+    /// by loading the Builder and searching its inheritance chain
+    /// (including `@mixin Query\Builder` and traits like
+    /// `BuildsQueries`) for the requested method.
+    ///
+    /// Returns `Some((ClassInfo, fqn))` of the declaring class when the
+    /// method is found, or `None` if the class is not an Eloquent Model
+    /// subclass or the method does not exist on Builder.
     fn find_builder_forwarded_method(
         class: &ClassInfo,
         member_name: &str,
@@ -981,6 +1146,11 @@ impl Backend {
         Some((declaring, fqn, member_name.to_string()))
     }
 
+    /// Resolve a trait `as` alias on a class.
+    ///
+    /// If `member_name` matches a trait alias declared on the class, returns
+    /// the original method name and (optionally) the source trait name.
+    /// Otherwise returns `member_name` unchanged with no trait hint.
     fn resolve_trait_alias(class: &ClassInfo, member_name: &str) -> (String, Option<String>) {
         for alias in &class.trait_aliases {
             if alias.alias.as_deref() == Some(member_name) {
@@ -1043,6 +1213,63 @@ impl Backend {
                 return Some(found);
             }
             current = parent;
+        }
+
+        // Check implemented interfaces (own + from parents).
+        // Interfaces can declare `@method` / `@property` / `@property-read`
+        // tags that should be resolvable via go-to-definition.
+        {
+            let mut all_iface_names: Vec<String> = class.interfaces.clone();
+            let mut iface_current = class.clone();
+            for _ in 0..MAX_INHERITANCE_DEPTH {
+                let parent_name = match iface_current.parent_class.as_ref() {
+                    Some(name) => name.clone(),
+                    None => break,
+                };
+                let parent = match class_loader(&parent_name) {
+                    Some(p) => p,
+                    None => break,
+                };
+                for iface in &parent.interfaces {
+                    if !all_iface_names.contains(iface) {
+                        all_iface_names.push(iface.clone());
+                    }
+                }
+                iface_current = parent;
+            }
+            for iface_name in &all_iface_names {
+                if let Some(iface) = class_loader(iface_name) {
+                    if Self::classify_member(&iface, member_name, MemberAccessHint::Unknown)
+                        .is_some()
+                    {
+                        return Some((iface, iface_name.clone()));
+                    }
+                    // Walk the interface's own extends chain (interfaces
+                    // stored in `parent_class` or `interfaces`).
+                    let mut iface_ancestor = iface.clone();
+                    for _ in 0..MAX_INHERITANCE_DEPTH {
+                        for parent_iface in &iface_ancestor.interfaces {
+                            if let Some(pi) = class_loader(parent_iface)
+                                && Self::classify_member(
+                                    &pi,
+                                    member_name,
+                                    MemberAccessHint::Unknown,
+                                )
+                                .is_some()
+                            {
+                                return Some((pi, parent_iface.clone()));
+                            }
+                        }
+                        match iface_ancestor.parent_class.as_ref() {
+                            Some(pn) => match class_loader(pn) {
+                                Some(p) => iface_ancestor = p,
+                                None => break,
+                            },
+                            None => break,
+                        }
+                    }
+                }
+            }
         }
 
         // Check @mixin classes — these have the lowest precedence.

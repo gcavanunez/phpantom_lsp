@@ -1523,3 +1523,183 @@ fn test_extract_word_docblock_nullable() {
     let word = phpantom_lsp::Backend::extract_word_at_position(content, pos);
     assert_eq!(word.as_deref(), Some("User"));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §12  Callable types inside docblock annotations
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// GTD on the return type of a callable annotation: `\Closure(): Pencil`.
+#[tokio::test]
+async fn test_goto_definition_docblock_callable_return_type() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                         // 0
+        "class Pencil {\n",                                // 1
+        "    public string $color;\n",                     // 2
+        "}\n",                                             // 3
+        "class Factory {\n",                               // 4
+        "    /** @var \\Closure(): Pencil $supplier */\n", // 5
+        "    private $supplier;\n",                        // 6
+        "}\n",                                             // 7
+    );
+    open_file(&backend, &uri, text).await;
+
+    // Cursor on "Pencil" in `\Closure(): Pencil` on line 5
+    let result = goto_definition(&backend, &uri, 5, 29).await;
+    assert!(
+        result.is_some(),
+        "Should resolve Pencil in callable return type"
+    );
+    assert_location(result.unwrap(), &uri, 1);
+}
+
+/// GTD on a parameter type inside a callable annotation:
+/// `callable(Request): Response`.
+#[tokio::test]
+async fn test_goto_definition_docblock_callable_param_type() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                // 0
+        "class Request {\n",                                      // 1
+        "    public string $body;\n",                             // 2
+        "}\n",                                                    // 3
+        "class Response {\n",                                     // 4
+        "    public int $status;\n",                              // 5
+        "}\n",                                                    // 6
+        "class Handler {\n",                                      // 7
+        "    /** @var callable(Request): Response $handler */\n", // 8
+        "    private $handler;\n",                                // 9
+        "}\n",                                                    // 10
+    );
+    open_file(&backend, &uri, text).await;
+
+    // Cursor on "Request" inside `callable(Request)` on line 8
+    let result = goto_definition(&backend, &uri, 8, 24).await;
+    assert!(
+        result.is_some(),
+        "Should resolve Request in callable param type"
+    );
+    assert_location(result.unwrap(), &uri, 1);
+
+    // Cursor on "Response" in the callable return type on line 8
+    let result = goto_definition(&backend, &uri, 8, 34).await;
+    assert!(
+        result.is_some(),
+        "Should resolve Response in callable return type"
+    );
+    assert_location(result.unwrap(), &uri, 4);
+}
+
+/// GTD on `\Closure` itself inside a callable annotation.
+#[tokio::test]
+async fn test_goto_definition_docblock_callable_base_type() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                        // 0
+        "class Result {\n",                               // 1
+        "    public string $value;\n",                    // 2
+        "}\n",                                            // 3
+        "class Worker {\n",                               // 4
+        "    /** @param \\Closure(int): Result $cb */\n", // 5
+        "    public function run($cb) {}\n",              // 6
+        "}\n",                                            // 7
+    );
+    open_file(&backend, &uri, text).await;
+
+    // Cursor on "Result" in callable return type on line 5
+    let result = goto_definition(&backend, &uri, 5, 35).await;
+    assert!(
+        result.is_some(),
+        "Should resolve Result in callable return type"
+    );
+    assert_location(result.unwrap(), &uri, 1);
+}
+
+/// GTD on a callable with multiple parameter types.
+#[tokio::test]
+async fn test_goto_definition_docblock_callable_multiple_params() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                  // 0
+        "class Config {}\n",                                        // 1
+        "class Logger {}\n",                                        // 2
+        "class Output {}\n",                                        // 3
+        "class App {\n",                                            // 4
+        "    /** @var callable(Config, Logger): Output $boot */\n", // 5
+        "    private $boot;\n",                                     // 6
+        "}\n",                                                      // 7
+    );
+    open_file(&backend, &uri, text).await;
+
+    // Cursor on "Config" on line 5
+    let result = goto_definition(&backend, &uri, 5, 24).await;
+    assert!(result.is_some(), "Should resolve Config in callable param");
+    assert_location(result.unwrap(), &uri, 1);
+
+    // Cursor on "Logger" on line 5
+    let result = goto_definition(&backend, &uri, 5, 32).await;
+    assert!(result.is_some(), "Should resolve Logger in callable param");
+    assert_location(result.unwrap(), &uri, 2);
+
+    // Cursor on "Output" on line 5
+    let result = goto_definition(&backend, &uri, 5, 41).await;
+    assert!(
+        result.is_some(),
+        "Should resolve Output in callable return type"
+    );
+    assert_location(result.unwrap(), &uri, 3);
+}
+
+/// GTD on callable return type in @return tag.
+#[tokio::test]
+async fn test_goto_definition_docblock_return_callable_type() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                   // 0
+        "class User {}\n",                           // 1
+        "class Repository {\n",                      // 2
+        "    /**\n",                                 // 3
+        "     * @return callable(): User\n",         // 4
+        "     */\n",                                 // 5
+        "    public function getUserFactory() {}\n", // 6
+        "}\n",                                       // 7
+    );
+    open_file(&backend, &uri, text).await;
+
+    // Cursor on "User" in `callable(): User` on line 4
+    let result = goto_definition(&backend, &uri, 4, 27).await;
+    assert!(
+        result.is_some(),
+        "Should resolve User in callable return type of @return"
+    );
+    assert_location(result.unwrap(), &uri, 1);
+}
+
+/// GTD on callable with no return type (bare `callable(Type)`).
+#[tokio::test]
+async fn test_goto_definition_docblock_callable_no_return_type() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                       // 0
+        "class Event {}\n",                              // 1
+        "class Dispatcher {\n",                          // 2
+        "    /** @param callable(Event) $listener */\n", // 3
+        "    public function listen($listener) {}\n",    // 4
+        "}\n",                                           // 5
+    );
+    open_file(&backend, &uri, text).await;
+
+    // Cursor on "Event" in `callable(Event)` on line 3
+    let result = goto_definition(&backend, &uri, 3, 28).await;
+    assert!(
+        result.is_some(),
+        "Should resolve Event in callable param type without return type"
+    );
+    assert_location(result.unwrap(), &uri, 1);
+}

@@ -612,7 +612,9 @@ impl Backend {
                     {
                         // Split at the last `->` to get the object and method name.
                         if let Some(arrow_pos) = call_body.rfind("->") {
-                            let obj_text = &call_body[..arrow_pos];
+                            let obj_text = call_body[..arrow_pos]
+                                .strip_suffix('?')
+                                .unwrap_or(&call_body[..arrow_pos]);
                             let method_name = &call_body[arrow_pos + 2..];
                             let current_class =
                                 all_classes.iter().find(|c| c.name == current_class_name);

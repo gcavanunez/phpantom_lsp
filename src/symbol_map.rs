@@ -679,6 +679,106 @@ fn emit_type_spans(type_token: &str, token_file_offset: u32, spans: &mut Vec<Sym
         return;
     }
 
+    // Handle callable types: `Closure(ParamType): ReturnType`,
+    // `callable(A, B): C`, `\Closure(): Pencil`, etc.
+    // Detect by finding `(` at depth 0 (angle/brace) that is *not* at
+    // position 0 (position-0 parens are the conditional-type case
+    // handled above).
+    if let Some(paren_pos) = find_callable_paren(type_name) {
+        let base_name = &type_name[..paren_pos];
+
+        // Emit span for the callable base name (e.g. `Closure`, `\Closure`).
+        let base_trimmed = base_name
+            .split('<')
+            .next()
+            .unwrap_or(base_name)
+            .split('{')
+            .next()
+            .unwrap_or(base_name);
+        let name_for_check = base_trimmed
+            .strip_prefix('\\')
+            .unwrap_or(base_trimmed)
+            .trim();
+        if is_navigable_type(name_for_check) {
+            let is_fqn = base_trimmed.starts_with('\\');
+            let name = base_trimmed
+                .strip_prefix('\\')
+                .unwrap_or(base_trimmed)
+                .trim()
+                .to_string();
+            let start = token_file_offset + extra_offset;
+            let end = start + base_trimmed.len() as u32;
+            spans.push(SymbolSpan {
+                start,
+                end,
+                kind: SymbolKind::ClassReference { name, is_fqn },
+            });
+        }
+
+        // Find matching `)` respecting nesting.
+        let inner_start = paren_pos + 1;
+        let bytes = type_name.as_bytes();
+        let mut depth = 1u32;
+        let mut close_paren = inner_start;
+        while close_paren < bytes.len() && depth > 0 {
+            match bytes[close_paren] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            if depth > 0 {
+                close_paren += 1;
+            }
+        }
+
+        if depth == 0 {
+            // Recurse into parameter types inside `(...)`.
+            let inner = &type_name[inner_start..close_paren];
+            if !inner.trim().is_empty() {
+                let mut d = 0u32;
+                let mut arg_start_idx = 0usize;
+                let inner_bytes = inner.as_bytes();
+                for i in 0..=inner_bytes.len() {
+                    let at_end = i == inner_bytes.len();
+                    let is_comma = !at_end && inner_bytes[i] == b',' && d == 0;
+                    if (at_end && d == 0) || is_comma {
+                        let arg = &inner[arg_start_idx..i];
+                        let trimmed = arg.trim();
+                        if !trimmed.is_empty() {
+                            let leading_ws = arg.len() - arg.trim_start().len();
+                            let arg_file_offset = token_file_offset
+                                + extra_offset
+                                + (inner_start + arg_start_idx + leading_ws) as u32;
+                            emit_type_spans(trimmed, arg_file_offset, spans);
+                        }
+                        arg_start_idx = i + 1;
+                    } else if !at_end {
+                        match inner_bytes[i] {
+                            b'<' | b'(' | b'{' => d += 1,
+                            b'>' | b')' | b'}' if d > 0 => d -= 1,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            // Recurse into the return type after `): `.
+            let after_close = &type_name[close_paren + 1..];
+            let after_trimmed = after_close.trim_start();
+            if let Some(after_colon) = after_trimmed.strip_prefix(':') {
+                let ret_trimmed = after_colon.trim_start();
+                if !ret_trimmed.is_empty() {
+                    let ret_offset_in_type = type_name.len() - ret_trimmed.len();
+                    let ret_file_offset =
+                        token_file_offset + extra_offset + ret_offset_in_type as u32;
+                    emit_type_spans(ret_trimmed, ret_file_offset, spans);
+                }
+            }
+        }
+
+        return;
+    }
+
     // Strip generic suffix and array suffix to get the base type name.
     let base = type_name.split('<').next().unwrap_or(type_name);
     let base = base.split('{').next().unwrap_or(base);
@@ -747,6 +847,27 @@ fn emit_type_spans(type_token: &str, token_file_offset: u32, spans: &mut Vec<Sym
             }
         }
     }
+}
+
+/// Find the byte position of a `(` that starts a callable parameter list
+/// within a type string.  Returns `None` when there is no `(` at
+/// angle-bracket / brace depth 0 or when `(` is at position 0 (which
+/// indicates a conditional / grouped type, not a callable).
+fn find_callable_paren(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth_angle = 0i32;
+    let mut depth_brace = 0i32;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'<' => depth_angle += 1,
+            b'>' if depth_angle > 0 => depth_angle -= 1,
+            b'{' => depth_brace += 1,
+            b'}' if depth_brace > 0 => depth_brace -= 1,
+            b'(' if depth_angle == 0 && depth_brace == 0 && i > 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Find the byte position of `keyword` (e.g. `" is "`, `" ? "`, `" : "`)
@@ -5830,5 +5951,114 @@ mod tests {
         let echo_x_offset = php.rfind("$x").unwrap() as u32;
         let kind = map.var_def_kind_at("x", echo_x_offset);
         assert!(kind.is_none(), "Should return None for variable usage site");
+    }
+
+    #[test]
+    fn docblock_callable_return_type_produces_class_reference() {
+        let php = concat!(
+            "<?php\n",
+            "class Pencil {}\n",
+            "class Factory {\n",
+            "    /** @var \\Closure(): Pencil $supplier */\n",
+            "    private $supplier;\n",
+            "}\n",
+        );
+        let map = parse_and_extract(php);
+
+        // The return type `Pencil` of `\Closure(): Pencil` should be a
+        // navigable ClassReference, not swallowed into the Closure span.
+        let docblock_start = php.find("/** @var").unwrap();
+        let pencil_in_doc = php[docblock_start..].find("Pencil").unwrap() + docblock_start;
+        let hit = map.lookup(pencil_in_doc as u32);
+        assert!(hit.is_some(), "Should find Pencil in callable return type");
+        if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+            assert_eq!(name, "Pencil");
+        } else {
+            panic!(
+                "Expected ClassReference for Pencil, got {:?}",
+                hit.unwrap().kind
+            );
+        }
+    }
+
+    #[test]
+    fn docblock_callable_param_types_produce_class_references() {
+        let php = concat!(
+            "<?php\n",
+            "class Request {}\n",
+            "class Response {}\n",
+            "class Handler {\n",
+            "    /** @var callable(Request): Response $handler */\n",
+            "    private $handler;\n",
+            "}\n",
+        );
+        let map = parse_and_extract(php);
+
+        let docblock_start = php.find("/** @var").unwrap();
+
+        // Parameter type `Request` should be navigable.
+        let request_in_doc = php[docblock_start..].find("Request").unwrap() + docblock_start;
+        let hit = map.lookup(request_in_doc as u32);
+        assert!(hit.is_some(), "Should find Request in callable param type");
+        if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+            assert_eq!(name, "Request");
+        } else {
+            panic!(
+                "Expected ClassReference for Request, got {:?}",
+                hit.unwrap().kind
+            );
+        }
+
+        // Return type `Response` should be navigable.
+        let response_in_doc = php[docblock_start..].find("Response").unwrap() + docblock_start;
+        let hit = map.lookup(response_in_doc as u32);
+        assert!(
+            hit.is_some(),
+            "Should find Response in callable return type"
+        );
+        if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+            assert_eq!(name, "Response");
+        } else {
+            panic!(
+                "Expected ClassReference for Response, got {:?}",
+                hit.unwrap().kind
+            );
+        }
+    }
+
+    #[test]
+    fn docblock_closure_fqn_callable_produces_class_reference() {
+        let php = concat!(
+            "<?php\n",
+            "class Result {}\n",
+            "class Worker {\n",
+            "    /** @param \\Closure(int): Result $cb */\n",
+            "    public function run($cb) {}\n",
+            "}\n",
+        );
+        let map = parse_and_extract(php);
+
+        let docblock_start = php.find("/** @param").unwrap();
+
+        // `\Closure` should be a navigable ClassReference with is_fqn=true.
+        let closure_in_doc = php[docblock_start..].find("\\Closure").unwrap() + docblock_start;
+        let hit = map.lookup(closure_in_doc as u32);
+        assert!(hit.is_some(), "Should find \\Closure as a ClassReference");
+        if let SymbolKind::ClassReference { ref name, is_fqn } = hit.unwrap().kind {
+            assert_eq!(name, "Closure");
+            assert!(is_fqn, "\\Closure should be FQN");
+        } else {
+            panic!("Expected ClassReference for Closure");
+        }
+
+        // `Result` should also be navigable.
+        let result_in_doc = php[docblock_start..].find("Result").unwrap() + docblock_start;
+        let hit = map.lookup(result_in_doc as u32);
+        assert!(hit.is_some(), "Should find Result in callable return type");
+        if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+            assert_eq!(name, "Result");
+        } else {
+            panic!("Expected ClassReference for Result");
+        }
     }
 }

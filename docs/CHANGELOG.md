@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Docblock navigation.** Go-to-definition and hover now work on class names inside callable type annotations (`\Closure(Request): Response`), and Ctrl+Click on object shape properties (`$profile->name` from `@return object{name: string}`) jumps to the key inside the docblock.
+
+### Fixed
+
+- **GTD for `@method`/`@property` on interfaces.** Go-to-definition now walks implemented interfaces (own and from parents) before checking `@mixin` classes, so virtual members declared on interfaces resolve correctly.
+- **`?->` null-safe chain resolution.** The `rfind("->")` split incorrectly matched the `->` inside `?->`, leaving a trailing `?` on the left-hand side. Fixed at all seven call sites across resolver, text resolution, handler, foreach resolution, and signature help.
+- **`(new Canvas())->easel` property access.** Parenthesized `new` expressions on the left side of `->` now resolve correctly for variable type inference.
+- **Array function resolution.** `array_pop`, `array_filter`, `array_values`, `end`, and `array_map` now resolve element types correctly for go-to-definition and completion when the array comes from a method call chain or a `$var->prop` access.
+
 ## [0.4.0] - 2026-03-01
 
 ### Added

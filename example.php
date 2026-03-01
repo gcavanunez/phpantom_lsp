@@ -411,8 +411,8 @@ class ObjectShapeDemo
     {
         /** @var object{title: string, score: float} $item */
         $item = getUnknownValue();
-        $item->title;                             // object shape property
-        $item->score;
+        $item->title;                             // Ctrl+Click → jumps to `title:` in docblock above
+        $item->score;                             // Ctrl+Click → jumps to `score:` in docblock above
     }
 }
 
@@ -733,11 +733,11 @@ class ShapeMethodDemo
 
         // Object shapes
         $profile = $this->getProfile();
-        $profile->name;                   // object{name: string, ...}
+        $profile->name;                   // Ctrl+Click → jumps to `name:` in @return docblock
 
         $result = $this->getResult();
-        $result->tool->write();           // nested object → Pen
-        $result->meta->page;              // nested object shape
+        $result->tool->write();           // Ctrl+Click `tool` → jumps to `tool:` in @return docblock
+        $result->meta->page;              // Ctrl+Click `meta` → jumps to `meta:` in @return docblock
     }
 
     /** @return array{pen: Pen, pencil: Pencil, active: bool} */
@@ -1410,6 +1410,17 @@ class TypeHintGtdDemo
      * @throws GtdNotFoundException                Ctrl+Click GtdNotFoundException
      */
     public function docblockTypes($items) { return $items; }
+
+    /**
+     * Callable types in docblocks. Ctrl+Click on any class name inside the
+     * callable signature to jump to its definition. Hover shows the class
+     * info instead of treating the whole callable as one token.
+     *
+     * @param \Closure(GtdAlpha): GtdResult $transform      Ctrl+Click GtdAlpha or GtdResult
+     * @param callable(GtdAlpha, GtdBeta): GtdResult $merge Ctrl+Click any of the three
+     * @return callable(): GtdResult                         Ctrl+Click GtdResult
+     */
+    public function callableDocblockTypes($transform, $merge) { return $merge; }
 }
 
 class GtdAlpha { public function label(): string { return 'alpha'; } }

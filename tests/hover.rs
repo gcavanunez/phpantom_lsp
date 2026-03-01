@@ -924,3 +924,96 @@ class Logger {
         text
     );
 }
+
+// ─── Docblock callable type hover ───────────────────────────────────────────
+
+/// Hovering on a class name in a callable return type inside a docblock
+/// should show the class info, not treat the whole callable as one token.
+#[test]
+fn hover_class_in_callable_return_type() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Pencil {
+    public string $color;
+}
+class Factory {
+    /** @var \Closure(): Pencil $supplier */
+    private $supplier;
+}
+"#;
+
+    // Hover on `Pencil` in `\Closure(): Pencil` (line 5, character ~29)
+    let hover = hover_at(&backend, uri, content, 5, 29).expect("expected hover on Pencil");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("Pencil"),
+        "should show Pencil class: {}",
+        text
+    );
+    assert!(
+        !text.contains("Closure(): Pencil"),
+        "should not treat whole callable as class name: {}",
+        text
+    );
+}
+
+/// Hovering on a class name used as a callable parameter type in a docblock.
+#[test]
+fn hover_class_in_callable_param_type() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Request {
+    public string $body;
+}
+class Response {
+    public int $status;
+}
+class Handler {
+    /** @var callable(Request): Response $handler */
+    private $handler;
+}
+"#;
+
+    // Hover on `Request` in `callable(Request)` (line 8)
+    let hover = hover_at(&backend, uri, content, 8, 24).expect("expected hover on Request");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("Request"),
+        "should show Request class: {}",
+        text
+    );
+
+    // Hover on `Response` in callable return type (line 8)
+    let hover = hover_at(&backend, uri, content, 8, 34).expect("expected hover on Response");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("Response"),
+        "should show Response class: {}",
+        text
+    );
+}
+
+/// Hovering on `\Closure` itself inside a callable annotation.
+#[test]
+fn hover_closure_base_in_callable_type() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Result {}
+class Worker {
+    /** @param \Closure(int): Result $cb */
+    public function run($cb) {}
+}
+"#;
+
+    // Hover on `Result` in `\Closure(int): Result` (line 3)
+    let hover = hover_at(&backend, uri, content, 3, 35).expect("expected hover on Result");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("Result"),
+        "should show Result class: {}",
+        text
+    );
+}

@@ -487,13 +487,135 @@ impl Backend {
         }
     }
 
+    /// Scan backward from `before_offset` for a function/method signature
+    /// that declares `$var_name` as a parameter and extract its native
+    /// type hint.
+    ///
+    /// Matches patterns like `function foo(SomeClass $var)` and
+    /// `public function bar(int $x, Source $src): void`.  Returns the
+    /// type hint text (e.g. `"Source"`) or `None`.
+    fn find_parameter_type_hint_in_source(
+        content: &str,
+        before_offset: usize,
+        var_name: &str,
+    ) -> Option<String> {
+        let search_area = content.get(..before_offset)?;
+
+        // Scan backward for the nearest `function` keyword that precedes
+        // the cursor.  The parameter list follows it.
+        let func_pos = search_area.rfind("function ")?;
+        let after_func = &content[func_pos..];
+
+        // Find the opening `(` of the parameter list.
+        let paren_open = after_func.find('(')?;
+        // Find the matching `)` by tracking depth.
+        let param_start = func_pos + paren_open + 1;
+        let mut depth = 1u32;
+        let mut paren_close = None;
+        for (i, ch) in content[param_start..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        paren_close = Some(param_start + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let paren_close = paren_close?;
+        let params_text = &content[param_start..paren_close];
+
+        // Split on commas (respecting nesting) and find the parameter.
+        let mut param_depth = 0i32;
+        let mut arg_start = 0usize;
+        let bytes = params_text.as_bytes();
+        let mut params = Vec::new();
+        for (i, &ch) in bytes.iter().enumerate() {
+            match ch {
+                b'(' | b'[' | b'{' | b'<' => param_depth += 1,
+                b')' | b']' | b'}' | b'>' => param_depth -= 1,
+                b',' if param_depth == 0 => {
+                    params.push(params_text[arg_start..i].trim());
+                    arg_start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        params.push(params_text[arg_start..].trim());
+
+        // Find the parameter that ends with our variable name.
+        for param in params {
+            if !param.contains(var_name) {
+                continue;
+            }
+            // Strip attributes, visibility, readonly, etc. to get
+            // `Type $var` or `?Type $var` or `Type &$var` or `Type ...$var`.
+            // The variable name is the last `$`-prefixed token.
+            let tokens: Vec<&str> = param.split_whitespace().collect();
+            // Find the index of the token that contains our variable name.
+            let var_idx = tokens.iter().position(|t| {
+                let stripped = t.trim_start_matches('&').trim_start_matches("...");
+                stripped == var_name
+            });
+            if let Some(idx) = var_idx
+                && idx > 0
+            {
+                // The token immediately before the variable is the type hint.
+                let type_token = tokens[idx - 1];
+                // Skip visibility/readonly keywords.
+                if matches!(type_token, "public" | "protected" | "private" | "readonly") {
+                    continue;
+                }
+                return Some(type_token.to_string());
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a variable's type string using all text-based strategies.
+    ///
+    /// Combines docblock annotation lookup, assignment chasing, and
+    /// native parameter type hint scanning into a single helper.
+    fn resolve_var_type_from_text(
+        var_name: &str,
+        content: &str,
+        before_offset: usize,
+        current_class: Option<&ClassInfo>,
+        all_classes: &[ClassInfo],
+        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+    ) -> Option<String> {
+        // 1. Docblock @var / @param annotation.
+        if let Some(raw) =
+            docblock::find_iterable_raw_type_in_source(content, before_offset, var_name)
+        {
+            return Some(raw);
+        }
+        // 2. Assignment RHS.
+        if let Some(raw) = Self::extract_raw_type_from_assignment_text(
+            var_name,
+            content,
+            before_offset,
+            current_class,
+            all_classes,
+            class_loader,
+        ) {
+            return Some(raw);
+        }
+        // 3. Native parameter type hint.
+        Self::find_parameter_type_hint_in_source(content, before_offset, var_name)
+    }
+
     /// Resolve the raw iterable type of the nth argument in a text-based
     /// argument list.
     ///
     /// Tries multiple strategies in order:
-    /// 1. Plain `$variable` → docblock `@var` / `@param` lookup
+    /// 1. Plain `$variable` → docblock `@var` / `@param` / assignment / parameter hint
     /// 2. `$this->prop` → property type hint from the enclosing class
-    /// 3. Plain `$variable` → chase its assignment to extract the raw type
+    /// 3. `$var->prop` → resolve `$var` then look up the property type
     fn resolve_nth_arg_raw_type(
         args_text: &str,
         n: usize,
@@ -505,24 +627,18 @@ impl Backend {
     ) -> Option<String> {
         let arg_text = Self::extract_nth_arg_text(args_text, n)?;
 
-        // Strategy 1: plain `$variable` with @var / @param annotation.
-        if let Some(var_name) = Self::extract_plain_variable(&arg_text) {
-            if let Some(raw) =
-                docblock::find_iterable_raw_type_in_source(content, before_offset, &var_name)
-            {
-                return Some(raw);
-            }
-            // Strategy 3: chase the variable's assignment to extract raw type.
-            if let Some(raw) = Self::extract_raw_type_from_assignment_text(
+        // Strategy 1: plain `$variable` — try all text-based resolution.
+        if let Some(var_name) = Self::extract_plain_variable(&arg_text)
+            && let Some(raw) = Self::resolve_var_type_from_text(
                 &var_name,
                 content,
                 before_offset,
                 current_class,
                 all_classes,
                 class_loader,
-            ) {
-                return Some(raw);
-            }
+            )
+        {
+            return Some(raw);
         }
 
         // Strategy 2: `$this->prop` — resolve via the enclosing class.
@@ -533,6 +649,43 @@ impl Backend {
         {
             let owner = current_class?;
             return Self::resolve_property_type_hint(owner, prop_name, class_loader);
+        }
+
+        // Strategy 3: `$var->prop` — resolve the variable's type, then
+        // look up the property type hint on the resulting class.
+        if let Some(arrow_pos) = arg_text.find("->") {
+            let var_part = arg_text[..arrow_pos]
+                .strip_suffix('?')
+                .unwrap_or(&arg_text[..arrow_pos])
+                .trim();
+            let prop_part = arg_text[arrow_pos + 2..].trim();
+            if var_part.starts_with('$')
+                && var_part != "$this"
+                && !prop_part.is_empty()
+                && prop_part.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                // Resolve the variable to a type string using all strategies.
+                let var_type = Self::resolve_var_type_from_text(
+                    var_part,
+                    content,
+                    before_offset,
+                    current_class,
+                    all_classes,
+                    class_loader,
+                );
+                if let Some(ref vt) = var_type {
+                    let clean = crate::docblock::types::clean_type(vt);
+                    let lookup = short_name(&clean);
+                    let owner_class = all_classes
+                        .iter()
+                        .find(|c| c.name == lookup)
+                        .cloned()
+                        .or_else(|| class_loader(&clean));
+                    if let Some(owner) = owner_class {
+                        return Self::resolve_property_type_hint(&owner, prop_part, class_loader);
+                    }
+                }
+            }
         }
 
         None
@@ -648,7 +801,11 @@ impl Backend {
         // Split at the rightmost `->` to get the final method name and
         // the LHS expression that produces the owning object.
         let pos = callee.rfind("->")?;
-        let lhs = callee[..pos].trim();
+        // Strip trailing `?` from LHS when the operator was `?->`
+        let lhs = callee[..pos]
+            .strip_suffix('?')
+            .unwrap_or(&callee[..pos])
+            .trim();
         let method_name = callee[pos + 2..].trim();
 
         // Resolve LHS to a class.

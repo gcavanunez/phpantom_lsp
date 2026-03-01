@@ -1958,7 +1958,11 @@ impl Backend {
                             &ctx.as_resolution_ctx(),
                         )
                     } else {
-                        vec![]
+                        // Handle non-variable object expressions like
+                        // `(new Canvas())->easel`, `getService()->prop`,
+                        // or `SomeClass::make()->prop` by recursively
+                        // resolving the expression type.
+                        Self::resolve_rhs_expression(obj, ctx)
                     };
 
                 for owner in &owner_classes {
@@ -2127,6 +2131,35 @@ impl Backend {
             };
             if let Some(cls) = resolved_class {
                 return Self::resolve_method_return_type(&cls, method_part, class_loader);
+            }
+        }
+
+        // Instance method call on a variable: `$var->methodName(…)`
+        // Resolve the variable's type, then look up the method return type.
+        if let Some(arrow_pos) = callee.rfind("->") {
+            let lhs = callee[..arrow_pos]
+                .strip_suffix('?')
+                .unwrap_or(&callee[..arrow_pos])
+                .trim();
+            let method_name = callee[arrow_pos + 2..].trim();
+            if !method_name.is_empty() && lhs.starts_with('$') {
+                // Recursively chase the LHS variable to find its type.
+                let var_classes = Self::resolve_variable_types(
+                    lhs,
+                    current_class.unwrap_or(&ClassInfo::default()),
+                    all_classes,
+                    content,
+                    before_offset as u32,
+                    class_loader,
+                    None,
+                );
+                for cls in &var_classes {
+                    if let Some(rt) =
+                        Self::resolve_method_return_type(cls, method_name, class_loader)
+                    {
+                        return Some(rt);
+                    }
+                }
             }
         }
 
