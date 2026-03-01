@@ -36,7 +36,9 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::completion::class_completion::{ClassNameContext, detect_class_name_context};
-use crate::types::FileContext;
+use crate::completion::named_args::{NamedArgContext, parse_existing_args};
+use crate::symbol_map::SymbolKind;
+use crate::types::{CompletionTarget, FileContext};
 
 /// PHP scalar and built-in types offered in docblock type positions.
 ///
@@ -262,7 +264,7 @@ impl Backend {
             }
 
             // ── Named argument completion ───────────────────────────
-            if let Some(response) = self.try_named_arg_completion(&content, position, &ctx) {
+            if let Some(response) = self.try_named_arg_completion(&uri, &content, position, &ctx) {
                 return Ok(Some(response));
             }
 
@@ -290,7 +292,9 @@ impl Backend {
             }
 
             // ── Member access completion (-> or ::) ─────────────────
-            if let Some(response) = self.try_member_access_completion(&content, position, &ctx) {
+            if let Some(response) =
+                self.try_member_access_completion(&uri, &content, position, &ctx)
+            {
                 // In simple interpolation (`"$var->"`), PHP only allows
                 // property access — method calls and constants are
                 // syntax errors.  Filter to properties only.
@@ -566,11 +570,21 @@ impl Backend {
     /// or when no parameters could be resolved.
     fn try_named_arg_completion(
         &self,
+        uri: &str,
         content: &str,
         position: Position,
         ctx: &FileContext,
     ) -> Option<CompletionResponse> {
-        let na_ctx = crate::completion::named_args::detect_named_arg_context(content, position)?;
+        // ── Primary path: AST-based detection via symbol map ────────
+        // The symbol map's `CallSite` data handles chains, nesting,
+        // and strings correctly.  Fall back to text scanning when the
+        // AST has no hit (typically because the parser couldn't recover
+        // from incomplete code).
+        let na_ctx = self
+            .detect_named_arg_from_symbol_map(uri, content, position)
+            .or_else(|| {
+                crate::completion::named_args::detect_named_arg_context(content, position)
+            })?;
 
         let mut params = self.resolve_named_arg_params(&na_ctx, content, position, ctx);
 
@@ -607,6 +621,71 @@ impl Backend {
         }
     }
 
+    /// Detect a named-argument context using precomputed [`CallSite`] data
+    /// from the symbol map.
+    ///
+    /// Returns `None` when the symbol map has no enclosing call site at the
+    /// cursor (e.g. the parser couldn't recover from incomplete code) or
+    /// when the cursor is in a position that should not trigger named-arg
+    /// completion (preceded by `$`, `->`, or `::`).
+    fn detect_named_arg_from_symbol_map(
+        &self,
+        uri: &str,
+        content: &str,
+        position: Position,
+    ) -> Option<NamedArgContext> {
+        let symbol_map = self
+            .symbol_maps
+            .lock()
+            .ok()
+            .and_then(|m| m.get(uri).cloned())?;
+
+        let cursor_byte_offset = Self::position_to_offset(content, position);
+        let cs = symbol_map.find_enclosing_call_site(cursor_byte_offset)?;
+
+        // ── Check eligibility at cursor ─────────────────────────────
+        // Walk backward from cursor through identifier chars to find the
+        // start of the current "word" in the raw source text.
+        let bytes = content.as_bytes();
+        let mut word_start = cursor_byte_offset as usize;
+        while word_start > 0 && {
+            let b = bytes[word_start - 1];
+            b.is_ascii_alphanumeric() || b == b'_'
+        } {
+            word_start -= 1;
+        }
+
+        // If preceded by `$`, this is a variable, not a named arg.
+        if word_start > 0 && bytes[word_start - 1] == b'$' {
+            return None;
+        }
+        // If preceded by `->` or `::`, member completion handles this.
+        if word_start >= 2 && bytes[word_start - 2] == b'-' && bytes[word_start - 1] == b'>' {
+            return None;
+        }
+        if word_start >= 2 && bytes[word_start - 2] == b':' && bytes[word_start - 1] == b':' {
+            return None;
+        }
+
+        let prefix = content
+            .get(word_start..cursor_byte_offset as usize)
+            .unwrap_or("")
+            .to_string();
+
+        // ── Parse arguments between `(` and cursor ──────────────────
+        let args_text = content
+            .get(cs.args_start as usize..word_start)
+            .unwrap_or("");
+        let (existing_named, positional_count) = parse_existing_args(args_text);
+
+        Some(NamedArgContext {
+            call_expression: cs.call_expression.clone(),
+            existing_named_args: existing_named,
+            positional_count,
+            prefix,
+        })
+    }
+
     // ─── Strategy: array shape key completion ────────────────────────────
 
     /// Try to offer known array shape keys when the cursor is inside
@@ -641,11 +720,18 @@ impl Backend {
     /// or when resolution produces no results.
     fn try_member_access_completion(
         &self,
+        uri: &str,
         content: &str,
         position: Position,
         ctx: &FileContext,
     ) -> Option<CompletionResponse> {
-        let target = Self::extract_completion_target(content, position)?;
+        // ── Primary path: AST-based detection via symbol map ────────
+        // The symbol map's `MemberAccess` correctly handles `(new Foo)->`,
+        // call-result chains, array access chains, and null-safe chains.
+        // Fall back to text scanning when the symbol map has no hit.
+        let target = self
+            .extract_completion_target_from_symbol_map(uri, content, position)
+            .or_else(|| Self::extract_completion_target(content, position))?;
 
         let cursor_offset = Self::position_to_offset(content, position);
         let current_class = Self::find_class_at_offset(&ctx.classes, cursor_offset);
@@ -1198,6 +1284,8 @@ impl Backend {
         let expr = &ctx.call_expression;
         let class_loader = self.class_loader(file_ctx);
         let function_loader_cl = self.function_loader(file_ctx);
+        let cursor_offset = Self::position_to_offset(content, position);
+        let current_class = Self::find_class_at_offset(&file_ctx.classes, cursor_offset);
 
         // ── Constructor: `new ClassName` ─────────────────────────────
         if let Some(class_name) = expr.strip_prefix("new ") {
@@ -1217,29 +1305,23 @@ impl Backend {
             let subject = expr[..pos].strip_suffix('?').unwrap_or(&expr[..pos]);
             let method_name = &expr[pos + 2..];
 
-            let owner_classes: Vec<crate::ClassInfo> = if subject == "$this"
-                || subject == "self"
-                || subject == "static"
-            {
-                let cursor_offset = Self::position_to_offset(content, position);
-                let current_class = Self::find_class_at_offset(&file_ctx.classes, cursor_offset);
-                current_class.cloned().into_iter().collect()
-            } else if subject.starts_with('$') {
-                // Variable — resolve via assignment scanning
-                let cursor_offset = Self::position_to_offset(content, position);
-                let current_class = Self::find_class_at_offset(&file_ctx.classes, cursor_offset);
-                let rctx = ResolutionCtx {
-                    current_class,
-                    all_classes: &file_ctx.classes,
-                    content,
-                    cursor_offset,
-                    class_loader: &class_loader,
-                    function_loader: Some(&function_loader_cl),
+            // Route all subjects through resolve_target_classes.
+            // This handles $this/self/static, $variables, bare class
+            // names, and chain-result subjects uniformly.
+            let owner_classes: Vec<crate::ClassInfo> =
+                if subject == "$this" || subject == "self" || subject == "static" {
+                    current_class.cloned().into_iter().collect()
+                } else {
+                    let rctx = ResolutionCtx {
+                        current_class,
+                        all_classes: &file_ctx.classes,
+                        content,
+                        cursor_offset,
+                        class_loader: &class_loader,
+                        function_loader: Some(&function_loader_cl),
+                    };
+                    Self::resolve_target_classes(subject, crate::AccessKind::Arrow, &rctx)
                 };
-                Self::resolve_target_classes(subject, crate::AccessKind::Arrow, &rctx)
-            } else {
-                vec![]
-            };
 
             for owner in &owner_classes {
                 let merged = Self::resolve_class_fully(owner, &class_loader);
@@ -1256,17 +1338,27 @@ impl Backend {
             let method_name = &expr[pos + 2..];
 
             let owner_class = if class_part == "self" || class_part == "static" {
-                let cursor_offset = Self::position_to_offset(content, position);
-                let current_class = Self::find_class_at_offset(&file_ctx.classes, cursor_offset);
                 current_class.cloned()
             } else if class_part == "parent" {
-                let cursor_offset = Self::position_to_offset(content, position);
-                let current_class = Self::find_class_at_offset(&file_ctx.classes, cursor_offset);
                 current_class
                     .and_then(|cc| cc.parent_class.as_ref())
                     .and_then(|p| class_loader(p))
             } else {
-                class_loader(class_part)
+                // Try as a literal class name first, then fall back to
+                // resolving as a class-string variable or chain result.
+                class_loader(class_part).or_else(|| {
+                    let rctx = ResolutionCtx {
+                        current_class,
+                        all_classes: &file_ctx.classes,
+                        content,
+                        cursor_offset,
+                        class_loader: &class_loader,
+                        function_loader: Some(&function_loader_cl),
+                    };
+                    Self::resolve_target_classes(class_part, crate::AccessKind::DoubleColon, &rctx)
+                        .into_iter()
+                        .next()
+                })
             };
 
             if let Some(ref owner) = owner_class {
@@ -1285,5 +1377,82 @@ impl Backend {
         }
 
         vec![]
+    }
+
+    /// Extract a [`CompletionTarget`] from the symbol map's precomputed
+    /// `MemberAccess` data.
+    ///
+    /// Returns `None` when the symbol map has no `MemberAccess` at or
+    /// just before the cursor (e.g. the AST is broken at the cursor
+    /// position).  The caller should fall back to text-based extraction.
+    fn extract_completion_target_from_symbol_map(
+        &self,
+        uri: &str,
+        content: &str,
+        position: Position,
+    ) -> Option<CompletionTarget> {
+        let maps = self.symbol_maps.lock().ok()?;
+        let map = maps.get(uri)?;
+        let cursor_offset = Self::position_to_offset(content, position);
+
+        // The cursor may be at the end of a partially-typed member name
+        // (e.g. `$obj->get|`), so the MemberAccess span may end before
+        // the cursor.  Walk backward through identifier characters from
+        // the cursor to find where the member name starts, then look up
+        // the span that starts at or contains the access operator.
+        let bytes = content.as_bytes();
+        let mut search_offset = cursor_offset as usize;
+        while search_offset > 0 && {
+            let b = bytes[search_offset - 1];
+            b.is_ascii_alphanumeric() || b == b'_'
+        } {
+            search_offset -= 1;
+        }
+
+        // Check for `->` or `?->` before the member name start
+        let has_arrow = search_offset >= 2
+            && bytes[search_offset - 2] == b'-'
+            && bytes[search_offset - 1] == b'>';
+        let has_nullsafe_arrow = search_offset >= 3
+            && bytes[search_offset - 3] == b'?'
+            && bytes[search_offset - 2] == b'-'
+            && bytes[search_offset - 1] == b'>';
+        let has_double_colon = search_offset >= 2
+            && bytes[search_offset - 2] == b':'
+            && bytes[search_offset - 1] == b':';
+
+        if !has_arrow && !has_nullsafe_arrow && !has_double_colon {
+            return None;
+        }
+
+        // Look up the operator position in the symbol map.  For `->` the
+        // span covers the subject + operator + member, so the operator
+        // byte is within the span.  We look up a byte inside the
+        // operator to find the MemberAccess span.
+        let operator_offset = if has_nullsafe_arrow {
+            (search_offset - 3) as u32
+        } else {
+            (search_offset - 2) as u32
+        };
+
+        if let Some(span) = map.lookup(operator_offset)
+            && let SymbolKind::MemberAccess {
+                subject_text,
+                is_static,
+                ..
+            } = &span.kind
+        {
+            let access_kind = if *is_static {
+                crate::AccessKind::DoubleColon
+            } else {
+                crate::AccessKind::Arrow
+            };
+            return Some(CompletionTarget {
+                access_kind,
+                subject: subject_text.clone(),
+            });
+        }
+
+        None
     }
 }

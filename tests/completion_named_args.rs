@@ -734,3 +734,200 @@ async fn test_named_args_inherited_method() {
         tags
     );
 }
+
+// ─── Symbol-map primary path tests ──────────────────────────────────────────
+
+/// Named arg completion for a property-chain subject (`$this->prop->method()`).
+///
+/// The text scanner historically fails on this because it can't resolve
+/// through property chains.  The symbol map provides the correct
+/// `call_expression` from the AST.  The call is syntactically closed so
+/// the parser can produce a `CallSite`.
+#[tokio::test]
+async fn test_named_args_property_chain_subject() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///na_prop_chain.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Formatter {\n",
+        "    public function format(string $template, bool $escape = true): string {\n",
+        "        return '';\n",
+        "    }\n",
+        "}\n",
+        "class Service {\n",
+        "    /** @var Formatter */\n",
+        "    public Formatter $formatter;\n",
+        "    public function run() {\n",
+        "        $this->formatter->format();\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Cursor inside the parens of format() — col 33 is between `(` and `)`
+    let items = complete_at(&backend, &uri, text, 10, 33).await;
+    let tags = filter_texts(&items);
+
+    assert!(
+        tags.contains(&"template"),
+        "Should suggest 'template' from property chain. Got: {:?}",
+        tags
+    );
+    assert!(
+        tags.contains(&"escape"),
+        "Should suggest 'escape' from property chain. Got: {:?}",
+        tags
+    );
+}
+
+/// Named arg completion for a bare class name subject (`ClassName::method(`).
+///
+/// Before the fix, `resolve_named_arg_params` returned empty for static
+/// method calls when the class name was not a keyword (self/static/parent).
+/// Now all static subjects are routed through `resolve_target_classes` as
+/// a fallback.
+#[tokio::test]
+async fn test_named_args_class_name_static_method() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///na_class_static.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Builder {\n",
+        "    public static function create(string $name, int $priority = 0): static {\n",
+        "        return new static();\n",
+        "    }\n",
+        "}\n",
+        "class Client {\n",
+        "    public function test() {\n",
+        "        Builder::create(\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let items = complete_at(&backend, &uri, text, 8, 25).await;
+    let tags = filter_texts(&items);
+
+    assert!(
+        tags.contains(&"name"),
+        "Should suggest 'name' from static method on class name. Got: {:?}",
+        tags
+    );
+    assert!(
+        tags.contains(&"priority"),
+        "Should suggest 'priority' from static method on class name. Got: {:?}",
+        tags
+    );
+}
+
+/// Named arg completion when the call is on a method return result chain.
+///
+/// `$this->getLogger()->log()` — the symbol map resolves the chain through
+/// the return type, while the text scanner would fail on the `)` before `->`.
+/// The call is syntactically closed so the parser can produce a `CallSite`.
+#[tokio::test]
+async fn test_named_args_method_return_chain() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///na_chain.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Logger {\n",
+        "    public function log(string $message, int $level = 0): void {}\n",
+        "}\n",
+        "class App {\n",
+        "    public function getLogger(): Logger {\n",
+        "        return new Logger();\n",
+        "    }\n",
+        "    public function run() {\n",
+        "        $this->getLogger()->log();\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Cursor right after the opening `(` of log() — col 32
+    let items = complete_at(&backend, &uri, text, 9, 32).await;
+    let tags = filter_texts(&items);
+
+    assert!(
+        tags.contains(&"message"),
+        "Should suggest 'message' from chained method call. Got: {:?}",
+        tags
+    );
+    assert!(
+        tags.contains(&"level"),
+        "Should suggest 'level' from chained method call. Got: {:?}",
+        tags
+    );
+}
+
+/// Named arg completion with a prefix filter on a symbol-map-detected call.
+///
+/// Verifies that the prefix extraction works correctly when the detection
+/// comes from the symbol map path rather than the text scanner.
+#[tokio::test]
+async fn test_named_args_symbol_map_with_prefix() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///na_sm_prefix.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Greeter {\n",
+        "    public function greet(string $name, int $age): string {\n",
+        "        return '';\n",
+        "    }\n",
+        "    public function test() {\n",
+        "        $this->greet(na\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // cursor after "na" — should filter to only "name"
+    let items = complete_at(&backend, &uri, text, 6, 24).await;
+    let tags = filter_texts(&items);
+
+    assert!(
+        tags.contains(&"name"),
+        "Should suggest 'name' matching prefix 'na'. Got: {:?}",
+        tags
+    );
+    assert!(
+        !tags.contains(&"age"),
+        "Should NOT suggest 'age' (does not match prefix 'na'). Got: {:?}",
+        tags
+    );
+}
+
+/// Named arg completion for `(new ClassName)->method()` via symbol map.
+///
+/// The text scanner's `extract_call_expression` returns `None` when it
+/// encounters `)` before `->` (chain through constructor result).  The
+/// symbol map handles this correctly.  The call is syntactically closed
+/// so the parser can produce a `CallSite`.
+#[tokio::test]
+async fn test_named_args_new_expression_chain() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///na_new_chain.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Renderer {\n",
+        "    public function render(string $view, array $data = []): string {\n",
+        "        return '';\n",
+        "    }\n",
+        "}\n",
+        "function test() {\n",
+        "    (new Renderer())->render();\n",
+        "}\n",
+    );
+
+    // Cursor inside the parens of render() — col 29 is between `(` and `)`
+    let items = complete_at(&backend, &uri, text, 7, 29).await;
+    let tags = filter_texts(&items);
+
+    assert!(
+        tags.contains(&"view"),
+        "Should suggest 'view' from (new Renderer)->render(). Got: {:?}",
+        tags
+    );
+    assert!(
+        tags.contains(&"data"),
+        "Should suggest 'data' from (new Renderer)->render(). Got: {:?}",
+        tags
+    );
+}

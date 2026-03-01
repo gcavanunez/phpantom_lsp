@@ -11,8 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Docblock navigation.** Go-to-definition and hover now work on class names inside callable type annotations (`\Closure(Request): Response`), and Ctrl+Click on object shape properties (`$profile->name` from `@return object{name: string}`) jumps to the key inside the docblock.
 
+### Changed
+
+- **Named-argument completion uses symbol map.** Detection now uses precomputed `CallSite` data from the AST-based symbol map as the primary path, falling back to text scanning for broken ASTs. This correctly handles chain-resolution on `$this->prop->method(`, `$obj->first()->second(`, `(new Foo())->bar(`, and strings containing parentheses.
+- **Member-access completion uses symbol map.** `try_member_access_completion` now consults the symbol map's `MemberAccess` entries before falling back to text-based subject extraction. This improves accuracy for `(new Foo)->`, call-result chains, array access chains, and null-safe chains when the parser successfully recovers the AST.
+
 ### Fixed
 
+- **Named-argument resolution for non-variable subjects.** `resolve_named_arg_params` now routes all instance-method subjects (bare class names, chain results) through `resolve_target_classes` instead of returning empty results when the subject does not start with `$`. The same fix is applied to static-method resolution, which now falls back to variable/chain resolution when the class name is not found directly.
 - **GTD for `@method`/`@property` on interfaces.** Go-to-definition now walks implemented interfaces (own and from parents) before checking `@mixin` classes, so virtual members declared on interfaces resolve correctly.
 - **`?->` null-safe chain resolution.** The `rfind("->")` split incorrectly matched the `->` inside `?->`, leaving a trailing `?` on the left-hand side. Fixed at all seven call sites across resolver, text resolution, handler, foreach resolution, and signature help.
 - **`(new Canvas())->easel` property access.** Parenthesized `new` expressions on the left side of `->` now resolve correctly for variable type inference.
