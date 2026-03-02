@@ -943,7 +943,7 @@ pub(crate) fn find_uncaught_throw_types(content: &str, position: Position) -> Ve
 ///
 /// Returns the FQN (without leading `\`) if found, or `None` if the type
 /// is already unqualified and in the global namespace.
-pub(super) fn resolve_exception_fqn(
+pub(in crate::completion) fn resolve_exception_fqn(
     short_name: &str,
     use_map: &HashMap<String, String>,
     file_namespace: &Option<String>,
@@ -964,7 +964,7 @@ pub(super) fn resolve_exception_fqn(
 
 /// Check whether a `use` statement for the given FQN already exists in
 /// the file content.
-pub(super) fn has_use_import(content: &str, fqn: &str) -> bool {
+pub(in crate::completion) fn has_use_import(content: &str, fqn: &str) -> bool {
     let target = format!("use {};", fqn);
     let target_with_alias = format!("use {} as", fqn); // alias import
     for line in content.lines() {

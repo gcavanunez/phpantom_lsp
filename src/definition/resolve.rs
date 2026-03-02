@@ -23,7 +23,7 @@ use crate::Backend;
 use crate::composer;
 use crate::symbol_map::SymbolKind;
 use crate::types::AccessKind;
-use crate::util::short_name;
+use crate::util::{find_class_at_offset, position_to_offset, short_name};
 
 impl Backend {
     /// Handle a "go to definition" request.
@@ -37,7 +37,7 @@ impl Backend {
         content: &str,
         position: Position,
     ) -> Option<Location> {
-        let offset = Self::position_to_offset(content, position);
+        let offset = position_to_offset(content, position);
 
         // Fast path: consult precomputed symbol map.
         let result = if let Some(symbol) = self.lookup_symbol_map(uri, offset) {
@@ -962,7 +962,7 @@ impl Backend {
         position: Position,
         keyword: &str,
     ) -> Option<Location> {
-        let cursor_offset = Self::position_to_offset(content, position);
+        let cursor_offset = position_to_offset(content, position);
 
         let classes = self
             .ast_map
@@ -971,7 +971,7 @@ impl Backend {
             .and_then(|m| m.get(uri).cloned())
             .unwrap_or_default();
 
-        let current_class = Self::find_class_at_offset(&classes, cursor_offset)?;
+        let current_class = find_class_at_offset(&classes, cursor_offset)?;
 
         if keyword == "self" || keyword == "static" {
             // Jump to the enclosing class definition in the current file.

@@ -24,15 +24,16 @@ use mago_syntax::ast::*;
 
 use crate::Backend;
 use crate::docblock::replace_self_in_type;
+use crate::parser::extract_hint_string;
 use crate::types::{AccessKind, ClassInfo};
 
-use super::resolver::VarResolutionCtx;
+use crate::completion::resolver::VarResolutionCtx;
 
 impl Backend {
     /// Check whether `stmt` contains a closure or arrow function whose
     /// body encloses the cursor.  If so, resolve the variable from the
     /// closure's parameter list and walk its body, then return `true`.
-    pub(super) fn try_resolve_in_closure_stmt<'b>(
+    pub(in crate::completion) fn try_resolve_in_closure_stmt<'b>(
         stmt: &'b Statement<'b>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -169,7 +170,7 @@ impl Backend {
     /// `ArrowFunction` whose body contains the cursor.  When found,
     /// resolve the target variable from the closure's parameters and
     /// walk its body statements, returning `true`.
-    pub(super) fn try_resolve_in_closure_expr<'b>(
+    pub(in crate::completion) fn try_resolve_in_closure_expr<'b>(
         expr: &'b Expression<'b>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -560,7 +561,7 @@ impl Backend {
     /// Resolve a variable's type from a closure / arrow-function
     /// parameter list.  If the variable matches a typed parameter,
     /// the resolved classes replace whatever is currently in `results`.
-    pub(super) fn resolve_closure_params(
+    pub(in crate::completion) fn resolve_closure_params(
         parameter_list: &FunctionLikeParameterList<'_>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -584,8 +585,8 @@ impl Backend {
             if pname == ctx.var_name {
                 // 1. Try the explicit type hint first.
                 if let Some(hint) = &param.hint {
-                    let type_str = Self::extract_hint_string(hint);
-                    let resolved = Self::type_hint_to_classes(
+                    let type_str = extract_hint_string(hint);
+                    let resolved = crate::completion::type_resolution::type_hint_to_classes(
                         &type_str,
                         &ctx.current_class.name,
                         ctx.all_classes,
@@ -599,7 +600,7 @@ impl Backend {
                 // 2. Fall back to the inferred type from the callable
                 //    signature of the enclosing method/function call.
                 if let Some(inferred) = inferred_types.get(idx) {
-                    let resolved = Self::type_hint_to_classes(
+                    let resolved = crate::completion::type_resolution::type_hint_to_classes(
                         inferred,
                         &ctx.current_class.name,
                         ctx.all_classes,
@@ -661,7 +662,8 @@ impl Backend {
         }
         let obj_text = ctx.content[start..end].trim();
         let rctx = ctx.as_resolution_ctx();
-        let receiver_classes = Self::resolve_target_classes(obj_text, AccessKind::Arrow, &rctx);
+        let receiver_classes =
+            crate::completion::resolver::resolve_target_classes(obj_text, AccessKind::Arrow, &rctx);
 
         let params =
             Self::find_callable_params_on_classes(&receiver_classes, method_name, arg_idx, ctx);
@@ -702,7 +704,7 @@ impl Backend {
                 .or_else(|| (ctx.class_loader)(&name))
         });
         if let Some(ref cls) = owner {
-            let resolved = Self::resolve_class_fully(cls, ctx.class_loader);
+            let resolved = crate::virtual_members::resolve_class_fully(cls, ctx.class_loader);
             let params = Self::find_callable_params_on_method(&resolved, method_name, arg_idx, ctx);
             params
                 .into_iter()
@@ -722,7 +724,7 @@ impl Backend {
         ctx: &VarResolutionCtx<'_>,
     ) -> Vec<String> {
         for cls in classes {
-            let resolved = Self::resolve_class_fully(cls, ctx.class_loader);
+            let resolved = crate::virtual_members::resolve_class_fully(cls, ctx.class_loader);
             let result = Self::find_callable_params_on_method(&resolved, method_name, arg_idx, ctx);
             if !result.is_empty() {
                 return result;

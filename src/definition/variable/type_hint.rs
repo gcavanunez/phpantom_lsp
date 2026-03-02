@@ -9,7 +9,7 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::*;
 
-use crate::Backend;
+use crate::parser::extract_hint_string;
 
 /// Find the type hint string for a variable at its definition site
 /// in the AST.
@@ -156,7 +156,7 @@ where
                         let var_start = var.span.start.offset;
                         let var_end = var.span.end.offset;
                         if cursor_offset >= var_start && cursor_offset < var_end {
-                            return property.hint().map(|h| Backend::extract_hint_string(h));
+                            return property.hint().map(|h| extract_hint_string(h));
                         }
                     }
                 }
@@ -324,7 +324,7 @@ fn find_type_hint_in_params(
 ) -> Option<String> {
     for param in params.parameters.iter() {
         if param.variable.name == var_name {
-            return param.hint.as_ref().map(|h| Backend::extract_hint_string(h));
+            return param.hint.as_ref().map(|h| extract_hint_string(h));
         }
     }
     None

@@ -15,7 +15,6 @@
 
 use std::collections::HashMap;
 
-use crate::Backend;
 use crate::inheritance::{apply_substitution, apply_substitution_to_conditional};
 use crate::types::{ClassInfo, ELOQUENT_COLLECTION_FQN, MethodInfo, Visibility};
 
@@ -67,7 +66,8 @@ pub(super) fn build_builder_forwarded_methods(
     // including @mixin Query\Builder).  This is safe because Builder
     // does not extend Model, so the LaravelModelProvider will not
     // recurse.
-    let resolved_builder = Backend::resolve_class_fully(&builder_class, class_loader);
+    let resolved_builder =
+        crate::virtual_members::resolve_class_fully(&builder_class, class_loader);
 
     // Build a substitution map: TModel → concrete model class name,
     // and static/$this/self → Builder<ConcreteModel>.
@@ -121,7 +121,7 @@ pub(super) fn build_builder_forwarded_methods(
         }
 
         // Replace Eloquent Collection with custom collection class.
-        if let Some(ref coll) = class.laravel.custom_collection
+        if let Some(coll) = class.laravel().and_then(|l| l.custom_collection.as_ref())
             && let Some(ref mut ret) = forwarded.return_type
         {
             *ret = replace_eloquent_collection(ret, coll);

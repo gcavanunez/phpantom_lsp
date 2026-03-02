@@ -15,8 +15,8 @@ use crate::parser::with_parsed_program;
 use crate::types::ClassInfo;
 use crate::util::short_name;
 
-use super::conditional_resolution::extract_class_string_from_expr;
-use super::resolver::VarResolutionCtx;
+use crate::completion::conditional_resolution::extract_class_string_from_expr;
+use crate::completion::resolver::VarResolutionCtx;
 
 impl Backend {
     /// Resolve a `$variable` that holds a class-string (e.g. `$cls = User::class`)
@@ -29,7 +29,7 @@ impl Backend {
     /// Handles simple assignments (`$cls = User::class`), match expressions
     /// (`$cls = match(...) { ... => A::class, ... => B::class }`), and
     /// ternary / null-coalescing branches.
-    pub(super) fn resolve_class_string_targets(
+    pub(in crate::completion) fn resolve_class_string_targets(
         var_name: &str,
         current_class: &ClassInfo,
         all_classes: &[ClassInfo],

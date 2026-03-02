@@ -27,12 +27,12 @@ use crate::Backend;
 use crate::types::*;
 use crate::util::short_name;
 
-use super::builder::analyze_use_block;
 use super::class_completion::{
     ClassItemCtx, ClassItemTexts, class_completion_texts, is_anonymous_class, matches_class_prefix,
 };
-use super::comment_position::position_to_byte_offset;
-use super::throws_analysis;
+use crate::completion::builder::analyze_use_block;
+use crate::completion::source::comment_position::position_to_byte_offset;
+use crate::completion::source::throws_analysis;
 
 /// Information about the catch clause context at the cursor position.
 #[derive(Debug)]

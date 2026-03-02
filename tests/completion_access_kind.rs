@@ -1,7 +1,7 @@
 mod common;
 
 use common::create_test_backend;
-use phpantom_lsp::{AccessKind, Backend};
+use phpantom_lsp::{AccessKind, extract_completion_target};
 use tower_lsp::LanguageServer;
 use tower_lsp::lsp_types::*;
 
@@ -9,7 +9,7 @@ use tower_lsp::lsp_types::*;
 
 #[tokio::test]
 async fn test_detect_access_kind_arrow() {
-    let target = Backend::extract_completion_target(
+    let target = extract_completion_target(
         "$this->",
         Position {
             line: 0,
@@ -23,7 +23,7 @@ async fn test_detect_access_kind_arrow() {
 
 #[tokio::test]
 async fn test_detect_access_kind_arrow_with_partial_identifier() {
-    let target = Backend::extract_completion_target(
+    let target = extract_completion_target(
         "$this->get",
         Position {
             line: 0,
@@ -37,7 +37,7 @@ async fn test_detect_access_kind_arrow_with_partial_identifier() {
 
 #[tokio::test]
 async fn test_detect_access_kind_double_colon() {
-    let target = Backend::extract_completion_target(
+    let target = extract_completion_target(
         "self::",
         Position {
             line: 0,
@@ -51,7 +51,7 @@ async fn test_detect_access_kind_double_colon() {
 
 #[tokio::test]
 async fn test_detect_access_kind_double_colon_with_partial_identifier() {
-    let target = Backend::extract_completion_target(
+    let target = extract_completion_target(
         "Foo::cr",
         Position {
             line: 0,
@@ -65,7 +65,7 @@ async fn test_detect_access_kind_double_colon_with_partial_identifier() {
 
 #[tokio::test]
 async fn test_detect_access_kind_other() {
-    let result = Backend::extract_completion_target(
+    let result = extract_completion_target(
         "    $x = 1;",
         Position {
             line: 0,
@@ -78,7 +78,7 @@ async fn test_detect_access_kind_other() {
 #[tokio::test]
 async fn test_detect_access_kind_multiline() {
     let content = "<?php\n$obj->meth";
-    let target = Backend::extract_completion_target(
+    let target = extract_completion_target(
         content,
         Position {
             line: 1,

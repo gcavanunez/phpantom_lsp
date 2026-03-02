@@ -32,6 +32,7 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::docblock;
 use crate::types::FileContext;
+use crate::util::{find_class_at_offset, position_to_offset};
 
 /// Well-known keys for the `$_SERVER` superglobal.
 ///
@@ -264,7 +265,7 @@ impl Backend {
             return self.build_server_key_completions(ctx, content, position);
         }
 
-        let cursor_offset = Self::position_to_offset(content, position);
+        let cursor_offset = position_to_offset(content, position);
 
         // Try to find the raw type annotation for this variable.
         // We also track which set of classes was used for resolution so
@@ -290,7 +291,7 @@ impl Backend {
                     return vec![];
                 }
                 patched_classes_storage = self.parse_php(&patched);
-                let patched_offset = Self::position_to_offset(&patched, position);
+                let patched_offset = position_to_offset(&patched, position);
                 let patched_ctx = FileContext {
                     classes: patched_classes_storage.clone(),
                     use_map: file_ctx.use_map.clone(),
@@ -323,9 +324,13 @@ impl Backend {
         // the original parse failed due to syntax errors.
         let class_loader =
             self.class_loader_with(effective_classes, &file_ctx.use_map, &file_ctx.namespace);
-        let effective_type =
-            Self::resolve_type_alias(&effective_type, "", effective_classes, &class_loader)
-                .unwrap_or(effective_type);
+        let effective_type = super::type_resolution::resolve_type_alias(
+            &effective_type,
+            "",
+            effective_classes,
+            &class_loader,
+        )
+        .unwrap_or(effective_type);
 
         // Parse the array shape entries.
         let entries = match docblock::parse_array_shape(&effective_type) {
@@ -502,13 +507,13 @@ impl Backend {
             return Some(raw);
         }
 
-        let current_class = Self::find_class_at_offset(&file_ctx.classes, cursor_offset as u32);
+        let current_class = find_class_at_offset(&file_ctx.classes, cursor_offset as u32);
         let class_loader = self.class_loader(file_ctx);
 
         // 2. AST-based assignment resolver — handles array literals with
         //    incremental key assignments, push-style assignments, and
         //    standalone function return types (via source docblock scan).
-        Self::resolve_variable_assignment_raw_type(
+        crate::completion::variable::raw_type_inference::resolve_variable_assignment_raw_type(
             var_name,
             content,
             cursor_offset as u32,

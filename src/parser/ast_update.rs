@@ -381,9 +381,9 @@ impl Backend {
                 .collect();
 
             // Resolve custom collection class name to FQN
-            if let Some(ref coll) = class.laravel.custom_collection {
+            if let Some(coll) = class.laravel().and_then(|l| l.custom_collection.as_ref()) {
                 let resolved = Self::resolve_name(coll, use_map, namespace);
-                class.laravel.custom_collection = Some(resolved);
+                class.laravel_mut().custom_collection = Some(resolved);
             }
 
             // Resolve type arguments in @extends, @implements, and @use

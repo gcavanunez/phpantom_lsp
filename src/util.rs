@@ -187,49 +187,6 @@ pub(crate) fn find_semicolon_balanced(s: &str) -> Option<usize> {
     None
 }
 
-/// Known array functions whose output preserves the input array's
-/// element type (the first positional argument).
-pub(crate) const ARRAY_PRESERVING_FUNCS: &[&str] = &[
-    "array_filter",
-    "array_values",
-    "array_unique",
-    "array_reverse",
-    "array_slice",
-    "array_splice",
-    "array_chunk",
-    "array_diff",
-    "array_diff_assoc",
-    "array_diff_key",
-    "array_diff_uassoc",
-    "array_diff_ukey",
-    "array_udiff",
-    "array_udiff_assoc",
-    "array_udiff_uassoc",
-    "array_intersect",
-    "array_intersect_assoc",
-    "array_intersect_uassoc",
-    "array_intersect_ukey",
-    "array_uintersect",
-    "array_uintersect_assoc",
-    "array_uintersect_uassoc",
-    "array_merge",
-];
-
-/// Known array functions that extract a single element from the input
-/// array (the element type is the output type, not wrapped in an array).
-pub(crate) const ARRAY_ELEMENT_FUNCS: &[&str] = &[
-    "array_pop",
-    "array_shift",
-    "current",
-    "end",
-    "reset",
-    "next",
-    "prev",
-    "array_first",
-    "array_last",
-    "array_find",
-];
-
 /// Find the position of the closing delimiter that matches the opening
 /// delimiter at `open_pos`, scanning forward.
 ///
@@ -369,29 +326,198 @@ pub(crate) fn find_matching_backward(
 use crate::Backend;
 use crate::types::{ClassInfo, FileContext};
 
-impl Backend {
-    /// Convert an LSP Position (line, character) to a byte offset in content.
-    ///
-    /// Thin wrapper around [`position_to_byte_offset`] that returns `u32`
-    /// (matching the offset type used by `ClassInfo::start_offset` /
-    /// `end_offset` and `ResolutionCtx::cursor_offset`).
-    pub(crate) fn position_to_offset(content: &str, position: Position) -> u32 {
-        position_to_byte_offset(content, position) as u32
-    }
+/// Convert an LSP Position (line, character) to a byte offset in content.
+///
+/// Thin wrapper around [`position_to_byte_offset`] that returns `u32`
+/// (matching the offset type used by `ClassInfo::start_offset` /
+/// `end_offset` and `ResolutionCtx::cursor_offset`).
+pub(crate) fn position_to_offset(content: &str, position: Position) -> u32 {
+    position_to_byte_offset(content, position) as u32
+}
 
-    /// Find which class the cursor (byte offset) is inside.
-    ///
-    /// When multiple classes contain the offset (e.g. an anonymous class
-    /// nested inside a named class's method), the smallest (most specific)
-    /// class is returned.  This ensures that `$this` inside an anonymous
-    /// class body resolves to the anonymous class, not the outer class.
-    pub(crate) fn find_class_at_offset(classes: &[ClassInfo], offset: u32) -> Option<&ClassInfo> {
-        classes
+/// Find which class the cursor (byte offset) is inside.
+///
+/// When multiple classes contain the offset (e.g. an anonymous class
+/// nested inside a named class's method), the smallest (most specific)
+/// class is returned.  This ensures that `$this` inside an anonymous
+/// class body resolves to the anonymous class, not the outer class.
+pub(crate) fn find_class_at_offset(classes: &[ClassInfo], offset: u32) -> Option<&ClassInfo> {
+    classes
+        .iter()
+        .filter(|c| offset >= c.start_offset && offset <= c.end_offset)
+        .min_by_key(|c| c.end_offset - c.start_offset)
+}
+
+/// Find a class in a slice by name, preferring namespace-aware matching
+/// when the name is fully qualified.
+///
+/// When `name` contains backslashes (e.g. `Illuminate\Database\Eloquent\Builder`),
+/// the lookup checks each candidate's `file_namespace` field so that the
+/// correct class is returned even when multiple classes share the same short
+/// name but live in different namespace blocks within the same file (e.g.
+/// `Demo\Builder` vs `Illuminate\Database\Eloquent\Builder`).
+///
+/// When `name` is a bare short name (no backslashes), the first class with
+/// a matching `name` field is returned (preserving existing behavior).
+pub(crate) fn find_class_by_name<'a>(
+    all_classes: &'a [ClassInfo],
+    name: &str,
+) -> Option<&'a ClassInfo> {
+    let clean = name.strip_prefix('\\').unwrap_or(name);
+    let short = short_name(clean);
+
+    if clean.contains('\\') {
+        let expected_ns = clean.rsplit_once('\\').map(|(ns, _)| ns);
+        all_classes
             .iter()
-            .filter(|c| offset >= c.start_offset && offset <= c.end_offset)
-            .min_by_key(|c| c.end_offset - c.start_offset)
+            .find(|c| c.name == short && c.file_namespace.as_deref() == expected_ns)
+    } else {
+        all_classes.iter().find(|c| c.name == short)
+    }
+}
+
+/// Collapse multi-line method chains around the cursor into a single line.
+///
+/// When the cursor line (after trimming leading whitespace) begins with
+/// `->` or `?->`, this function walks backwards through preceding lines
+/// that are also continuations, plus the base expression line, and joins
+/// them into one flattened string.  The returned column is the cursor's
+/// position within that flattened string.
+///
+/// If the cursor line is not a continuation, the original line and column
+/// are returned unchanged.
+///
+/// # Returns
+///
+/// `(collapsed_line, adjusted_column)` — the flattened text and the
+/// cursor's character offset within it.
+pub(crate) fn collapse_continuation_lines(
+    lines: &[&str],
+    cursor_line: usize,
+    cursor_col: usize,
+) -> (String, usize) {
+    let line = lines[cursor_line];
+    let trimmed = line.trim_start();
+
+    // Only collapse when the cursor line is a continuation (starts with
+    // `->` or `?->` after optional whitespace).
+    if !trimmed.starts_with("->") && !trimmed.starts_with("?->") {
+        return (line.to_string(), cursor_col);
     }
 
+    let cursor_leading_ws = line.len() - trimmed.len();
+
+    // Walk backwards to find the first non-continuation line (the base).
+    //
+    // A continuation line is one that starts with `->` or `?->`.  However,
+    // multi-line closure/function arguments can break the chain:
+    //
+    //   Brand::whereNested(function (Builder $q): void {
+    //   })
+    //   ->   // ← cursor
+    //
+    // Here line `})` is NOT a continuation but is part of the call
+    // expression on the base line.  We detect this by tracking
+    // brace/paren balance: when the accumulated lines (from the current
+    // candidate upwards to the cursor) have unmatched closing delimiters,
+    // we keep walking backwards until the delimiters balance out.
+    let mut start = cursor_line;
+    while start > 0 {
+        let prev_trimmed = lines[start - 1].trim_start();
+
+        // Skip blank (whitespace-only) lines — they don't terminate a
+        // chain.  Without this, a blank line between chain segments
+        // causes the backward walk to stop prematurely.
+        if prev_trimmed.is_empty() {
+            start -= 1;
+            continue;
+        }
+
+        if prev_trimmed.starts_with("->") || prev_trimmed.starts_with("?->") {
+            start -= 1;
+        } else {
+            // Check whether the accumulated text from this candidate
+            // line through the line just before the cursor has
+            // unbalanced closing delimiters.  If so, this line is in
+            // the middle of a multi-line argument list and we must
+            // keep walking backwards.
+            start -= 1;
+
+            // Count paren/brace balance from `start` up to (but not
+            // including) the cursor line.
+            let mut paren_depth: i32 = 0;
+            let mut brace_depth: i32 = 0;
+            for line in lines.iter().take(cursor_line).skip(start) {
+                for ch in line.chars() {
+                    match ch {
+                        '(' => paren_depth += 1,
+                        ')' => paren_depth -= 1,
+                        '{' => brace_depth += 1,
+                        '}' => brace_depth -= 1,
+                        _ => {}
+                    }
+                }
+            }
+
+            // If balanced (or net-open), this is a proper base line.
+            if paren_depth >= 0 && brace_depth >= 0 {
+                break;
+            }
+
+            // Unbalanced — keep walking backwards until we close the
+            // gap.  Each step re-checks the running balance.
+            while start > 0 && (paren_depth < 0 || brace_depth < 0) {
+                start -= 1;
+                for ch in lines[start].chars() {
+                    match ch {
+                        '(' => paren_depth += 1,
+                        ')' => paren_depth -= 1,
+                        '{' => brace_depth += 1,
+                        '}' => brace_depth -= 1,
+                        _ => {}
+                    }
+                }
+            }
+
+            // After re-balancing we may have landed on a continuation
+            // line (e.g. `->where(...\n...\n)->`) — keep walking if so.
+            if start > 0 {
+                let landed = lines[start].trim_start();
+                if landed.starts_with("->") || landed.starts_with("?->") {
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+
+    // Build the collapsed string from the base line through the cursor line,
+    // skipping blank lines so they don't leave gaps in the collapsed result.
+    let mut prefix = String::new();
+    for (i, line) in lines.iter().enumerate().take(cursor_line).skip(start) {
+        let piece = if i == start {
+            line.trim_end()
+        } else {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            t
+        };
+        prefix.push_str(piece);
+    }
+
+    // The cursor position in the collapsed string is the length of the
+    // prefix (everything before the cursor line) plus the cursor's offset
+    // within the trimmed cursor line.
+    let new_col = prefix.chars().count() + (cursor_col.saturating_sub(cursor_leading_ws));
+
+    prefix.push_str(trimmed);
+
+    (prefix, new_col)
+}
+
+impl Backend {
     /// Look up a class by its (possibly namespace-qualified) name in the
     /// in-memory `ast_map`, without triggering any disk I/O.
     ///

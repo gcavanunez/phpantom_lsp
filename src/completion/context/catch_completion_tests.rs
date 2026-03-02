@@ -1,5 +1,5 @@
 use super::*;
-use crate::completion::throws_analysis;
+use crate::completion::source::throws_analysis;
 
 #[test]
 fn test_find_method_throws_tags_with_private() {

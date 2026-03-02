@@ -1,4 +1,5 @@
 use super::*;
+use crate::util::collapse_continuation_lines;
 
 #[test]
 fn test_nullsafe_chain_with_call() {

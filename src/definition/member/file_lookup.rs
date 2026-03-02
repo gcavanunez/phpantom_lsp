@@ -35,7 +35,7 @@ impl Backend {
             Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, candidate.name),
             _ => candidate.name.clone(),
         };
-        crate::completion::resolver::find_class_by_name(all_classes, &fqn)
+        crate::util::find_class_by_name(all_classes, &fqn)
             .cloned()
             .or_else(|| class_loader(&fqn))
     }

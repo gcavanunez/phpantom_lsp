@@ -28,7 +28,7 @@ use crate::Backend;
 use crate::completion::resolver::ResolutionCtx;
 use crate::symbol_map::SymbolKind;
 use crate::types::{ClassInfo, ClassLikeKind, FileContext, MAX_INHERITANCE_DEPTH};
-use crate::util::short_name;
+use crate::util::{find_class_at_offset, position_to_offset, short_name};
 
 /// Recursively collect all `.php` files under a directory.
 ///
@@ -64,7 +64,7 @@ impl Backend {
     ) -> Option<Vec<Location>> {
         // ── 1. Extract the word under the cursor ────────────────────────
         // Primary path: consult the precomputed symbol map.
-        let offset = Self::position_to_offset(content, position);
+        let offset = position_to_offset(content, position);
         let symbol = self.lookup_symbol_map(uri, offset).or_else(|| {
             if offset > 0 {
                 self.lookup_symbol_map(uri, offset - 1)
@@ -97,7 +97,7 @@ impl Backend {
                 SymbolKind::SelfStaticParent { keyword } => {
                     let ctx = self.file_context(uri);
                     let class_loader = self.class_loader(&ctx);
-                    let current_class = Self::find_class_at_offset(&ctx.classes, offset);
+                    let current_class = find_class_at_offset(&ctx.classes, offset);
                     let target = match keyword.as_str() {
                         "parent" => current_class
                             .and_then(|cc| cc.parent_class.as_ref())
@@ -194,8 +194,8 @@ impl Backend {
         // Extract the subject (left side of -> or ::).
         let (subject, access_kind) = self.lookup_member_access_context(uri, content, position)?;
 
-        let cursor_offset = Self::position_to_offset(content, position);
-        let current_class = Self::find_class_at_offset(&ctx.classes, cursor_offset);
+        let cursor_offset = position_to_offset(content, position);
+        let current_class = find_class_at_offset(&ctx.classes, cursor_offset);
 
         let class_loader = self.class_loader(ctx);
         let function_loader = self.function_loader(ctx);
@@ -209,7 +209,8 @@ impl Backend {
             class_loader: &class_loader,
             function_loader: Some(&function_loader),
         };
-        let candidates = Self::resolve_target_classes(&subject, access_kind, &rctx);
+        let candidates =
+            crate::completion::resolver::resolve_target_classes(&subject, access_kind, &rctx);
 
         if candidates.is_empty() {
             return None;
@@ -226,7 +227,7 @@ impl Backend {
 
             // Verify the method exists on this interface/abstract class
             // (directly or inherited).
-            let merged = Self::resolve_class_fully(candidate, &class_loader);
+            let merged = crate::virtual_members::resolve_class_fully(candidate, &class_loader);
             let has_method = merged.methods.iter().any(|m| m.name == member_name);
             let has_property = merged.properties.iter().any(|p| p.name == member_name);
 
@@ -249,7 +250,7 @@ impl Backend {
 
             for imp in &implementors {
                 // Check that the implementor actually has this member.
-                let imp_merged = Self::resolve_class_fully(imp, &class_loader);
+                let imp_merged = crate::virtual_members::resolve_class_fully(imp, &class_loader);
                 let imp_has = match member_kind {
                     MemberKind::Method => imp_merged.methods.iter().any(|m| m.name == member_name),
                     MemberKind::Property => {

@@ -5,24 +5,14 @@
 //! a line of PHP source code.  These are used by both the **completion**
 //! and **definition** subsystems so that the logic is defined once.
 //!
-//! All functions operate on a `&[char]` slice representing a single line
-//! and work backwards from a given position.
+//! All functions operate on a `&[char]` slice representing a single
+//! (already-collapsed) line and work backwards from a given position.
+//! Multi-line chain collapsing lives in [`crate::util::collapse_continuation_lines`].
 //!
-//! # Multi-line chains
-//!
-//! PHP code frequently uses fluent method chains that span multiple lines:
-//!
-//! ```php
-//! $this->getRepository()
-//!     ->findAll()
-//!     ->filter(fn($u) => $u->active)
-//!     ->  // ← cursor here
-//! ```
-//!
-//! The [`collapse_continuation_lines`] helper detects when the cursor is
-//! on a continuation line (one that starts with `->` or `?->` after
-//! optional whitespace) and joins it with preceding lines to form a
-//! single flattened expression that the character-level helpers can parse.
+//! The main entry point is [`detect_access_operator`], which locates
+//! `->`, `?->`, or `::` near the cursor and extracts the subject to its
+//! left.  Internally it delegates to [`extract_arrow_subject`] and
+//! [`extract_double_colon_subject`] for the character-level backward walk.
 //!
 //! # Subjects
 //!
@@ -44,6 +34,8 @@
 //! | `ClassName::`                | `::`     | `ClassName`             |
 //! | `$var?->`                    | `?->`    | `$var`                  |
 
+use crate::types::AccessKind;
+
 // ─── Character-level helpers ────────────────────────────────────────────────
 //
 // These were previously in `util.rs` but are only consumed by the
@@ -53,7 +45,7 @@
 ///
 /// `pos` must point one past the closing `)`.  Returns the index of the
 /// opening `(`, or `None` if parens are unbalanced.
-pub(crate) fn skip_balanced_parens_back(chars: &[char], pos: usize) -> Option<usize> {
+fn skip_balanced_parens_back(chars: &[char], pos: usize) -> Option<usize> {
     if pos == 0 || chars[pos - 1] != ')' {
         return None;
     }
@@ -79,7 +71,7 @@ pub(crate) fn skip_balanced_parens_back(chars: &[char], pos: usize) -> Option<us
 ///
 /// `pos` must point one past the closing `]`.  Returns the index of the
 /// opening `[`, or `None` if brackets are unbalanced.
-pub(crate) fn skip_balanced_brackets_back(chars: &[char], pos: usize) -> Option<usize> {
+fn skip_balanced_brackets_back(chars: &[char], pos: usize) -> Option<usize> {
     if pos == 0 || chars[pos - 1] != ']' {
         return None;
     }
@@ -105,7 +97,7 @@ pub(crate) fn skip_balanced_brackets_back(chars: &[char], pos: usize) -> Option<
 /// before the identifier starting at position `ident_start`.
 ///
 /// Returns the class name (possibly with namespace) if `new` is found.
-pub(crate) fn check_new_keyword_before(
+fn check_new_keyword_before(
     chars: &[char],
     ident_start: usize,
     class_name: &str,
@@ -137,7 +129,7 @@ pub(crate) fn check_new_keyword_before(
 /// `open` is the position of the outer `(`, `close` is one past the
 /// outer `)`.  The function looks inside for the pattern
 /// `new ClassName(...)`.
-pub(crate) fn extract_new_expression_inside_parens(
+fn extract_new_expression_inside_parens(
     chars: &[char],
     open: usize,
     close: usize,
@@ -204,7 +196,7 @@ pub(crate) fn extract_new_expression_inside_parens(
 ///   - `(new ClassName())->` (parenthesized instantiation)
 ///   - `Status::Active->` (enum case access)
 ///   - `tryFrom($int)?->` (nullsafe after call)
-pub(crate) fn extract_arrow_subject(chars: &[char], arrow_pos: usize) -> String {
+fn extract_arrow_subject(chars: &[char], arrow_pos: usize) -> String {
     // Position just before the `->`
     let mut end = arrow_pos;
 
@@ -359,7 +351,7 @@ pub(crate) fn extract_arrow_subject(chars: &[char], arrow_pos: usize) -> String 
 ///   - `"ClassName::make()"` for a static method call
 ///   - `"ClassName::make(Arg::class)"` for a static call with arguments
 ///   - `"ClassName"` for `new ClassName()` instantiation
-pub(crate) fn extract_call_subject(chars: &[char], paren_end: usize) -> Option<String> {
+fn extract_call_subject(chars: &[char], paren_end: usize) -> Option<String> {
     let open = skip_balanced_parens_back(chars, paren_end)?;
     if open == 0 {
         return None;
@@ -459,7 +451,7 @@ pub(crate) fn extract_call_subject(chars: &[char], paren_end: usize) -> Option<S
 /// characters.  If a `$` prefix is found, includes it (producing e.g.
 /// `"$this"`, `"$var"`).  Otherwise returns whatever identifier was
 /// collected (e.g. `"self"`, `"parent"`), which may be empty.
-pub(crate) fn extract_simple_variable(chars: &[char], end: usize) -> String {
+fn extract_simple_variable(chars: &[char], end: usize) -> String {
     let mut i = end;
     // skip whitespace
     while i > 0 && chars[i - 1] == ' ' {
@@ -487,7 +479,7 @@ pub(crate) fn extract_simple_variable(chars: &[char], end: usize) -> String {
 ///
 /// Handles `self::`, `static::`, `parent::`, `ClassName::`, `Foo\Bar::`,
 /// and the edge case `$var::`.
-pub(crate) fn extract_double_colon_subject(chars: &[char], colon_pos: usize) -> String {
+fn extract_double_colon_subject(chars: &[char], colon_pos: usize) -> String {
     let mut i = colon_pos;
     // skip whitespace
     while i > 0 && chars[i - 1] == ' ' {
@@ -505,145 +497,115 @@ pub(crate) fn extract_double_colon_subject(chars: &[char], colon_pos: usize) -> 
     chars[i..end].iter().collect()
 }
 
-/// Collapse multi-line method chains around the cursor into a single line.
+/// Detect an access operator (`->`, `?->`, or `::`) before a cursor
+/// position in an already-collapsed character slice, and extract the
+/// subject expression to the operator's left.
 ///
-/// When the cursor line (after trimming leading whitespace) begins with
-/// `->` or `?->`, this function walks backwards through preceding lines
-/// that are also continuations, plus the base expression line, and joins
-/// them into one flattened string.  The returned column is the cursor's
-/// position within that flattened string.
+/// This is the shared core used by both completion target extraction and
+/// go-to-definition member access context detection.
 ///
-/// If the cursor line is not a continuation, the original line and column
-/// are returned unchanged.
+/// # Parameters
+///
+/// * `chars` — the collapsed line as a char slice.
+/// * `col` — the cursor's character offset within `chars`.
+/// * `mode` — whether the cursor sits *after* the operator
+///   ([`OperatorScanMode::AfterOperator`], completion) or *on* the
+///   member name to the right of the operator
+///   ([`OperatorScanMode::OnMember`], go-to-definition).
 ///
 /// # Returns
 ///
-/// `(collapsed_line, adjusted_column)` — the flattened text and the
-/// cursor's character offset within it.
-pub(crate) fn collapse_continuation_lines(
-    lines: &[&str],
-    cursor_line: usize,
-    cursor_col: usize,
-) -> (String, usize) {
-    let line = lines[cursor_line];
-    let trimmed = line.trim_start();
+/// `Some((subject, AccessKind))` when an operator is found, `None`
+/// otherwise.
+pub(crate) fn detect_access_operator(
+    chars: &[char],
+    col: usize,
+    mode: OperatorScanMode,
+) -> Option<(String, AccessKind)> {
+    let col = col.min(chars.len());
 
-    // Only collapse when the cursor line is a continuation (starts with
-    // `->` or `?->` after optional whitespace).
-    if !trimmed.starts_with("->") && !trimmed.starts_with("?->") {
-        return (line.to_string(), cursor_col);
+    if chars.is_empty() {
+        return None;
     }
 
-    let cursor_leading_ws = line.len() - trimmed.len();
-
-    // Walk backwards to find the first non-continuation line (the base).
-    //
-    // A continuation line is one that starts with `->` or `?->`.  However,
-    // multi-line closure/function arguments can break the chain:
-    //
-    //   Brand::whereNested(function (Builder $q): void {
-    //   })
-    //   ->   // ← cursor
-    //
-    // Here line `})` is NOT a continuation but is part of the call
-    // expression on the base line.  We detect this by tracking
-    // brace/paren balance: when the accumulated lines (from the current
-    // candidate upwards to the cursor) have unmatched closing delimiters,
-    // we keep walking backwards until the delimiters balance out.
-    let mut start = cursor_line;
-    while start > 0 {
-        let prev_trimmed = lines[start - 1].trim_start();
-
-        // Skip blank (whitespace-only) lines — they don't terminate a
-        // chain.  Without this, a blank line between chain segments
-        // causes the backward walk to stop prematurely.
-        if prev_trimmed.is_empty() {
-            start -= 1;
-            continue;
+    let operator_end = match mode {
+        OperatorScanMode::AfterOperator => {
+            // Walk backwards past any partial identifier the user has typed.
+            let mut i = col;
+            while i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+                i -= 1;
+            }
+            i
         }
+        OperatorScanMode::OnMember => {
+            let mut i = col;
 
-        if prev_trimmed.starts_with("->") || prev_trimmed.starts_with("?->") {
-            start -= 1;
-        } else {
-            // Check whether the accumulated text from this candidate
-            // line through the line just before the cursor has
-            // unbalanced closing delimiters.  If so, this line is in
-            // the middle of a multi-line argument list and we must
-            // keep walking backwards.
-            start -= 1;
-
-            // Count paren/brace balance from `start` up to (but not
-            // including) the cursor line.
-            let mut paren_depth: i32 = 0;
-            let mut brace_depth: i32 = 0;
-            for line in lines.iter().take(cursor_line).skip(start) {
-                for ch in line.chars() {
-                    match ch {
-                        '(' => paren_depth += 1,
-                        ')' => paren_depth -= 1,
-                        '{' => brace_depth += 1,
-                        '}' => brace_depth -= 1,
-                        _ => {}
-                    }
-                }
+            // If the cursor is on or past the end of a word, adjust.
+            if i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                // on a word char — walk left
+            } else if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+                i -= 1;
+            } else {
+                return None;
             }
 
-            // If balanced (or net-open), this is a proper base line.
-            if paren_depth >= 0 && brace_depth >= 0 {
-                break;
+            // Walk left past identifier characters.
+            while i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+                i -= 1;
             }
 
-            // Unbalanced — keep walking backwards until we close the
-            // gap.  Each step re-checks the running balance.
-            while start > 0 && (paren_depth < 0 || brace_depth < 0) {
-                start -= 1;
-                for ch in lines[start].chars() {
-                    match ch {
-                        '(' => paren_depth += 1,
-                        ')' => paren_depth -= 1,
-                        '{' => brace_depth += 1,
-                        '}' => brace_depth -= 1,
-                        _ => {}
-                    }
-                }
+            let mut end = i;
+
+            // Skip `$` prefix (for `Class::$staticProp`).
+            if end > 0 && chars[end - 1] == '$' {
+                end -= 1;
             }
 
-            // After re-balancing we may have landed on a continuation
-            // line (e.g. `->where(...\n...\n)->`) — keep walking if so.
-            if start > 0 {
-                let landed = lines[start].trim_start();
-                if landed.starts_with("->") || landed.starts_with("?->") {
-                    continue;
-                }
-            }
-            break;
+            end
+        }
+    };
+
+    // Try `::`.
+    if operator_end >= 2 && chars[operator_end - 2] == ':' && chars[operator_end - 1] == ':' {
+        let subject = extract_double_colon_subject(chars, operator_end - 2);
+        if !subject.is_empty() {
+            return Some((subject, AccessKind::DoubleColon));
         }
     }
 
-    // Build the collapsed string from the base line through the cursor line,
-    // skipping blank lines so they don't leave gaps in the collapsed result.
-    let mut prefix = String::new();
-    for (i, line) in lines.iter().enumerate().take(cursor_line).skip(start) {
-        let piece = if i == start {
-            line.trim_end()
-        } else {
-            let t = line.trim();
-            if t.is_empty() {
-                continue;
-            }
-            t
-        };
-        prefix.push_str(piece);
+    // Try `->`.
+    if operator_end >= 2 && chars[operator_end - 2] == '-' && chars[operator_end - 1] == '>' {
+        let subject = extract_arrow_subject(chars, operator_end - 2);
+        if !subject.is_empty() {
+            return Some((subject, AccessKind::Arrow));
+        }
     }
 
-    // The cursor position in the collapsed string is the length of the
-    // prefix (everything before the cursor line) plus the cursor's offset
-    // within the trimmed cursor line.
-    let new_col = prefix.chars().count() + (cursor_col.saturating_sub(cursor_leading_ws));
+    // Try `?->` (null-safe operator).
+    if operator_end >= 3
+        && chars[operator_end - 3] == '?'
+        && chars[operator_end - 2] == '-'
+        && chars[operator_end - 1] == '>'
+    {
+        let subject = extract_arrow_subject(chars, operator_end - 3);
+        if !subject.is_empty() {
+            return Some((subject, AccessKind::Arrow));
+        }
+    }
 
-    prefix.push_str(trimmed);
+    None
+}
 
-    (prefix, new_col)
+/// Controls how [`detect_access_operator`] locates the access operator
+/// relative to the cursor position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperatorScanMode {
+    /// The cursor is right after `->` / `::` (possibly with a partial
+    /// identifier typed).  Used by completion.
+    AfterOperator,
+    /// The cursor is on the member name to the right of the operator.
+    /// Used by go-to-definition.
+    OnMember,
 }
 
 #[cfg(test)]

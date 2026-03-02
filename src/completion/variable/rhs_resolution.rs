@@ -27,9 +27,9 @@ use crate::Backend;
 use crate::docblock;
 use crate::types::ClassInfo;
 
-use super::conditional_resolution::resolve_conditional_with_args;
-use super::resolver::VarResolutionCtx;
-use super::variable_resolution::build_var_resolver_from_ctx;
+use super::resolution::build_var_resolver_from_ctx;
+use crate::completion::conditional_resolution::resolve_conditional_with_args;
+use crate::completion::resolver::VarResolutionCtx;
 
 impl Backend {
     /// Resolve a right-hand-side expression to zero or more `ClassInfo`
@@ -50,7 +50,7 @@ impl Backend {
     ///
     /// Used by `check_expression_for_assignment` (for `$var = <expr>`)
     /// and recursively by multi-branch constructs (match, ternary, `??`).
-    pub(super) fn resolve_rhs_expression<'b>(
+    pub(in crate::completion) fn resolve_rhs_expression<'b>(
         expr: &'b Expression<'b>,
         ctx: &VarResolutionCtx<'_>,
     ) -> Vec<ClassInfo> {
@@ -107,7 +107,7 @@ impl Backend {
                 // succeeds even inside a namespace block (unqualified
                 // class names are prefixed with the current namespace
                 // and do NOT fall back to the global scope in PHP).
-                Self::type_hint_to_classes(
+                crate::completion::type_resolution::type_hint_to_classes(
                     "\\Closure",
                     &ctx.current_class.name,
                     ctx.all_classes,
@@ -121,7 +121,7 @@ impl Backend {
                 if let Some(ref ret_type) = ctx.enclosing_return_type
                     && let Some(send_type) = crate::docblock::extract_generator_send_type(ret_type)
                 {
-                    return Self::type_hint_to_classes(
+                    return crate::completion::type_resolution::type_hint_to_classes(
                         &send_type,
                         &ctx.current_class.name,
                         ctx.all_classes,
@@ -146,7 +146,7 @@ impl Backend {
             _ => None,
         };
         if let Some(name) = class_name {
-            return Self::type_hint_to_classes(
+            return crate::completion::type_resolution::type_hint_to_classes(
                 name,
                 &ctx.current_class.name,
                 ctx.all_classes,
@@ -172,7 +172,7 @@ impl Backend {
                 docblock::find_iterable_raw_type_in_source(ctx.content, access_offset, &base_var)
                 && let Some(element_type) = docblock::types::extract_generic_value_type(&raw_type)
             {
-                return Self::type_hint_to_classes(
+                return crate::completion::type_resolution::type_hint_to_classes(
                     &element_type,
                     &ctx.current_class.name,
                     ctx.all_classes,
@@ -186,7 +186,7 @@ impl Backend {
             // where there is no explicit `@var` annotation but the method
             // return type is `ReflectionAttribute[]`.
             let current_class = Some(ctx.current_class);
-            if let Some(raw_type) = Self::resolve_variable_assignment_raw_type(
+            if let Some(raw_type) = super::raw_type_inference::resolve_variable_assignment_raw_type(
                 &base_var,
                 ctx.content,
                 access_offset as u32,
@@ -196,7 +196,7 @@ impl Backend {
                 ctx.function_loader,
             ) && let Some(element_type) = docblock::types::extract_generic_value_type(&raw_type)
             {
-                return Self::type_hint_to_classes(
+                return crate::completion::type_resolution::type_hint_to_classes(
                     &element_type,
                     &ctx.current_class.name,
                     ctx.all_classes,
@@ -244,10 +244,13 @@ impl Backend {
         // For element-extracting functions (array_pop, etc.)
         // resolve to the element ClassInfo directly.
         if let Some(ref name) = func_name
-            && let Some(element_type) =
-                Self::resolve_array_func_element_type(name, &func_call.argument_list, ctx)
+            && let Some(element_type) = super::raw_type_inference::resolve_array_func_element_type(
+                name,
+                &func_call.argument_list,
+                ctx,
+            )
         {
-            let resolved = Self::type_hint_to_classes(
+            let resolved = crate::completion::type_resolution::type_hint_to_classes(
                 &element_type,
                 current_class_name,
                 all_classes,
@@ -272,7 +275,7 @@ impl Backend {
                     Some(&var_resolver),
                 );
                 if let Some(ref ty) = resolved_type {
-                    let resolved = Self::type_hint_to_classes(
+                    let resolved = crate::completion::type_resolution::type_hint_to_classes(
                         ty,
                         current_class_name,
                         all_classes,
@@ -284,7 +287,7 @@ impl Backend {
                 }
             }
             if let Some(ref ret) = func_info.return_type {
-                return Self::type_hint_to_classes(
+                return crate::completion::type_resolution::type_hint_to_classes(
                     ret,
                     current_class_name,
                     all_classes,
@@ -309,8 +312,12 @@ impl Backend {
                 crate::docblock::find_iterable_raw_type_in_source(content, offset, &var_name)
                 && let Some(ret) = crate::docblock::extract_callable_return_type(&raw_type)
             {
-                let resolved =
-                    Self::type_hint_to_classes(&ret, current_class_name, all_classes, class_loader);
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
+                    &ret,
+                    current_class_name,
+                    all_classes,
+                    class_loader,
+                );
                 if !resolved.is_empty() {
                     return resolved;
                 }
@@ -318,13 +325,19 @@ impl Backend {
 
             // 2. Scan for closure literal assignment and
             //    extract native return type hint.
-            if let Some(ret) = Self::extract_closure_return_type_from_assignment(
-                &var_name,
-                content,
-                ctx.cursor_offset,
-            ) {
-                let resolved =
-                    Self::type_hint_to_classes(&ret, current_class_name, all_classes, class_loader);
+            if let Some(ret) =
+                crate::completion::source::helpers::extract_closure_return_type_from_assignment(
+                    &var_name,
+                    content,
+                    ctx.cursor_offset,
+                )
+            {
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
+                    &ret,
+                    current_class_name,
+                    all_classes,
+                    class_loader,
+                );
                 if !resolved.is_empty() {
                     return resolved;
                 }
@@ -334,17 +347,18 @@ impl Backend {
             //    `$fn = strlen(...)`, `$fn = $obj->method(...)`, or
             //    `$fn = ClassName::staticMethod(...)`.
             //    Resolve the underlying function/method's return type.
-            if let Some(ret) = Self::extract_first_class_callable_return_type(
-                &var_name,
-                content,
-                ctx.cursor_offset,
-                Some(ctx.current_class),
-                ctx.all_classes,
-                ctx.class_loader,
-                ctx.function_loader,
-            ) {
-                let resolved =
-                    Self::type_hint_to_classes(&ret, current_class_name, all_classes, class_loader);
+            let rctx = ctx.as_resolution_ctx();
+            if let Some(ret) =
+                crate::completion::source::helpers::extract_first_class_callable_return_type(
+                    &var_name, &rctx,
+                )
+            {
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
+                    &ret,
+                    current_class_name,
+                    all_classes,
+                    class_loader,
+                );
                 if !resolved.is_empty() {
                     return resolved;
                 }
@@ -380,7 +394,7 @@ impl Backend {
                 .collect()
         } else if let Expression::Variable(Variable::Direct(dv)) = method_call.object {
             let var = dv.name.to_string();
-            Self::resolve_target_classes(
+            crate::completion::resolver::resolve_target_classes(
                 &var,
                 crate::types::AccessKind::Arrow,
                 &ctx.as_resolution_ctx(),
@@ -392,19 +406,16 @@ impl Backend {
             Self::resolve_rhs_expression(method_call.object, ctx)
         };
 
-        let text_args = Self::extract_argument_text(&method_call.argument_list, ctx.content);
+        let text_args = super::raw_type_inference::extract_argument_text(
+            &method_call.argument_list,
+            ctx.content,
+        );
         let rctx = ctx.as_resolution_ctx();
         let var_resolver = build_var_resolver_from_ctx(ctx);
 
         for owner in &owner_classes {
             let template_subs = if !text_args.is_empty() {
-                Self::build_method_template_subs(
-                    owner,
-                    &method_name,
-                    &text_args,
-                    &rctx,
-                    ctx.class_loader,
-                )
+                Self::build_method_template_subs(owner, &method_name, &text_args, &rctx)
             } else {
                 HashMap::new()
             };
@@ -449,17 +460,13 @@ impl Backend {
                 .cloned()
                 .or_else(|| (ctx.class_loader)(&cls_name));
             if let Some(ref owner) = owner {
-                let text_args =
-                    Self::extract_argument_text(&static_call.argument_list, ctx.content);
+                let text_args = super::raw_type_inference::extract_argument_text(
+                    &static_call.argument_list,
+                    ctx.content,
+                );
                 let rctx = ctx.as_resolution_ctx();
                 let template_subs = if !text_args.is_empty() {
-                    Self::build_method_template_subs(
-                        owner,
-                        &method_name,
-                        &text_args,
-                        &rctx,
-                        ctx.class_loader,
-                    )
+                    Self::build_method_template_subs(owner, &method_name, &text_args, &rctx)
                 } else {
                     HashMap::new()
                 };
@@ -512,7 +519,7 @@ impl Backend {
                             .collect()
                     } else if let Expression::Variable(Variable::Direct(dv)) = obj {
                         let var = dv.name.to_string();
-                        Self::resolve_target_classes(
+                        crate::completion::resolver::resolve_target_classes(
                             &var,
                             crate::types::AccessKind::Arrow,
                             &ctx.as_resolution_ctx(),
@@ -526,8 +533,12 @@ impl Backend {
                     };
 
                 for owner in &owner_classes {
-                    let resolved =
-                        Self::resolve_property_types(&prop_name, owner, all_classes, class_loader);
+                    let resolved = crate::completion::type_resolution::resolve_property_types(
+                        &prop_name,
+                        owner,
+                        all_classes,
+                        class_loader,
+                    );
                     if !resolved.is_empty() {
                         return resolved;
                     }
@@ -560,7 +571,7 @@ impl Backend {
             let obj_text = ctx.content[start..end].trim();
             if !obj_text.is_empty() {
                 let rctx = ctx.as_resolution_ctx();
-                return Self::resolve_target_classes(
+                return crate::completion::resolver::resolve_target_classes(
                     obj_text,
                     crate::types::AccessKind::Arrow,
                     &rctx,

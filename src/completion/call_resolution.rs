@@ -22,15 +22,17 @@
 use std::collections::HashMap;
 
 use crate::Backend;
+use crate::completion::variable::{ARRAY_ELEMENT_FUNCS, ARRAY_PRESERVING_FUNCS};
 use crate::docblock;
 use crate::types::*;
-use crate::util::{ARRAY_ELEMENT_FUNCS, ARRAY_PRESERVING_FUNCS};
+use crate::util::{find_class_at_offset, position_to_offset};
 
 use super::conditional_resolution::{
     VarClassStringResolver, resolve_conditional_with_text_args, resolve_conditional_without_args,
     split_call_subject, split_text_args,
 };
-use super::resolver::{ResolutionCtx, find_class_by_name};
+use super::resolver::ResolutionCtx;
+use crate::util::find_class_by_name;
 
 use crate::inheritance::apply_substitution;
 
@@ -85,19 +87,17 @@ impl Backend {
     fn resolve_instance_method_callable(
         base: &SubjectExpr,
         method_name: &str,
-        current_class: Option<&ClassInfo>,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
         rctx: &ResolutionCtx<'_>,
     ) -> Option<ResolvedCallableTarget> {
         let subject_text = base.to_subject_text();
         let owner_classes: Vec<ClassInfo> = if base.is_self_like() {
-            current_class.cloned().into_iter().collect()
+            rctx.current_class.cloned().into_iter().collect()
         } else {
-            Self::resolve_target_classes(&subject_text, crate::AccessKind::Arrow, rctx)
+            super::resolver::resolve_target_classes(&subject_text, crate::AccessKind::Arrow, rctx)
         };
 
         for owner in &owner_classes {
-            let merged = Self::resolve_class_fully(owner, class_loader);
+            let merged = crate::virtual_members::resolve_class_fully(owner, rctx.class_loader);
             if let Some(m) = merged
                 .methods
                 .iter()
@@ -117,24 +117,15 @@ impl Backend {
     /// Resolve a static class reference + method name to a
     /// [`ResolvedCallableTarget`].
     ///
-    /// Resolves the class via [`Self::resolve_static_owner_class`], merges
+    /// Resolves the class via [`super::resolver::resolve_static_owner_class`], merges
     /// via `resolve_class_fully`, and looks up `method_name`.
     fn resolve_static_method_callable(
         class: &str,
         method_name: &str,
-        current_class: Option<&ClassInfo>,
-        all_classes: &[ClassInfo],
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
         rctx: &ResolutionCtx<'_>,
     ) -> Option<ResolvedCallableTarget> {
-        let owner = Self::resolve_static_owner_class(
-            class,
-            current_class,
-            all_classes,
-            class_loader,
-            rctx,
-        )?;
-        let merged = Self::resolve_class_fully(&owner, class_loader);
+        let owner = super::resolver::resolve_static_owner_class(class, rctx)?;
+        let merged = crate::virtual_members::resolve_class_fully(&owner, rctx.class_loader);
         let m = merged
             .methods
             .iter()
@@ -165,7 +156,7 @@ impl Backend {
         class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
     ) -> Option<ResolvedCallableTarget> {
         let ci = class_loader(class_name)?;
-        let merged = Self::resolve_class_fully(&ci, class_loader);
+        let merged = crate::virtual_members::resolve_class_fully(&ci, class_loader);
         let fqn = format_callable_fqn(&merged.name, &merged.file_namespace);
         let (parameters, return_type) =
             if let Some(ctor) = merged.methods.iter().find(|m| m.name == "__construct") {
@@ -207,8 +198,8 @@ impl Backend {
     ) -> Option<ResolvedCallableTarget> {
         let class_loader = self.class_loader(file_ctx);
         let function_loader_cl = self.function_loader(file_ctx);
-        let cursor_offset = Self::position_to_offset(content, position);
-        let current_class = Self::find_class_at_offset(&file_ctx.classes, cursor_offset);
+        let cursor_offset = position_to_offset(content, position);
+        let current_class = find_class_at_offset(&file_ctx.classes, cursor_offset);
 
         let rctx = ResolutionCtx {
             current_class,
@@ -236,24 +227,13 @@ impl Backend {
             }
 
             // ── Instance method call: `$subject->method(…)` ─────────
-            SubjectExpr::MethodCall { base, method } => Self::resolve_instance_method_callable(
-                base,
-                method,
-                current_class,
-                &class_loader,
-                &rctx,
-            ),
+            SubjectExpr::MethodCall { base, method } => {
+                Self::resolve_instance_method_callable(base, method, &rctx)
+            }
 
             // ── Static method call: `Class::method(…)` ──────────────
             SubjectExpr::StaticMethodCall { class, method } => {
-                Self::resolve_static_method_callable(
-                    class,
-                    method,
-                    current_class,
-                    &file_ctx.classes,
-                    &class_loader,
-                    &rctx,
-                )
+                Self::resolve_static_method_callable(class, method, &rctx)
             }
 
             // ── Standalone function call: `functionName(…)` ─────────
@@ -288,26 +268,15 @@ impl Backend {
             // `SubjectExpr::parse` produces as `PropertyChain`.  Treat
             // the trailing property as a method name.
             SubjectExpr::PropertyChain { base, property } => {
-                Self::resolve_instance_method_callable(
-                    base,
-                    property,
-                    current_class,
-                    &class_loader,
-                    &rctx,
-                )
+                Self::resolve_instance_method_callable(base, property, &rctx)
             }
 
             // ── StaticAccess used as a callable target ──────────────
             // Same situation: `"ClassName::method"` without `()` parses
             // as `StaticAccess` rather than `StaticMethodCall`.
-            SubjectExpr::StaticAccess { class, member } => Self::resolve_static_method_callable(
-                class,
-                member,
-                current_class,
-                &file_ctx.classes,
-                &class_loader,
-                &rctx,
-            ),
+            SubjectExpr::StaticAccess { class, member } => {
+                Self::resolve_static_method_callable(class, member, &rctx)
+            }
 
             // ── Anything else doesn't resolve to a callable ─────────
             _ => None,
@@ -329,34 +298,19 @@ impl Backend {
         text_args: &str,
         ctx: &ResolutionCtx<'_>,
     ) -> Vec<ClassInfo> {
-        let current_class = ctx.current_class;
-        let all_classes = ctx.all_classes;
-        let class_loader = ctx.class_loader;
-        let function_loader = ctx.function_loader;
-
         match callee {
             // ── Instance method call: base->method(…) ───────────────
             SubjectExpr::MethodCall { base, method } => {
                 let method_name = method.as_str();
 
                 // Resolve the base expression to class(es).
-                let lhs_classes: Vec<ClassInfo> = Self::resolve_target_classes_expr(
-                    base,
-                    &base.to_subject_text(),
-                    AccessKind::Arrow,
-                    ctx,
-                );
+                let lhs_classes: Vec<ClassInfo> =
+                    super::resolver::resolve_target_classes_expr(base, AccessKind::Arrow, ctx);
 
                 let mut results = Vec::new();
                 for owner in &lhs_classes {
                     let template_subs = if !text_args.is_empty() {
-                        Self::build_method_template_subs(
-                            owner,
-                            method_name,
-                            text_args,
-                            ctx,
-                            class_loader,
-                        )
+                        Self::build_method_template_subs(owner, method_name, text_args, ctx)
                     } else {
                         HashMap::new()
                     };
@@ -365,8 +319,8 @@ impl Backend {
                         owner,
                         method_name,
                         text_args,
-                        all_classes,
-                        class_loader,
+                        ctx.all_classes,
+                        ctx.class_loader,
                         &template_subs,
                         Some(&var_resolver),
                     ));
@@ -380,28 +334,16 @@ impl Backend {
 
                 let owner_class = if class.starts_with('$') {
                     // Variable holding a class-string (e.g. `$cls::make()`).
-                    Self::resolve_target_classes(class, AccessKind::DoubleColon, ctx)
+                    super::resolver::resolve_target_classes(class, AccessKind::DoubleColon, ctx)
                         .into_iter()
                         .next()
                 } else {
-                    Self::resolve_static_owner_class(
-                        class,
-                        current_class,
-                        all_classes,
-                        class_loader,
-                        ctx,
-                    )
+                    super::resolver::resolve_static_owner_class(class, ctx)
                 };
 
                 if let Some(ref owner) = owner_class {
                     let template_subs = if !text_args.is_empty() {
-                        Self::build_method_template_subs(
-                            owner,
-                            method_name,
-                            text_args,
-                            ctx,
-                            class_loader,
-                        )
+                        Self::build_method_template_subs(owner, method_name, text_args, ctx)
                     } else {
                         HashMap::new()
                     };
@@ -410,8 +352,8 @@ impl Backend {
                         owner,
                         method_name,
                         text_args,
-                        all_classes,
-                        class_loader,
+                        ctx.all_classes,
+                        ctx.class_loader,
                         &template_subs,
                         Some(&var_resolver),
                     );
@@ -440,12 +382,12 @@ impl Backend {
                     if let Some(ref raw) = arg_raw_type
                         && let Some(element_type) = docblock::types::extract_generic_value_type(raw)
                     {
-                        let owner_name = current_class.map(|c| c.name.as_str()).unwrap_or("");
-                        let classes = Self::type_hint_to_classes(
+                        let owner_name = ctx.current_class.map(|c| c.name.as_str()).unwrap_or("");
+                        let classes = super::type_resolution::type_hint_to_classes(
                             &element_type,
                             owner_name,
-                            all_classes,
-                            class_loader,
+                            ctx.all_classes,
+                            ctx.class_loader,
                         );
                         if !classes.is_empty() {
                             return classes;
@@ -454,7 +396,7 @@ impl Backend {
                 }
 
                 // Regular function lookup.
-                if let Some(fl) = function_loader
+                if let Some(fl) = ctx.function_loader
                     && let Some(func_info) = fl(func_name)
                 {
                     if let Some(ref cond) = func_info.conditional_return {
@@ -470,15 +412,24 @@ impl Backend {
                             resolve_conditional_without_args(cond, &func_info.parameters)
                         };
                         if let Some(ref ty) = resolved_type {
-                            let classes =
-                                Self::type_hint_to_classes(ty, "", all_classes, class_loader);
+                            let classes = super::type_resolution::type_hint_to_classes(
+                                ty,
+                                "",
+                                ctx.all_classes,
+                                ctx.class_loader,
+                            );
                             if !classes.is_empty() {
                                 return classes;
                             }
                         }
                     }
                     if let Some(ref ret) = func_info.return_type {
-                        return Self::type_hint_to_classes(ret, "", all_classes, class_loader);
+                        return super::type_resolution::type_hint_to_classes(
+                            ret,
+                            "",
+                            ctx.all_classes,
+                            ctx.class_loader,
+                        );
                     }
                 }
 
@@ -497,35 +448,46 @@ impl Backend {
                     var_name,
                 ) && let Some(ret) = crate::docblock::extract_callable_return_type(&raw_type)
                 {
-                    let classes = Self::type_hint_to_classes(&ret, "", all_classes, class_loader);
+                    let classes = super::type_resolution::type_hint_to_classes(
+                        &ret,
+                        "",
+                        ctx.all_classes,
+                        ctx.class_loader,
+                    );
                     if !classes.is_empty() {
                         return classes;
                     }
                 }
 
                 // 2. Scan for closure/arrow-function literal assignment.
-                if let Some(ret) = Self::extract_closure_return_type_from_assignment(
-                    var_name,
-                    content,
-                    cursor_offset,
-                ) {
-                    let classes = Self::type_hint_to_classes(&ret, "", all_classes, class_loader);
+                if let Some(ret) =
+                    super::source::helpers::extract_closure_return_type_from_assignment(
+                        var_name,
+                        content,
+                        cursor_offset,
+                    )
+                {
+                    let classes = super::type_resolution::type_hint_to_classes(
+                        &ret,
+                        "",
+                        ctx.all_classes,
+                        ctx.class_loader,
+                    );
                     if !classes.is_empty() {
                         return classes;
                     }
                 }
 
                 // 3. Scan for first-class callable assignment.
-                if let Some(ret) = Self::extract_first_class_callable_return_type(
-                    var_name,
-                    content,
-                    cursor_offset,
-                    current_class,
-                    all_classes,
-                    class_loader,
-                    function_loader,
-                ) {
-                    let classes = Self::type_hint_to_classes(&ret, "", all_classes, class_loader);
+                if let Some(ret) =
+                    super::source::helpers::extract_first_class_callable_return_type(var_name, ctx)
+                {
+                    let classes = super::type_resolution::type_hint_to_classes(
+                        &ret,
+                        "",
+                        ctx.all_classes,
+                        ctx.class_loader,
+                    );
                     if !classes.is_empty() {
                         return classes;
                     }
@@ -537,9 +499,9 @@ impl Backend {
             // ── Constructor call: new ClassName(…) ──────────────────
             // A `NewExpr` callee means the call is `new Foo(…)` — the
             // return type is always the class itself.
-            SubjectExpr::NewExpr { class_name } => find_class_by_name(all_classes, class_name)
+            SubjectExpr::NewExpr { class_name } => find_class_by_name(ctx.all_classes, class_name)
                 .cloned()
-                .or_else(|| class_loader(class_name))
+                .or_else(|| (ctx.class_loader)(class_name))
                 .into_iter()
                 .collect(),
 
@@ -550,12 +512,7 @@ impl Backend {
                 // Resolve via the target-classes path which handles
                 // all remaining SubjectExpr variants.  This avoids
                 // round-tripping through text and back.
-                Self::resolve_target_classes_expr(
-                    callee,
-                    &callee.to_subject_text(),
-                    AccessKind::Arrow,
-                    ctx,
-                )
+                super::resolver::resolve_target_classes_expr(callee, AccessKind::Arrow, ctx)
             }
         }
     }
@@ -601,7 +558,7 @@ impl Backend {
                     } else {
                         ty.clone()
                     };
-                    let classes = Self::type_hint_to_classes(
+                    let classes = super::type_resolution::type_hint_to_classes(
                         &effective_ty,
                         &class_info.name,
                         all_classes,
@@ -622,7 +579,7 @@ impl Backend {
             {
                 let substituted = apply_substitution(ret, template_subs);
                 if substituted != *ret {
-                    let classes = Self::type_hint_to_classes(
+                    let classes = super::type_resolution::type_hint_to_classes(
                         &substituted,
                         &class_info.name,
                         all_classes,
@@ -647,7 +604,7 @@ impl Backend {
                 if trimmed == "static" || trimmed == "self" || trimmed == "$this" {
                     return vec![class_info.clone()];
                 }
-                return Self::type_hint_to_classes(
+                return super::type_resolution::type_hint_to_classes(
                     ret,
                     &class_info.name,
                     all_classes,
@@ -663,7 +620,7 @@ impl Backend {
         }
 
         // Walk up the inheritance chain
-        let merged = Self::resolve_class_fully(class_info, class_loader);
+        let merged = crate::virtual_members::resolve_class_fully(class_info, class_loader);
         if let Some(method) = merged.methods.iter().find(|m| m.name == method_name) {
             return resolve_method(method);
         }
@@ -685,7 +642,6 @@ impl Backend {
         method_name: &str,
         text_args: &str,
         ctx: &ResolutionCtx<'_>,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
     ) -> HashMap<String, String> {
         // Find the method — first on the class directly, then via inheritance.
         let method = class_info
@@ -694,7 +650,8 @@ impl Backend {
             .find(|m| m.name == method_name)
             .cloned()
             .or_else(|| {
-                let merged = Self::resolve_class_fully(class_info, class_loader);
+                let merged =
+                    crate::virtual_members::resolve_class_fully(class_info, ctx.class_loader);
                 merged.methods.into_iter().find(|m| m.name == method_name)
             });
 
@@ -750,7 +707,7 @@ impl Backend {
         }
 
         // new ClassName(…) → ClassName
-        if let Some(class_name) = Self::extract_new_expression_class(trimmed) {
+        if let Some(class_name) = super::source::helpers::extract_new_expression_class(trimmed) {
             return Some(class_name);
         }
 
@@ -766,8 +723,12 @@ impl Backend {
             && prop.chars().all(|c| c.is_alphanumeric() || c == '_')
             && let Some(owner) = ctx.current_class
         {
-            let types =
-                Self::resolve_property_types(prop, owner, ctx.all_classes, ctx.class_loader);
+            let types = super::type_resolution::resolve_property_types(
+                prop,
+                owner,
+                ctx.all_classes,
+                ctx.class_loader,
+            );
             if let Some(first) = types.first() {
                 return Some(first.name.clone());
             }
@@ -775,8 +736,11 @@ impl Backend {
 
         // $var → resolve variable type
         if trimmed.starts_with('$') {
-            let classes =
-                Self::resolve_target_classes(trimmed, crate::types::AccessKind::Arrow, ctx);
+            let classes = super::resolver::resolve_target_classes(
+                trimmed,
+                crate::types::AccessKind::Arrow,
+                ctx,
+            );
             if let Some(first) = classes.first() {
                 return Some(first.name.clone());
             }
@@ -843,7 +807,7 @@ impl Backend {
                 return Some(raw);
             }
             // Fall back to AST-based assignment scanning.
-            return Self::resolve_variable_assignment_raw_type(
+            return crate::completion::variable::raw_type_inference::resolve_variable_assignment_raw_type(
                 arg_text,
                 ctx.content,
                 ctx.cursor_offset,
@@ -866,11 +830,14 @@ impl Backend {
                     .unwrap_or(&call_body[..pos]);
                 let method_name = &call_body[pos + 2..];
 
-                let lhs_classes = Self::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
+                let lhs_classes =
+                    super::resolver::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
                 for cls in &lhs_classes {
-                    if let Some(rt) =
-                        Self::resolve_method_return_type(cls, method_name, class_loader)
-                    {
+                    if let Some(rt) = crate::inheritance::resolve_method_return_type(
+                        cls,
+                        method_name,
+                        class_loader,
+                    ) {
                         return Some(rt);
                     }
                 }
@@ -889,8 +856,11 @@ impl Backend {
                         .or_else(|| class_loader(class_part))
                 };
                 if let Some(ref cls) = owner
-                    && let Some(rt) =
-                        Self::resolve_method_return_type(cls, method_name, class_loader)
+                    && let Some(rt) = crate::inheritance::resolve_method_return_type(
+                        cls,
+                        method_name,
+                        class_loader,
+                    )
                 {
                     return Some(rt);
                 }
@@ -905,9 +875,11 @@ impl Backend {
                 .unwrap_or(&arg_text[..pos]);
             let prop_name = &arg_text[pos + 2..];
             if !prop_name.is_empty() && prop_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                let lhs_classes = Self::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
+                let lhs_classes =
+                    super::resolver::resolve_target_classes(lhs, AccessKind::Arrow, ctx);
                 for cls in &lhs_classes {
-                    if let Some(rt) = Self::resolve_property_type_hint(cls, prop_name, class_loader)
+                    if let Some(rt) =
+                        crate::inheritance::resolve_property_type_hint(cls, prop_name, class_loader)
                     {
                         return Some(rt);
                     }

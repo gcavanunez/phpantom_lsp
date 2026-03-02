@@ -691,14 +691,29 @@ pub struct ClassInfo {
     /// `Illuminate\Database\Query\Builder`).
     pub file_namespace: Option<String>,
     /// Laravel-specific metadata (custom collections, casts, attribute
-    /// defaults, column names). Defaults to all-empty for non-Laravel
-    /// classes.
-    pub laravel: LaravelMetadata,
+    /// defaults, column names). `None` for non-Laravel classes to avoid
+    /// per-class allocation overhead.
+    pub laravel: Option<Box<LaravelMetadata>>,
 }
 
 // ─── ClassInfo helpers ──────────────────────────────────────────────────────
 
 impl ClassInfo {
+    /// Return a mutable reference to the `LaravelMetadata`, creating it
+    /// if absent.
+    ///
+    /// This is the preferred way to set Laravel-specific fields in tests
+    /// and parsing code: `class.laravel_mut().casts_definitions = …;`
+    pub fn laravel_mut(&mut self) -> &mut LaravelMetadata {
+        self.laravel
+            .get_or_insert_with(|| Box::new(LaravelMetadata::default()))
+    }
+
+    /// Return a reference to the `LaravelMetadata`, if present.
+    pub fn laravel(&self) -> Option<&LaravelMetadata> {
+        self.laravel.as_deref()
+    }
+
     /// Look up the stored `name_offset` for a member by name and kind.
     ///
     /// Returns `Some(offset)` when the member exists and has a non-zero

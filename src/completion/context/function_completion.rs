@@ -10,8 +10,8 @@ use crate::Backend;
 use crate::types::*;
 use crate::util::short_name;
 
-use super::builder::{analyze_use_block, build_callable_snippet};
-use super::use_edit::build_use_function_edit;
+use crate::completion::builder::{analyze_use_block, build_callable_snippet};
+use crate::completion::use_edit::build_use_function_edit;
 
 impl Backend {
     // ─── Function name completion ───────────────────────────────────

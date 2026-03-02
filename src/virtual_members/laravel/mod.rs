@@ -149,7 +149,7 @@ pub(crate) fn try_swap_custom_collection(
         .or_else(|| class_loader(model_clean));
 
     if let Some(ref mc) = model_class
-        && let Some(ref coll_name) = mc.laravel.custom_collection
+        && let Some(coll_name) = mc.laravel().and_then(|l| l.custom_collection.as_ref())
     {
         let coll_clean = coll_name.strip_prefix('\\').unwrap_or(coll_name);
         find_class_in(all_classes, coll_clean)
@@ -274,28 +274,30 @@ impl VirtualMemberProvider for LaravelModelProvider {
         let mut methods = Vec::new();
 
         // ── Cast properties ─────────────────────────────────────────
-        for (column, cast_type) in &class.laravel.casts_definitions {
-            let php_type = cast_type_to_php_type(cast_type, class_loader);
-            properties.push(PropertyInfo::virtual_property(column, Some(&php_type)));
-        }
-
-        // ── Attribute default properties (fallback) ─────────────────
-        // Only add properties for columns not already covered by $casts.
-        for (column, php_type) in &class.laravel.attributes_definitions {
-            if properties.iter().any(|p| p.name == *column) {
-                continue;
+        if let Some(laravel) = class.laravel() {
+            for (column, cast_type) in &laravel.casts_definitions {
+                let php_type = cast_type_to_php_type(cast_type, class_loader);
+                properties.push(PropertyInfo::virtual_property(column, Some(&php_type)));
             }
-            properties.push(PropertyInfo::virtual_property(column, Some(php_type)));
-        }
 
-        // ── Column name properties (last-resort fallback) ───────────
-        // $fillable, $guarded, and $hidden provide column names without
-        // type information.  Only add for columns not already covered.
-        for column in &class.laravel.column_names {
-            if properties.iter().any(|p| p.name == *column) {
-                continue;
+            // ── Attribute default properties (fallback) ─────────────
+            // Only add properties for columns not already covered by $casts.
+            for (column, php_type) in &laravel.attributes_definitions {
+                if properties.iter().any(|p| p.name == *column) {
+                    continue;
+                }
+                properties.push(PropertyInfo::virtual_property(column, Some(php_type)));
             }
-            properties.push(PropertyInfo::virtual_property(column, Some("mixed")));
+
+            // ── Column name properties (last-resort fallback) ───────
+            // $fillable, $guarded, and $hidden provide column names without
+            // type information.  Only add for columns not already covered.
+            for column in &laravel.column_names {
+                if properties.iter().any(|p| p.name == *column) {
+                    continue;
+                }
+                properties.push(PropertyInfo::virtual_property(column, Some("mixed")));
+            }
         }
 
         for method in &class.methods {
@@ -358,7 +360,11 @@ impl VirtualMemberProvider for LaravelModelProvider {
                         let clean = rt.strip_prefix('\\').unwrap_or(rt);
                         class_loader(clean)
                     })
-                    .and_then(|related_class| related_class.laravel.custom_collection)
+                    .and_then(|related_class| {
+                        related_class
+                            .laravel
+                            .and_then(|l| l.custom_collection.clone())
+                    })
             } else {
                 None
             };

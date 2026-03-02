@@ -14,14 +14,27 @@
 //! - `virtual_members`: Virtual member tag extraction (`@property`,
 //!   `@property-read`, `@property-write`, `@method`).
 //! - `conditional`: PHPStan conditional return type parsing.
-//! - `types`: Type cleaning utilities (`clean_type`, `strip_nullable`,
-//!   `is_scalar`, `split_type_token`).
+//! - `types`: Type cleaning utilities, split into focused sub-files:
+//!   - `type_strings`: Foundational type string manipulation (constants,
+//!     splitting, cleaning, stripping, scalar checks, self/static replacement)
+//!   - `generics`: Generic argument parsing and iterable element/key extraction
+//!   - `shapes`: Array shape and object shape parsing
+//!   - `callable_types`: Callable/Closure return type and parameter extraction,
+//!     Generator TSend/TValue extraction
 
 mod conditional;
 mod tags;
 mod templates;
 pub(crate) mod types;
 mod virtual_members;
+
+// Type sub-modules — declared here (sibling files to `types.rs`) so
+// the Rust module system can find them.  `types.rs` re-exports their
+// public items so existing `use …::types::*` call sites keep working.
+pub(crate) mod callable_types;
+pub(crate) mod generics;
+pub(crate) mod shapes;
+pub(crate) mod type_strings;
 
 // ─── Re-exports ─────────────────────────────────────────────────────────────
 //

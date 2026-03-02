@@ -18,7 +18,6 @@
 /// concrete types.
 use std::collections::HashMap;
 
-use crate::Backend;
 use crate::docblock::types::{find_matching_close, split_generic_args};
 use crate::types::{
     ClassInfo, ConditionalReturnType, MAX_INHERITANCE_DEPTH, MAX_TRAIT_DEPTH, MethodInfo,
@@ -29,115 +28,324 @@ use crate::virtual_members::laravel::{
     extends_eloquent_model, factory_to_model_fqn, model_to_factory_fqn,
 };
 
-impl Backend {
-    /// Resolve a class together with all inherited members from its parent
-    /// chain.
-    ///
-    /// Walks up the `extends` chain via `class_loader`, collecting public and
-    /// protected methods, properties, and constants from each ancestor.
-    /// If a child already defines a member with the same name as a parent
-    /// member, the child's version wins (even if the signatures differ).
-    ///
-    /// Private members are never inherited.
-    ///
-    /// When the child declares `@extends Parent<Type1, Type2>` and the parent
-    /// has `@template` parameters, the inherited members have their template
-    /// parameter types replaced with the concrete types from the `@extends`
-    /// annotation.  This substitution chains through the entire ancestry.
-    ///
-    /// A depth limit of 20 prevents infinite loops from circular inheritance.
-    pub(crate) fn resolve_class_with_inheritance(
-        class: &ClassInfo,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-    ) -> ClassInfo {
-        let mut merged = class.clone();
+/// Resolve a class together with all inherited members from its parent
+/// chain.
+///
+/// Walks up the `extends` chain via `class_loader`, collecting public and
+/// protected methods, properties, and constants from each ancestor.
+/// If a child already defines a member with the same name as a parent
+/// member, the child's version wins (even if the signatures differ).
+///
+/// Private members are never inherited.
+///
+/// When the child declares `@extends Parent<Type1, Type2>` and the parent
+/// has `@template` parameters, the inherited members have their template
+/// parameter types replaced with the concrete types from the `@extends`
+/// annotation.  This substitution chains through the entire ancestry.
+///
+/// A depth limit of 20 prevents infinite loops from circular inheritance.
+pub(crate) fn resolve_class_with_inheritance(
+    class: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> ClassInfo {
+    let mut merged = class.clone();
 
-        // 1. Merge traits used by this class.
-        //    PHP precedence: class methods > trait methods > inherited methods.
-        //    Since `merged` already contains the class's own members, we only
-        //    add trait members that don't collide with existing ones.
-        Self::merge_traits_into(
+    // 1. Merge traits used by this class.
+    //    PHP precedence: class methods > trait methods > inherited methods.
+    //    Since `merged` already contains the class's own members, we only
+    //    add trait members that don't collide with existing ones.
+    merge_traits_into(
+        &mut merged,
+        &class.used_traits,
+        &class.use_generics,
+        &class.trait_precedences,
+        &class.trait_aliases,
+        class_loader,
+        0,
+    );
+
+    // 2. Walk up the `extends` chain and merge parent members.
+    let mut current = class.clone();
+    let mut depth = 0;
+
+    // The substitution map accumulates as we walk the chain.
+    // It maps template parameter names → concrete types, and is
+    // re-computed at each level based on the `@extends` generics
+    // of the current class and the `@template` params of the parent.
+    let mut active_subs: HashMap<String, String> = HashMap::new();
+
+    // Seed the initial substitution map from the root class's
+    // `@extends` generics.  If the root class has
+    // `@extends Collection<int, Language>`, this will be applied
+    // when we load `Collection` as the first parent.
+    //
+    // We don't apply it yet — it's matched against the parent's
+    // template_params in the loop below.
+
+    while let Some(ref parent_name) = current.parent_class {
+        depth += 1;
+        if depth > MAX_INHERITANCE_DEPTH {
+            break;
+        }
+
+        let parent = if let Some(p) = class_loader(parent_name) {
+            p
+        } else {
+            break;
+        };
+
+        // Build the substitution map for this parent level.
+        //
+        // Look through current's `extends_generics` for an entry
+        // whose class name matches this parent, and zip its type
+        // arguments with the parent's `template_params`.
+        let mut level_subs = build_substitution_map(&current, &parent, &active_subs);
+
+        // ── Convention-based Factory fallback ────────────────────
+        // When a factory class extends `Factory` without
+        // `@extends Factory<Model>`, derive the model class from
+        // the naming convention (e.g. `Database\Factories\UserFactory`
+        // → `App\Models\User`) and substitute `TModel` automatically.
+        if level_subs.is_empty()
+            && !parent.template_params.is_empty()
+            && is_factory_class(parent_name)
+        {
+            let factory_fqn = match &current.file_namespace {
+                Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, current.name),
+                _ => current.name.clone(),
+            };
+            if let Some(model_fqn) = factory_to_model_fqn(&factory_fqn)
+                && class_loader(&model_fqn).is_some()
+            {
+                for param in &parent.template_params {
+                    level_subs.insert(param.clone(), model_fqn.clone());
+                }
+            }
+        }
+
+        // Merge traits used by the parent class as well, so that
+        // grandparent-level trait members are visible.
+        merge_traits_into(
             &mut merged,
-            &class.used_traits,
-            &class.use_generics,
-            &class.trait_precedences,
-            &class.trait_aliases,
+            &parent.used_traits,
+            &parent.use_generics,
+            &parent.trait_precedences,
+            &parent.trait_aliases,
             class_loader,
             0,
         );
 
-        // 2. Walk up the `extends` chain and merge parent members.
-        let mut current = class.clone();
-        let mut depth = 0;
+        // Merge parent methods — skip private, skip if child already has one with same name
+        for method in &parent.methods {
+            if method.visibility == Visibility::Private {
+                continue;
+            }
+            if merged.methods.iter().any(|m| m.name == method.name) {
+                continue;
+            }
+            let mut method = method.clone();
+            if !level_subs.is_empty() {
+                apply_substitution_to_method(&mut method, &level_subs);
+            }
+            merged.methods.push(method);
+        }
 
-        // The substitution map accumulates as we walk the chain.
-        // It maps template parameter names → concrete types, and is
-        // re-computed at each level based on the `@extends` generics
-        // of the current class and the `@template` params of the parent.
-        let mut active_subs: HashMap<String, String> = HashMap::new();
+        // Merge parent properties
+        for property in &parent.properties {
+            if property.visibility == Visibility::Private {
+                continue;
+            }
+            if merged.properties.iter().any(|p| p.name == property.name) {
+                continue;
+            }
+            let mut property = property.clone();
+            if !level_subs.is_empty() {
+                apply_substitution_to_property(&mut property, &level_subs);
+            }
+            merged.properties.push(property);
+        }
 
-        // Seed the initial substitution map from the root class's
-        // `@extends` generics.  If the root class has
-        // `@extends Collection<int, Language>`, this will be applied
-        // when we load `Collection` as the first parent.
-        //
-        // We don't apply it yet — it's matched against the parent's
-        // template_params in the loop below.
+        // Merge parent constants
+        for constant in &parent.constants {
+            if constant.visibility == Visibility::Private {
+                continue;
+            }
+            if merged.constants.iter().any(|c| c.name == constant.name) {
+                continue;
+            }
+            merged.constants.push(constant.clone());
+        }
 
+        // Carry the substitution map forward for the next level.
+        // If `Collection` extends `AbstractCollection<TKey, TValue>`,
+        // we need to apply the current substitutions to those type
+        // arguments so that `TKey` → `int` flows through.
+        active_subs = level_subs;
+        current = parent;
+    }
+
+    merged
+}
+
+/// Look up a method's return type through the inheritance chain.
+///
+/// Resolves inheritance for `class`, finds the method named
+/// `method_name`, and returns its `return_type`.  This is a
+/// convenience wrapper around [`resolve_class_fully`](crate::virtual_members::resolve_class_fully)
+/// that eliminates the repeated merge → find → extract pattern
+/// used across many modules.
+///
+/// Uses full resolution (base inheritance + virtual member providers)
+/// so that virtual methods from `@method` tags, `@mixin` classes,
+/// and framework providers are included.
+pub(crate) fn resolve_method_return_type(
+    class: &ClassInfo,
+    method_name: &str,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
+    let merged = crate::virtual_members::resolve_class_fully(class, class_loader);
+    merged
+        .methods
+        .iter()
+        .find(|m| m.name == method_name)
+        .and_then(|m| m.return_type.clone())
+}
+
+/// Look up a property's type hint through the inheritance chain.
+///
+/// Resolves inheritance for `class`, finds the property named
+/// `prop_name`, and returns its `type_hint`.  This is a
+/// convenience wrapper around [`resolve_class_fully`](crate::virtual_members::resolve_class_fully)
+/// that eliminates the repeated merge → find → extract pattern
+/// used across many modules.
+///
+/// Uses full resolution (base inheritance + virtual member providers)
+/// so that virtual properties from `@property` tags, `@mixin` classes,
+/// and framework providers are included.
+pub(crate) fn resolve_property_type_hint(
+    class: &ClassInfo,
+    prop_name: &str,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> Option<String> {
+    let merged = crate::virtual_members::resolve_class_fully(class, class_loader);
+    merged
+        .properties
+        .iter()
+        .find(|p| p.name == prop_name)
+        .and_then(|p| p.type_hint.clone())
+}
+
+/// Recursively merge members from the given traits into `merged`.
+///
+/// Traits can themselves `use` other traits (composition), so this
+/// function recurses up to `MAX_TRAIT_DEPTH` levels.  Members that
+/// already exist in `merged` (by name) are skipped — this naturally
+/// implements the PHP precedence rule where the current class's own
+/// members win over trait members, and earlier-listed traits win
+/// over later ones.
+///
+/// Private trait members *are* merged (unlike parent class private
+/// members), because PHP copies trait members into the using class
+/// regardless of visibility.
+///
+/// When `use_generics` contains an entry for a trait (e.g.
+/// `@use SomeTrait<ConcreteType>`) and the trait declares
+/// `@template T`, the inherited methods and properties have their
+/// template parameter types replaced with the concrete types.
+fn merge_traits_into(
+    merged: &mut ClassInfo,
+    trait_names: &[String],
+    use_generics: &[(String, Vec<String>)],
+    trait_precedences: &[TraitPrecedence],
+    trait_aliases: &[TraitAlias],
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+    depth: u32,
+) {
+    if depth > MAX_TRAIT_DEPTH {
+        return;
+    }
+
+    for trait_name in trait_names {
+        let trait_info = if let Some(t) = class_loader(trait_name) {
+            t
+        } else {
+            continue;
+        };
+
+        // Build a substitution map for this trait if the using class
+        // declared `@use TraitName<Type1, Type2>` and the trait has
+        // `@template` parameters.
+        let mut trait_subs = build_trait_substitution_map(trait_name, &trait_info, use_generics);
+
+        // ── Convention-based HasFactory fallback ─────────────────
+        // When a model uses `HasFactory` without `@use HasFactory<X>`,
+        // derive the factory class from the naming convention
+        // (e.g. `App\Models\User` → `Database\Factories\UserFactory`)
+        // and substitute `TFactory` automatically.
+        if trait_subs.is_empty()
+            && !trait_info.template_params.is_empty()
+            && is_has_factory_trait(trait_name)
+            && extends_eloquent_model(merged, class_loader)
+        {
+            let model_fqn = match &merged.file_namespace {
+                Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, merged.name),
+                _ => merged.name.clone(),
+            };
+            let factory_fqn = model_to_factory_fqn(&model_fqn);
+            if class_loader(&factory_fqn).is_some() {
+                for param in &trait_info.template_params {
+                    trait_subs.insert(param.clone(), factory_fqn.clone());
+                }
+            }
+        }
+
+        // Recursively merge traits used by this trait (trait composition).
+        // The sub-trait's own `@use` generics (from the trait's docblock)
+        // apply, not the outer class's.
+        if !trait_info.used_traits.is_empty() {
+            merge_traits_into(
+                merged,
+                &trait_info.used_traits,
+                &trait_info.use_generics,
+                &trait_info.trait_precedences,
+                &trait_info.trait_aliases,
+                class_loader,
+                depth + 1,
+            );
+        }
+
+        // Walk the `parent_class` (extends) chain so that interface
+        // inheritance is resolved.  For example, `BackedEnum extends
+        // UnitEnum` — loading `BackedEnum` alone would miss `UnitEnum`'s
+        // members (`cases()`, `$name`) unless we follow the chain here.
+        // The same depth counter is shared to prevent infinite loops.
+        let mut current = trait_info.clone();
+        let mut parent_depth = depth;
         while let Some(ref parent_name) = current.parent_class {
-            depth += 1;
-            if depth > MAX_INHERITANCE_DEPTH {
+            parent_depth += 1;
+            if parent_depth > MAX_TRAIT_DEPTH {
                 break;
             }
-
             let parent = if let Some(p) = class_loader(parent_name) {
                 p
             } else {
                 break;
             };
 
-            // Build the substitution map for this parent level.
-            //
-            // Look through current's `extends_generics` for an entry
-            // whose class name matches this parent, and zip its type
-            // arguments with the parent's `template_params`.
-            let mut level_subs = build_substitution_map(&current, &parent, &active_subs);
-
-            // ── Convention-based Factory fallback ────────────────────
-            // When a factory class extends `Factory` without
-            // `@extends Factory<Model>`, derive the model class from
-            // the naming convention (e.g. `Database\Factories\UserFactory`
-            // → `App\Models\User`) and substitute `TModel` automatically.
-            if level_subs.is_empty()
-                && !parent.template_params.is_empty()
-                && is_factory_class(parent_name)
-            {
-                let factory_fqn = match &current.file_namespace {
-                    Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, current.name),
-                    _ => current.name.clone(),
-                };
-                if let Some(model_fqn) = factory_to_model_fqn(&factory_fqn)
-                    && class_loader(&model_fqn).is_some()
-                {
-                    for param in &parent.template_params {
-                        level_subs.insert(param.clone(), model_fqn.clone());
-                    }
-                }
+            // Also follow the parent's own used_traits.
+            if !parent.used_traits.is_empty() {
+                merge_traits_into(
+                    merged,
+                    &parent.used_traits,
+                    &parent.use_generics,
+                    &parent.trait_precedences,
+                    &parent.trait_aliases,
+                    class_loader,
+                    parent_depth + 1,
+                );
             }
 
-            // Merge traits used by the parent class as well, so that
-            // grandparent-level trait members are visible.
-            Self::merge_traits_into(
-                &mut merged,
-                &parent.used_traits,
-                &parent.use_generics,
-                &parent.trait_precedences,
-                &parent.trait_aliases,
-                class_loader,
-                0,
-            );
-
-            // Merge parent methods — skip private, skip if child already has one with same name
+            // Merge parent methods (skip private, skip duplicates)
             for method in &parent.methods {
                 if method.visibility == Visibility::Private {
                     continue;
@@ -145,11 +353,7 @@ impl Backend {
                 if merged.methods.iter().any(|m| m.name == method.name) {
                     continue;
                 }
-                let mut method = method.clone();
-                if !level_subs.is_empty() {
-                    apply_substitution_to_method(&mut method, &level_subs);
-                }
-                merged.methods.push(method);
+                merged.methods.push(method.clone());
             }
 
             // Merge parent properties
@@ -160,11 +364,7 @@ impl Backend {
                 if merged.properties.iter().any(|p| p.name == property.name) {
                     continue;
                 }
-                let mut property = property.clone();
-                if !level_subs.is_empty() {
-                    apply_substitution_to_property(&mut property, &level_subs);
-                }
-                merged.properties.push(property);
+                merged.properties.push(property.clone());
             }
 
             // Merge parent constants
@@ -178,324 +378,121 @@ impl Backend {
                 merged.constants.push(constant.clone());
             }
 
-            // Carry the substitution map forward for the next level.
-            // If `Collection` extends `AbstractCollection<TKey, TValue>`,
-            // we need to apply the current substitutions to those type
-            // arguments so that `TKey` → `int` flows through.
-            active_subs = level_subs;
             current = parent;
         }
 
-        merged
-    }
+        // Merge trait methods — skip if already present.
+        // Apply generic substitution if a `@use` mapping exists.
+        // Also skip methods excluded by `insteadof` declarations.
+        for method in &trait_info.methods {
+            // Check if this method from this trait is excluded by an
+            // `insteadof` declaration.  For example, if the class has
+            // `TraitA::method insteadof TraitB`, then when merging
+            // TraitB's methods, `method` should be skipped.
+            let excluded = trait_precedences.iter().any(|p| {
+                p.method_name == method.name
+                    && p.insteadof.iter().any(|excluded_trait| {
+                        excluded_trait == trait_name
+                            || short_name(excluded_trait) == short_name(trait_name)
+                    })
+            });
+            if excluded {
+                continue;
+            }
 
-    /// Look up a method's return type through the inheritance chain.
-    ///
-    /// Resolves inheritance for `class`, finds the method named
-    /// `method_name`, and returns its `return_type`.  This is a
-    /// convenience wrapper around [`resolve_class_fully`](Self::resolve_class_fully)
-    /// that eliminates the repeated merge → find → extract pattern
-    /// used across many modules.
-    ///
-    /// Uses full resolution (base inheritance + virtual member providers)
-    /// so that virtual methods from `@method` tags, `@mixin` classes,
-    /// and framework providers are included.
-    pub(crate) fn resolve_method_return_type(
-        class: &ClassInfo,
-        method_name: &str,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-    ) -> Option<String> {
-        let merged = Self::resolve_class_fully(class, class_loader);
-        merged
-            .methods
-            .iter()
-            .find(|m| m.name == method_name)
-            .and_then(|m| m.return_type.clone())
-    }
+            if merged.methods.iter().any(|m| m.name == method.name) {
+                continue;
+            }
+            let mut method = method.clone();
 
-    /// Look up a property's type hint through the inheritance chain.
-    ///
-    /// Resolves inheritance for `class`, finds the property named
-    /// `prop_name`, and returns its `type_hint`.  This is a
-    /// convenience wrapper around [`resolve_class_fully`](Self::resolve_class_fully)
-    /// that eliminates the repeated merge → find → extract pattern
-    /// used across many modules.
-    ///
-    /// Uses full resolution (base inheritance + virtual member providers)
-    /// so that virtual properties from `@property` tags, `@mixin` classes,
-    /// and framework providers are included.
-    pub(crate) fn resolve_property_type_hint(
-        class: &ClassInfo,
-        prop_name: &str,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-    ) -> Option<String> {
-        let merged = Self::resolve_class_fully(class, class_loader);
-        merged
-            .properties
-            .iter()
-            .find(|p| p.name == prop_name)
-            .and_then(|p| p.type_hint.clone())
-    }
+            // Apply visibility-only `as` changes (no alias name).
+            // For example, `TraitA::method as protected` changes the
+            // visibility of `method` without creating an alias.
+            for alias in trait_aliases {
+                if alias.method_name == method.name
+                    && alias.alias.is_none()
+                    && let Some(vis) = alias.visibility
+                {
+                    // Check trait name matches (if specified)
+                    let name_matches = alias
+                        .trait_name
+                        .as_ref()
+                        .is_none_or(|t| t == trait_name || short_name(t) == short_name(trait_name));
+                    if name_matches {
+                        method.visibility = vis;
+                    }
+                }
+            }
 
-    /// Recursively merge members from the given traits into `merged`.
-    ///
-    /// Traits can themselves `use` other traits (composition), so this
-    /// method recurses up to `MAX_TRAIT_DEPTH` levels.  Members that
-    /// already exist in `merged` (by name) are skipped — this naturally
-    /// implements the PHP precedence rule where the current class's own
-    /// members win over trait members, and earlier-listed traits win
-    /// over later ones.
-    ///
-    /// Private trait members *are* merged (unlike parent class private
-    /// members), because PHP copies trait members into the using class
-    /// regardless of visibility.
-    ///
-    /// When `use_generics` contains an entry for a trait (e.g.
-    /// `@use SomeTrait<ConcreteType>`) and the trait declares
-    /// `@template T`, the inherited methods and properties have their
-    /// template parameter types replaced with the concrete types.
-    fn merge_traits_into(
-        merged: &mut ClassInfo,
-        trait_names: &[String],
-        use_generics: &[(String, Vec<String>)],
-        trait_precedences: &[TraitPrecedence],
-        trait_aliases: &[TraitAlias],
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-        depth: u32,
-    ) {
-        if depth > MAX_TRAIT_DEPTH {
-            return;
+            if !trait_subs.is_empty() {
+                apply_substitution_to_method(&mut method, &trait_subs);
+            }
+            merged.methods.push(method);
         }
 
-        for trait_name in trait_names {
-            let trait_info = if let Some(t) = class_loader(trait_name) {
-                t
-            } else {
+        // Merge trait properties — apply substitution.
+        for property in &trait_info.properties {
+            if merged.properties.iter().any(|p| p.name == property.name) {
                 continue;
+            }
+            let mut property = property.clone();
+            if !trait_subs.is_empty() {
+                apply_substitution_to_property(&mut property, &trait_subs);
+            }
+            merged.properties.push(property);
+        }
+
+        // Merge trait constants
+        for constant in &trait_info.constants {
+            if merged.constants.iter().any(|c| c.name == constant.name) {
+                continue;
+            }
+            merged.constants.push(constant.clone());
+        }
+
+        // Apply `as` alias declarations that create new method names.
+        // For example, `TraitB::method as traitBMethod` creates a copy
+        // of `method` accessible as `traitBMethod`.
+        for alias in trait_aliases {
+            // Only process aliases that have a new name.
+            let alias_name = match &alias.alias {
+                Some(name) => name,
+                None => continue,
             };
 
-            // Build a substitution map for this trait if the using class
-            // declared `@use TraitName<Type1, Type2>` and the trait has
-            // `@template` parameters.
-            let mut trait_subs =
-                build_trait_substitution_map(trait_name, &trait_info, use_generics);
-
-            // ── Convention-based HasFactory fallback ─────────────────
-            // When a model uses `HasFactory` without `@use HasFactory<X>`,
-            // derive the factory class from the naming convention
-            // (e.g. `App\Models\User` → `Database\Factories\UserFactory`)
-            // and substitute `TFactory` automatically.
-            if trait_subs.is_empty()
-                && !trait_info.template_params.is_empty()
-                && is_has_factory_trait(trait_name)
-                && extends_eloquent_model(merged, class_loader)
-            {
-                let model_fqn = match &merged.file_namespace {
-                    Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, merged.name),
-                    _ => merged.name.clone(),
-                };
-                let factory_fqn = model_to_factory_fqn(&model_fqn);
-                if class_loader(&factory_fqn).is_some() {
-                    for param in &trait_info.template_params {
-                        trait_subs.insert(param.clone(), factory_fqn.clone());
-                    }
-                }
+            // Check trait name matches (if specified).
+            let name_matches = alias
+                .trait_name
+                .as_ref()
+                .is_none_or(|t| t == trait_name || short_name(t) == short_name(trait_name));
+            if !name_matches {
+                continue;
             }
 
-            // Recursively merge traits used by this trait (trait composition).
-            // The sub-trait's own `@use` generics (from the trait's docblock)
-            // apply, not the outer class's.
-            if !trait_info.used_traits.is_empty() {
-                Self::merge_traits_into(
-                    merged,
-                    &trait_info.used_traits,
-                    &trait_info.use_generics,
-                    &trait_info.trait_precedences,
-                    &trait_info.trait_aliases,
-                    class_loader,
-                    depth + 1,
-                );
+            // Find the source method in this trait.
+            let source_method = trait_info
+                .methods
+                .iter()
+                .find(|m| m.name == alias.method_name);
+            let source_method = match source_method {
+                Some(m) => m,
+                None => continue,
+            };
+
+            // Skip if an alias with this name already exists.
+            if merged.methods.iter().any(|m| m.name == *alias_name) {
+                continue;
             }
 
-            // Walk the `parent_class` (extends) chain so that interface
-            // inheritance is resolved.  For example, `BackedEnum extends
-            // UnitEnum` — loading `BackedEnum` alone would miss `UnitEnum`'s
-            // members (`cases()`, `$name`) unless we follow the chain here.
-            // The same depth counter is shared to prevent infinite loops.
-            let mut current = trait_info.clone();
-            let mut parent_depth = depth;
-            while let Some(ref parent_name) = current.parent_class {
-                parent_depth += 1;
-                if parent_depth > MAX_TRAIT_DEPTH {
-                    break;
-                }
-                let parent = if let Some(p) = class_loader(parent_name) {
-                    p
-                } else {
-                    break;
-                };
-
-                // Also follow the parent's own used_traits.
-                if !parent.used_traits.is_empty() {
-                    Self::merge_traits_into(
-                        merged,
-                        &parent.used_traits,
-                        &parent.use_generics,
-                        &parent.trait_precedences,
-                        &parent.trait_aliases,
-                        class_loader,
-                        parent_depth + 1,
-                    );
-                }
-
-                // Merge parent methods (skip private, skip duplicates)
-                for method in &parent.methods {
-                    if method.visibility == Visibility::Private {
-                        continue;
-                    }
-                    if merged.methods.iter().any(|m| m.name == method.name) {
-                        continue;
-                    }
-                    merged.methods.push(method.clone());
-                }
-
-                // Merge parent properties
-                for property in &parent.properties {
-                    if property.visibility == Visibility::Private {
-                        continue;
-                    }
-                    if merged.properties.iter().any(|p| p.name == property.name) {
-                        continue;
-                    }
-                    merged.properties.push(property.clone());
-                }
-
-                // Merge parent constants
-                for constant in &parent.constants {
-                    if constant.visibility == Visibility::Private {
-                        continue;
-                    }
-                    if merged.constants.iter().any(|c| c.name == constant.name) {
-                        continue;
-                    }
-                    merged.constants.push(constant.clone());
-                }
-
-                current = parent;
+            let mut aliased = source_method.clone();
+            aliased.name = alias_name.clone();
+            if let Some(vis) = alias.visibility {
+                aliased.visibility = vis;
             }
-
-            // Merge trait methods — skip if already present.
-            // Apply generic substitution if a `@use` mapping exists.
-            // Also skip methods excluded by `insteadof` declarations.
-            for method in &trait_info.methods {
-                // Check if this method from this trait is excluded by an
-                // `insteadof` declaration.  For example, if the class has
-                // `TraitA::method insteadof TraitB`, then when merging
-                // TraitB's methods, `method` should be skipped.
-                let excluded = trait_precedences.iter().any(|p| {
-                    p.method_name == method.name
-                        && p.insteadof.iter().any(|excluded_trait| {
-                            excluded_trait == trait_name
-                                || short_name(excluded_trait) == short_name(trait_name)
-                        })
-                });
-                if excluded {
-                    continue;
-                }
-
-                if merged.methods.iter().any(|m| m.name == method.name) {
-                    continue;
-                }
-                let mut method = method.clone();
-
-                // Apply visibility-only `as` changes (no alias name).
-                // For example, `TraitA::method as protected` changes the
-                // visibility of `method` without creating an alias.
-                for alias in trait_aliases {
-                    if alias.method_name == method.name
-                        && alias.alias.is_none()
-                        && let Some(vis) = alias.visibility
-                    {
-                        // Check trait name matches (if specified)
-                        let name_matches = alias.trait_name.as_ref().is_none_or(|t| {
-                            t == trait_name || short_name(t) == short_name(trait_name)
-                        });
-                        if name_matches {
-                            method.visibility = vis;
-                        }
-                    }
-                }
-
-                if !trait_subs.is_empty() {
-                    apply_substitution_to_method(&mut method, &trait_subs);
-                }
-                merged.methods.push(method);
+            if !trait_subs.is_empty() {
+                apply_substitution_to_method(&mut aliased, &trait_subs);
             }
-
-            // Merge trait properties — apply substitution.
-            for property in &trait_info.properties {
-                if merged.properties.iter().any(|p| p.name == property.name) {
-                    continue;
-                }
-                let mut property = property.clone();
-                if !trait_subs.is_empty() {
-                    apply_substitution_to_property(&mut property, &trait_subs);
-                }
-                merged.properties.push(property);
-            }
-
-            // Merge trait constants
-            for constant in &trait_info.constants {
-                if merged.constants.iter().any(|c| c.name == constant.name) {
-                    continue;
-                }
-                merged.constants.push(constant.clone());
-            }
-
-            // Apply `as` alias declarations that create new method names.
-            // For example, `TraitB::method as traitBMethod` creates a copy
-            // of `method` accessible as `traitBMethod`.
-            for alias in trait_aliases {
-                // Only process aliases that have a new name.
-                let alias_name = match &alias.alias {
-                    Some(name) => name,
-                    None => continue,
-                };
-
-                // Check trait name matches (if specified).
-                let name_matches = alias
-                    .trait_name
-                    .as_ref()
-                    .is_none_or(|t| t == trait_name || short_name(t) == short_name(trait_name));
-                if !name_matches {
-                    continue;
-                }
-
-                // Find the source method in this trait.
-                let source_method = trait_info
-                    .methods
-                    .iter()
-                    .find(|m| m.name == alias.method_name);
-                let source_method = match source_method {
-                    Some(m) => m,
-                    None => continue,
-                };
-
-                // Skip if an alias with this name already exists.
-                if merged.methods.iter().any(|m| m.name == *alias_name) {
-                    continue;
-                }
-
-                let mut aliased = source_method.clone();
-                aliased.name = alias_name.clone();
-                if let Some(vis) = alias.visibility {
-                    aliased.visibility = vis;
-                }
-                if !trait_subs.is_empty() {
-                    apply_substitution_to_method(&mut aliased, &trait_subs);
-                }
-                merged.methods.push(aliased);
-            }
+            merged.methods.push(aliased);
         }
     }
 }

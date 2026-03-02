@@ -41,7 +41,7 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::composer;
 use crate::parser::with_parsed_program;
-use crate::util::offset_to_position;
+use crate::util::{offset_to_position, position_to_offset};
 
 mod type_hint;
 mod var_definition;
@@ -147,7 +147,7 @@ impl Backend {
         position: Position,
         var_name: &str,
     ) -> Option<Option<Location>> {
-        let cursor_offset = Self::position_to_offset(content, position);
+        let cursor_offset = position_to_offset(content, position);
 
         let result = with_parsed_program(
             content,
@@ -236,7 +236,7 @@ impl Backend {
         position: Position,
         var_name: &str,
     ) -> Option<Location> {
-        let cursor_offset = Self::position_to_offset(content, position);
+        let cursor_offset = position_to_offset(content, position);
 
         let type_hint_str: Option<String> = with_parsed_program(
             content,

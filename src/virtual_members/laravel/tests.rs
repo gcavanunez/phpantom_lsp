@@ -1087,7 +1087,7 @@ fn synthesizes_cast_properties() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = vec![
+    user.laravel_mut().casts_definitions = vec![
         ("is_admin".to_string(), "boolean".to_string()),
         ("created_at".to_string(), "datetime".to_string()),
         ("options".to_string(), "array".to_string()),
@@ -1117,7 +1117,7 @@ fn cast_properties_are_public_and_not_static() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
+    user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
 
     let result = provider.provide(&user, &no_loader);
     let prop = result
@@ -1136,7 +1136,7 @@ fn cast_properties_coexist_with_relationships_and_scopes() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
+    user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
     user.methods
         .push(make_method("posts", Some("HasMany<Post, $this>")));
     user.methods.push(make_method_with_params(
@@ -1172,7 +1172,7 @@ fn cast_properties_coexist_with_accessors() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
+    user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
     user.methods
         .push(make_method("getFullNameAttribute", Some("string")));
     user.methods.push(make_method(
@@ -1196,7 +1196,7 @@ fn empty_casts_produces_no_properties() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = Vec::new();
+    user.laravel_mut().casts_definitions = Vec::new();
 
     let result = provider.provide(&user, &no_loader);
     assert!(result.properties.is_empty());
@@ -1208,7 +1208,7 @@ fn cast_decimal_with_precision_synthesizes_float() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = vec![("price".to_string(), "decimal:2".to_string())];
+    user.laravel_mut().casts_definitions = vec![("price".to_string(), "decimal:2".to_string())];
 
     let result = provider.provide(&user, &no_loader);
     let prop = result
@@ -1227,7 +1227,7 @@ fn synthesizes_attribute_default_properties() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.attributes_definitions = vec![
+    user.laravel_mut().attributes_definitions = vec![
         ("role".to_string(), "string".to_string()),
         ("is_active".to_string(), "bool".to_string()),
         ("login_count".to_string(), "int".to_string()),
@@ -1254,7 +1254,7 @@ fn attribute_defaults_are_public_and_not_static() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.attributes_definitions = vec![("role".to_string(), "string".to_string())];
+    user.laravel_mut().attributes_definitions = vec![("role".to_string(), "string".to_string())];
 
     let result = provider.provide(&user, &no_loader);
     let prop = result.properties.iter().find(|p| p.name == "role").unwrap();
@@ -1270,8 +1270,8 @@ fn casts_take_priority_over_attribute_defaults() {
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     // Both $casts and $attributes define is_active
-    user.laravel.casts_definitions = vec![("is_active".to_string(), "boolean".to_string())];
-    user.laravel.attributes_definitions = vec![("is_active".to_string(), "int".to_string())];
+    user.laravel_mut().casts_definitions = vec![("is_active".to_string(), "boolean".to_string())];
+    user.laravel_mut().attributes_definitions = vec![("is_active".to_string(), "int".to_string())];
 
     let result = provider.provide(&user, &no_loader);
 
@@ -1299,8 +1299,8 @@ fn attribute_defaults_coexist_with_casts_for_different_columns() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
-    user.laravel.attributes_definitions = vec![("role".to_string(), "string".to_string())];
+    user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
+    user.laravel_mut().attributes_definitions = vec![("role".to_string(), "string".to_string())];
 
     let result = provider.provide(&user, &no_loader);
 
@@ -1320,7 +1320,7 @@ fn attribute_defaults_coexist_with_relationships_and_scopes() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.attributes_definitions = vec![("role".to_string(), "string".to_string())];
+    user.laravel_mut().attributes_definitions = vec![("role".to_string(), "string".to_string())];
     user.methods
         .push(make_method("posts", Some("HasMany<Post, $this>")));
     user.methods.push(make_method_with_params(
@@ -1354,7 +1354,7 @@ fn empty_attributes_produces_no_properties() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.attributes_definitions = Vec::new();
+    user.laravel_mut().attributes_definitions = Vec::new();
 
     let result = provider.provide(&user, &no_loader);
     assert!(result.properties.is_empty());
@@ -1366,7 +1366,7 @@ fn attribute_default_float_type() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.attributes_definitions = vec![("rating".to_string(), "float".to_string())];
+    user.laravel_mut().attributes_definitions = vec![("rating".to_string(), "float".to_string())];
 
     let result = provider.provide(&user, &no_loader);
     let prop = result
@@ -1383,7 +1383,7 @@ fn attribute_default_null_type() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.attributes_definitions = vec![("bio".to_string(), "null".to_string())];
+    user.laravel_mut().attributes_definitions = vec![("bio".to_string(), "null".to_string())];
 
     let result = provider.provide(&user, &no_loader);
     let prop = result.properties.iter().find(|p| p.name == "bio").unwrap();
@@ -1396,7 +1396,7 @@ fn attribute_default_array_type() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.attributes_definitions = vec![("settings".to_string(), "array".to_string())];
+    user.laravel_mut().attributes_definitions = vec![("settings".to_string(), "array".to_string())];
 
     let result = provider.provide(&user, &no_loader);
     let prop = result
@@ -1415,7 +1415,7 @@ fn synthesizes_column_name_properties_as_mixed() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.column_names = vec![
+    user.laravel_mut().column_names = vec![
         "name".to_string(),
         "email".to_string(),
         "password".to_string(),
@@ -1442,7 +1442,7 @@ fn column_name_properties_are_public_and_not_static() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.column_names = vec!["name".to_string()];
+    user.laravel_mut().column_names = vec!["name".to_string()];
 
     let result = provider.provide(&user, &no_loader);
     let prop = result.properties.iter().find(|p| p.name == "name").unwrap();
@@ -1457,8 +1457,8 @@ fn casts_take_priority_over_column_names() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
-    user.laravel.column_names = vec!["is_admin".to_string(), "name".to_string()];
+    user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
+    user.laravel_mut().column_names = vec!["is_admin".to_string(), "name".to_string()];
 
     let result = provider.provide(&user, &no_loader);
 
@@ -1485,8 +1485,8 @@ fn attributes_take_priority_over_column_names() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.attributes_definitions = vec![("role".to_string(), "string".to_string())];
-    user.laravel.column_names = vec!["role".to_string(), "email".to_string()];
+    user.laravel_mut().attributes_definitions = vec![("role".to_string(), "string".to_string())];
+    user.laravel_mut().column_names = vec!["role".to_string(), "email".to_string()];
 
     let result = provider.provide(&user, &no_loader);
 
@@ -1513,9 +1513,9 @@ fn all_three_sources_coexist() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
-    user.laravel.attributes_definitions = vec![("role".to_string(), "string".to_string())];
-    user.laravel.column_names = vec![
+    user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
+    user.laravel_mut().attributes_definitions = vec![("role".to_string(), "string".to_string())];
+    user.laravel_mut().column_names = vec![
         "is_admin".to_string(),
         "role".to_string(),
         "email".to_string(),
@@ -1551,7 +1551,7 @@ fn column_names_coexist_with_relationships_and_scopes() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.column_names = vec!["email".to_string()];
+    user.laravel_mut().column_names = vec!["email".to_string()];
     user.methods
         .push(make_method("posts", Some("HasMany<Post, $this>")));
     user.methods.push(make_method_with_params(
@@ -1585,7 +1585,7 @@ fn empty_column_names_produces_no_extra_properties() {
     let mut user = make_class(ELOQUENT_MODEL_FQN);
     user.name = "User".to_string();
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
-    user.laravel.column_names = Vec::new();
+    user.laravel_mut().column_names = Vec::new();
 
     let result = provider.provide(&user, &no_loader);
     assert!(result.properties.is_empty());

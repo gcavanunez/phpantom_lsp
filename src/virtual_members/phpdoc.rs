@@ -16,7 +16,6 @@
 //! are driven by PHPDoc tags, they are now unified into a single provider
 //! with internal precedence rules.
 
-use crate::Backend;
 use crate::docblock;
 use crate::types::{
     ClassInfo, ConstantInfo, MAX_INHERITANCE_DEPTH, MAX_MIXIN_DEPTH, MethodInfo, PropertyInfo,
@@ -179,7 +178,7 @@ impl VirtualMemberProvider for PHPDocProvider {
 /// Recursively collect public members from mixin classes.
 ///
 /// For each mixin name, loads the class via `class_loader`, resolves its
-/// full inheritance chain (via [`Backend::resolve_class_with_inheritance`]),
+/// full inheritance chain (via [`crate::inheritance::resolve_class_with_inheritance`]),
 /// and adds its public members to the output vectors.  Only members whose
 /// names are not already present in `class` (the target class with base
 /// resolution already applied) or in the output vectors are added.
@@ -211,7 +210,8 @@ fn collect_mixin_members(
         // Resolve the mixin class with its own inheritance so we see
         // all of its inherited/trait members too.  Use base resolution
         // (not resolve_class_fully) to avoid circular provider calls.
-        let resolved_mixin = Backend::resolve_class_with_inheritance(&mixin_class, class_loader);
+        let resolved_mixin =
+            crate::inheritance::resolve_class_with_inheritance(&mixin_class, class_loader);
 
         // Only merge public members — mixins proxy via magic methods
         // which only expose public API.

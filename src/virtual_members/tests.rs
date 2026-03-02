@@ -521,8 +521,8 @@ fn resolve_class_fully_returns_same_as_base_when_no_providers() {
         }
     };
 
-    let base = Backend::resolve_class_with_inheritance(&class, &class_loader);
-    let full = Backend::resolve_class_fully(&class, &class_loader);
+    let base = crate::inheritance::resolve_class_with_inheritance(&class, &class_loader);
+    let full = crate::virtual_members::resolve_class_fully(&class, &class_loader);
 
     assert_eq!(base.methods.len(), full.methods.len());
     assert_eq!(base.properties.len(), full.properties.len());

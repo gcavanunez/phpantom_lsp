@@ -35,10 +35,9 @@ use super::point_location;
 use crate::Backend;
 use crate::completion::resolver::ResolutionCtx;
 use crate::docblock;
-use crate::subject_extraction::{
-    collapse_continuation_lines, extract_arrow_subject, extract_double_colon_subject,
-};
+use crate::subject_extraction::{OperatorScanMode, detect_access_operator};
 use crate::types::*;
+use crate::util::{collapse_continuation_lines, find_class_at_offset, position_to_offset};
 use crate::virtual_members::laravel::{
     ELOQUENT_BUILDER_FQN, accessor_method_candidates, count_property_to_relationship_method,
     extends_eloquent_model, is_accessor_method,
@@ -143,10 +142,10 @@ impl Backend {
         let access_kind = mctx.access_kind;
         let access_hint = mctx.access_hint;
         // 2. Gather context needed for class resolution.
-        let cursor_offset = Self::position_to_offset(content, position);
+        let cursor_offset = position_to_offset(content, position);
         let ctx = self.file_context(uri);
 
-        let current_class = Self::find_class_at_offset(&ctx.classes, cursor_offset).cloned();
+        let current_class = find_class_at_offset(&ctx.classes, cursor_offset).cloned();
 
         let class_loader = self.class_loader(&ctx);
         let function_loader = self.function_loader(&ctx);
@@ -162,7 +161,8 @@ impl Backend {
             class_loader: &class_loader,
             function_loader: Some(&function_loader),
         };
-        let candidates = Self::resolve_target_classes(subject, access_kind, &rctx);
+        let candidates =
+            crate::completion::resolver::resolve_target_classes(subject, access_kind, &rctx);
 
         if candidates.is_empty() {
             return None;
@@ -547,7 +547,7 @@ impl Backend {
         content: &str,
         position: Position,
     ) -> Option<(String, AccessKind)> {
-        let offset = Self::position_to_offset(content, position);
+        let offset = position_to_offset(content, position);
 
         // Try the symbol map first (primary path).
         if let Some(result) = self.member_access_from_symbol_map(uri, offset) {
@@ -624,65 +624,8 @@ impl Backend {
             position.character as usize,
         );
         let chars: Vec<char> = line.chars().collect();
-        let col = col.min(chars.len());
 
-        if chars.is_empty() {
-            return None;
-        }
-
-        // Find the start of the identifier under the cursor.
-        let mut i = col;
-
-        // If the cursor is on or past the end of a word, adjust.
-        if i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-            // on a word char — walk left
-        } else if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
-            i -= 1;
-        } else {
-            return None;
-        }
-
-        // Walk left past identifier characters.
-        while i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
-            i -= 1;
-        }
-
-        let mut operator_end = i;
-
-        // Skip `$` prefix (for `Class::$staticProp`).
-        if operator_end > 0 && chars[operator_end - 1] == '$' {
-            operator_end -= 1;
-        }
-
-        // Detect `::`.
-        if operator_end >= 2 && chars[operator_end - 2] == ':' && chars[operator_end - 1] == ':' {
-            let subject = extract_double_colon_subject(&chars, operator_end - 2);
-            if !subject.is_empty() {
-                return Some((subject, AccessKind::DoubleColon));
-            }
-        }
-
-        // Detect `->`.
-        if operator_end >= 2 && chars[operator_end - 2] == '-' && chars[operator_end - 1] == '>' {
-            let subject = extract_arrow_subject(&chars, operator_end - 2);
-            if !subject.is_empty() {
-                return Some((subject, AccessKind::Arrow));
-            }
-        }
-
-        // Detect `?->` (null-safe operator).
-        if operator_end >= 3
-            && chars[operator_end - 3] == '?'
-            && chars[operator_end - 2] == '-'
-            && chars[operator_end - 1] == '>'
-        {
-            let subject = extract_arrow_subject(&chars, operator_end - 3);
-            if !subject.is_empty() {
-                return Some((subject, AccessKind::Arrow));
-            }
-        }
-
-        None
+        detect_access_operator(&chars, col, OperatorScanMode::OnMember)
     }
 
     // ─── Member Classification ──────────────────────────────────────────────

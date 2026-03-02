@@ -15,7 +15,7 @@
 
 use tower_lsp::lsp_types::Position;
 
-use super::comment_position::{is_inside_docblock, position_to_byte_offset};
+use crate::completion::source::comment_position::{is_inside_docblock, position_to_byte_offset};
 
 // ─── Context Detection ─────────────────────────────────────────────────────
 

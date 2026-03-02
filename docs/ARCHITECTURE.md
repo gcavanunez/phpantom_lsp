@@ -48,33 +48,41 @@ src/
 │   ├── conditional.rs      # PHPStan conditional return type parsing
 │   └── types.rs            # Type cleaning utilities (clean_type, strip_nullable, …)
 ├── completion/
-│   ├── mod.rs              # Submodule declarations
+│   ├── mod.rs              # Submodule declarations + backward-compatible re-exports
 │   ├── handler.rs          # Top-level completion request orchestration
 │   ├── target.rs           # Extract what the user is completing (subject + access kind)
 │   ├── resolver.rs         # Resolve subject → ClassInfo (type resolution engine), shared resolve_callable_target
-│   ├── source_helpers.rs   # Source-text scanning helpers (closure/callable return types, new-expression parsing, array access)
+│   ├── call_resolution.rs  # Call expression and callable target resolution
 │   ├── builder.rs          # Build LSP CompletionItems from resolved ClassInfo
-│   ├── class_completion.rs # Class name completions (class, interface, trait, enum)
-│   ├── constant_completion.rs  # Global constant name completions
-│   ├── function_completion.rs  # Standalone function name completions
-│   ├── namespace_completion.rs # Namespace declaration completions
-│   ├── variable_completion.rs  # Variable name completions and scope collection
-│   ├── variable_resolution.rs  # Variable type resolution via assignment scanning
-│   ├── class_string_resolution.rs  # Class-string variable resolution ($cls = User::class)
-│   ├── raw_type_inference.rs   # Raw type inference for variable assignments (array shapes, array functions, generators)
-│   ├── foreach_resolution.rs   # Foreach value/key and array destructuring type resolution
-│   ├── closure_resolution.rs   # Closure and arrow-function parameter resolution
-│   ├── type_narrowing.rs       # instanceof / assert / custom type guard narrowing
-│   ├── conditional_resolution.rs  # PHPStan conditional return type resolution at call sites
 │   ├── array_shape.rs      # Array shape key completion and raw variable type resolution
 │   ├── named_args.rs       # Named argument completion inside function/method call parens
-│   ├── phpdoc.rs           # PHPDoc tag completion inside /** … */ blocks
-│   ├── phpdoc_context.rs   # PHPDoc context detection and symbol info extraction
-│   ├── comment_position.rs # Comment and docblock position detection
-│   ├── throws_analysis.rs  # Shared throw-statement scanning and @throws tag lookup
-│   ├── catch_completion.rs # Smart exception type completion inside catch() clauses
-│   ├── type_hint_completion.rs # Type completion in parameter lists, return types, properties
-│   └── use_edit.rs         # Use-statement insertion helpers
+│   ├── use_edit.rs         # Use-statement insertion helpers
+│   ├── variable/           # Variable resolution
+│   │   ├── resolution.rs       # Variable type resolution via assignment scanning
+│   │   ├── completion.rs       # Variable name completions and scope collection
+│   │   ├── rhs_resolution.rs   # Right-hand-side expression resolution
+│   │   ├── class_string_resolution.rs  # Class-string variable resolution ($cls = User::class)
+│   │   ├── raw_type_inference.rs   # Raw type inference (array shapes, array functions, generators)
+│   │   ├── foreach_resolution.rs   # Foreach value/key and array destructuring type resolution
+│   │   └── closure_resolution.rs   # Closure and arrow-function parameter resolution
+│   ├── types/              # Type resolution
+│   │   ├── resolution.rs       # Type-hint string → ClassInfo mapping (unions, generics, aliases)
+│   │   ├── narrowing.rs        # instanceof / assert / custom type guard narrowing
+│   │   └── conditional.rs      # PHPStan conditional return type resolution at call sites
+│   ├── context/            # Context-specific completion
+│   │   ├── catch_completion.rs # Smart exception type completion inside catch() clauses
+│   │   ├── class_completion.rs # Class name completions (class, interface, trait, enum)
+│   │   ├── constant_completion.rs  # Global constant name completions
+│   │   ├── function_completion.rs  # Standalone function name completions
+│   │   ├── namespace_completion.rs # Namespace declaration completions
+│   │   └── type_hint_completion.rs # Type completion in parameter lists, return types, properties
+│   ├── phpdoc/             # PHPDoc completion
+│   │   ├── mod.rs              # PHPDoc tag completion inside /** … */ blocks
+│   │   └── context.rs          # PHPDoc context detection and symbol info extraction
+│   └── source/             # Source analysis
+│       ├── comment_position.rs # Comment and docblock position detection
+│       ├── helpers.rs          # Source-text scanning helpers (closure/callable return types, new-expression parsing)
+│       └── throws_analysis.rs  # Shared throw-statement scanning and @throws tag lookup
 ├── signature_help.rs       # Signature help: parameter hints inside function/method call parens
 ├── hover/
 │   └── mod.rs              # Hover handler: symbol-map dispatch, type/signature/docblock formatting

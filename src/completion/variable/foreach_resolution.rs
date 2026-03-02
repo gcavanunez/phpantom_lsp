@@ -19,7 +19,7 @@ use crate::docblock;
 use crate::types::ClassInfo;
 use crate::util::short_name;
 
-use super::resolver::VarResolutionCtx;
+use crate::completion::resolver::VarResolutionCtx;
 
 impl Backend {
     // ─── Foreach Resolution ─────────────────────────────────────────────
@@ -33,7 +33,7 @@ impl Backend {
     /// `@var list<User> $var` or `@param list<User> $var`), this method
     /// extracts the element type and pushes the resolved `ClassInfo` into
     /// `results`.
-    pub(super) fn try_resolve_foreach_value_type<'b>(
+    pub(in crate::completion) fn try_resolve_foreach_value_type<'b>(
         foreach: &'b Foreach<'b>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -90,7 +90,7 @@ impl Backend {
         let iterable_classes = if let Some(ref rt) = raw_type {
             // raw_type is a class name like "PaymentOptionLocaleCollection"
             // (extract_generic_value_type returned None above).
-            Self::type_hint_to_classes(
+            crate::completion::type_resolution::type_hint_to_classes(
                 rt,
                 &ctx.current_class.name,
                 ctx.all_classes,
@@ -103,7 +103,7 @@ impl Backend {
         };
 
         for cls in &iterable_classes {
-            let merged = Self::resolve_class_fully(cls, ctx.class_loader);
+            let merged = crate::virtual_members::resolve_class_fully(cls, ctx.class_loader);
             if let Some(value_type) = Self::extract_iterable_element_type_from_class(&merged) {
                 Self::push_foreach_resolved_types(&value_type, ctx, results, conditional);
                 return;
@@ -124,7 +124,7 @@ impl Backend {
     /// For common scalar key types (`int`, `string`), no `ClassInfo` is
     /// produced — which is correct because scalars have no members to
     /// complete on.
-    pub(super) fn try_resolve_foreach_key_type<'b>(
+    pub(in crate::completion) fn try_resolve_foreach_key_type<'b>(
         foreach: &'b Foreach<'b>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -174,7 +174,7 @@ impl Backend {
         // ── Fallback: resolve the iterated expression to ClassInfo and
         //    extract the key type from its generic annotations ───────────
         let iterable_classes = if let Some(ref rt) = raw_type {
-            Self::type_hint_to_classes(
+            crate::completion::type_resolution::type_hint_to_classes(
                 rt,
                 &ctx.current_class.name,
                 ctx.all_classes,
@@ -185,7 +185,7 @@ impl Backend {
         };
 
         for cls in &iterable_classes {
-            let merged = Self::resolve_class_fully(cls, ctx.class_loader);
+            let merged = crate::virtual_members::resolve_class_fully(cls, ctx.class_loader);
             if let Some(key_type) = Self::extract_iterable_key_type_from_class(&merged) {
                 Self::push_foreach_resolved_types(&key_type, ctx, results, conditional);
                 return;
@@ -203,7 +203,7 @@ impl Backend {
         results: &mut Vec<ClassInfo>,
         conditional: bool,
     ) {
-        let resolved = Self::type_hint_to_classes(
+        let resolved = crate::completion::type_resolution::type_hint_to_classes(
             type_str,
             &ctx.current_class.name,
             ctx.all_classes,
@@ -245,7 +245,7 @@ impl Backend {
             return vec![];
         }
 
-        Self::resolve_target_classes(
+        crate::completion::resolver::resolve_target_classes(
             expr_text,
             crate::types::AccessKind::Arrow,
             &ctx.as_resolution_ctx(),
@@ -354,7 +354,7 @@ impl Backend {
     /// For positional (value-only) elements, the 0-based index is used as
     /// the key.  Falls back to `extract_generic_value_type` for generic
     /// iterable types (`list<User>`, `array<int, User>`, `User[]`).
-    pub(super) fn try_resolve_destructured_type<'b>(
+    pub(in crate::completion) fn try_resolve_destructured_type<'b>(
         assignment: &'b Assignment<'b>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -424,7 +424,7 @@ impl Backend {
                 && let Some(entry_type) =
                     docblock::types::extract_array_shape_value_type(&var_type, key)
             {
-                let resolved = Self::type_hint_to_classes(
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
                     &entry_type,
                     current_class_name,
                     all_classes,
@@ -444,7 +444,7 @@ impl Backend {
             }
 
             if let Some(element_type) = docblock::types::extract_generic_value_type(&var_type) {
-                let resolved = Self::type_hint_to_classes(
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
                     &element_type,
                     current_class_name,
                     all_classes,
@@ -472,7 +472,7 @@ impl Backend {
             if let Some(ref key) = shape_key
                 && let Some(entry_type) = docblock::types::extract_array_shape_value_type(raw, key)
             {
-                let resolved = Self::type_hint_to_classes(
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
                     &entry_type,
                     current_class_name,
                     all_classes,
@@ -493,7 +493,7 @@ impl Backend {
 
             // Fall back to generic element type extraction.
             if let Some(element_type) = docblock::types::extract_generic_value_type(raw) {
-                let resolved = Self::type_hint_to_classes(
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
                     &element_type,
                     current_class_name,
                     all_classes,
@@ -546,7 +546,7 @@ impl Backend {
     ///
     /// Used by both foreach resolution and destructuring resolution, as
     /// well as `resolve_arg_raw_type` in `variable_resolution.rs`.
-    pub(super) fn extract_rhs_iterable_raw_type<'b>(
+    pub(in crate::completion) fn extract_rhs_iterable_raw_type<'b>(
         rhs: &'b Expression<'b>,
         ctx: &VarResolutionCtx<'_>,
     ) -> Option<String> {
@@ -571,9 +571,11 @@ impl Backend {
             };
             if let Some(ref name) = func_name {
                 // Check for known array functions that preserve element type.
-                if let Some(raw) =
-                    Self::resolve_array_func_raw_type(name, &func_call.argument_list, ctx)
-                {
+                if let Some(raw) = super::raw_type_inference::resolve_array_func_raw_type(
+                    name,
+                    &func_call.argument_list,
+                    ctx,
+                ) {
                     return Some(raw);
                 }
             }
@@ -607,7 +609,7 @@ impl Backend {
                     .collect()
             } else if let Expression::Variable(Variable::Direct(dv)) = method_call.object {
                 let var = dv.name.to_string();
-                Self::resolve_target_classes(
+                crate::completion::resolver::resolve_target_classes(
                     &var,
                     crate::types::AccessKind::Arrow,
                     &ctx.as_resolution_ctx(),
@@ -621,7 +623,7 @@ impl Backend {
                 let end = obj_span.end.offset as usize;
                 if end <= content.len() {
                     let obj_text = content[start..end].trim();
-                    Self::resolve_target_classes(
+                    crate::completion::resolver::resolve_target_classes(
                         obj_text,
                         crate::types::AccessKind::Arrow,
                         &ctx.as_resolution_ctx(),
@@ -632,7 +634,8 @@ impl Backend {
             };
 
             for cls in &owner_classes {
-                if let Some(rt) = Self::resolve_method_return_type(cls, &method_name, class_loader)
+                if let Some(rt) =
+                    crate::inheritance::resolve_method_return_type(cls, &method_name, class_loader)
                 {
                     return Some(rt);
                 }
@@ -657,8 +660,11 @@ impl Backend {
                     .cloned()
                     .or_else(|| class_loader(&cls_name));
                 if let Some(ref owner) = owner
-                    && let Some(rt) =
-                        Self::resolve_method_return_type(owner, &method_name, class_loader)
+                    && let Some(rt) = crate::inheritance::resolve_method_return_type(
+                        owner,
+                        &method_name,
+                        class_loader,
+                    )
                 {
                     return Some(rt);
                 }
@@ -692,7 +698,7 @@ impl Backend {
                                 .collect()
                         } else if let Expression::Variable(Variable::Direct(dv)) = obj {
                             let var = dv.name.to_string();
-                            Self::resolve_target_classes(
+                            crate::completion::resolver::resolve_target_classes(
                                 &var,
                                 crate::types::AccessKind::Arrow,
                                 &ctx.as_resolution_ctx(),
@@ -701,9 +707,11 @@ impl Backend {
                             vec![]
                         };
                     for owner in &owner_classes {
-                        if let Some(hint) =
-                            Self::resolve_property_type_hint(owner, &prop_name, class_loader)
-                        {
+                        if let Some(hint) = crate::inheritance::resolve_property_type_hint(
+                            owner,
+                            &prop_name,
+                            class_loader,
+                        ) {
                             return Some(hint);
                         }
                     }

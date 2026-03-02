@@ -29,18 +29,19 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::*;
 
-use crate::completion::throws_analysis;
+use crate::completion::source::throws_analysis;
 use crate::completion::use_edit::{analyze_use_block, build_use_edit};
 
 // Re-export comment-position helpers so existing consumers (tests,
 // handler, catch_completion) that import from `phpdoc::` keep working.
-pub(crate) use super::comment_position::position_to_byte_offset;
-pub use super::comment_position::{is_inside_docblock, is_inside_non_doc_comment};
+pub(crate) use super::source::comment_position::position_to_byte_offset;
+pub use super::source::comment_position::{is_inside_docblock, is_inside_non_doc_comment};
 
-// Re-export all public items from `phpdoc_context` so that existing
+// Re-export all public items from `context` so that existing
 // consumers (`handler.rs`, tests) that import from `phpdoc::` keep
 // working without path changes.
-pub use super::phpdoc_context::{
+mod context;
+pub use context::{
     DocblockContext, DocblockTypingContext, SymbolInfo, detect_context,
     detect_docblock_typing_position, extract_phpdoc_prefix, extract_symbol_info,
 };

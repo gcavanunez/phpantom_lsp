@@ -8,7 +8,6 @@
 
 use std::collections::HashMap;
 
-use crate::Backend;
 use crate::inheritance::apply_substitution;
 use crate::types::{ClassInfo, MethodInfo};
 
@@ -145,7 +144,8 @@ pub fn build_scope_methods_for_builder(
     // #[Scope] methods into their public-facing form (replacing the
     // original), which makes them invisible to `is_scope_method`.
     // Using the pre-provider resolution preserves the raw methods.
-    let resolved_model = Backend::resolve_class_with_inheritance(&model_class, class_loader);
+    let resolved_model =
+        crate::inheritance::resolve_class_with_inheritance(&model_class, class_loader);
 
     // Build a substitution map so that `static`, `$this`, and `self`
     // in scope return types resolve to the concrete model name.

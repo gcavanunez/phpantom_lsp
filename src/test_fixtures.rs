@@ -9,8 +9,7 @@
 use std::collections::HashMap;
 
 use crate::types::{
-    ClassInfo, ClassLikeKind, ConstantInfo, LaravelMetadata, MethodInfo, ParameterInfo,
-    PropertyInfo, Visibility,
+    ClassInfo, ClassLikeKind, ConstantInfo, MethodInfo, ParameterInfo, PropertyInfo, Visibility,
 };
 
 // Note: `Visibility` is still needed by `make_class` and `make_constant`.
@@ -46,7 +45,7 @@ pub fn make_class(name: &str) -> ClassInfo {
         trait_aliases: Vec::new(),
         class_docblock: None,
         file_namespace: None,
-        laravel: LaravelMetadata::default(),
+        laravel: None,
     }
 }
 

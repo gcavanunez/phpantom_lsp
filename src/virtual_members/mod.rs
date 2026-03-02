@@ -39,7 +39,7 @@
 pub mod laravel;
 pub mod phpdoc;
 
-use crate::Backend;
+use crate::inheritance::resolve_class_with_inheritance;
 use crate::types::{ClassInfo, ConstantInfo, MethodInfo, PropertyInfo};
 
 /// Members synthesized by a provider.
@@ -66,7 +66,7 @@ impl VirtualMembers {
 /// A provider that contributes virtual members to a class.
 ///
 /// Receives the class with traits and parents already merged (via
-/// [`resolve_class_with_inheritance`](Backend::resolve_class_with_inheritance)),
+/// [`resolve_class_with_inheritance`](crate::inheritance::resolve_class_with_inheritance)),
 /// but **without** other providers' contributions.  This prevents
 /// circular loading when one provider's output would trigger another
 /// provider.
@@ -192,95 +192,92 @@ pub fn default_providers() -> Vec<Box<dyn VirtualMemberProvider>> {
     ]
 }
 
-// ─── Backend integration ────────────────────────────────────────────────────
+// ─── Full class resolution ──────────────────────────────────────────────────
 
-impl Backend {
-    /// Resolve a class with full inheritance and virtual member providers.
-    ///
-    /// This is the primary entry point for completion, go-to-definition,
-    /// and any other feature that needs the complete set of members
-    /// visible on a class instance or static access.
-    ///
-    /// The resolution proceeds in two phases:
-    ///
-    /// 1. **Base resolution** via
-    ///    [`resolve_class_with_inheritance`](Self::resolve_class_with_inheritance):
-    ///    merges own members, trait members, and parent chain members,
-    ///    applying generic type substitution along the way.
-    ///
-    /// 2. **Virtual member providers**: queries each registered provider
-    ///    in priority order and merges their contributions.  Virtual
-    ///    members never overwrite real declared members or contributions
-    ///    from higher-priority providers.
-    ///
-    /// Code that needs only the base resolution (e.g. providers
-    /// themselves, to avoid circular loading) should call
-    /// [`resolve_class_with_inheritance`](Self::resolve_class_with_inheritance)
-    /// directly.
-    pub fn resolve_class_fully(
-        class: &ClassInfo,
-        class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
-    ) -> ClassInfo {
-        let mut merged = Self::resolve_class_with_inheritance(class, class_loader);
-        let providers = default_providers();
-        if !providers.is_empty() {
-            apply_virtual_members(&mut merged, class_loader, &providers);
-        }
-
-        // 3. Merge members from implemented interfaces.
-        //    Interfaces can declare `@method` / `@property` / `@property-read`
-        //    tags that should be visible on implementing classes.  We collect
-        //    interfaces from the class itself and from every parent in the
-        //    extends chain, then fully resolve each interface (which applies
-        //    its own virtual member providers) and merge any members that
-        //    don't already exist.
-        let mut all_iface_names: Vec<String> = class.interfaces.clone();
-        {
-            let mut current = class.clone();
-            let mut depth = 0u32;
-            while let Some(ref parent_name) = current.parent_class {
-                depth += 1;
-                if depth > 20 {
-                    break;
-                }
-                if let Some(parent) = class_loader(parent_name) {
-                    for iface in &parent.interfaces {
-                        if !all_iface_names.contains(iface) {
-                            all_iface_names.push(iface.clone());
-                        }
-                    }
-                    current = parent;
-                } else {
-                    break;
-                }
-            }
-        }
-        for iface_name in &all_iface_names {
-            if let Some(iface) = class_loader(iface_name) {
-                let mut resolved_iface = Self::resolve_class_with_inheritance(&iface, class_loader);
-                if !providers.is_empty() {
-                    apply_virtual_members(&mut resolved_iface, class_loader, &providers);
-                }
-                for method in resolved_iface.methods {
-                    if !merged.methods.iter().any(|m| m.name == method.name) {
-                        merged.methods.push(method);
-                    }
-                }
-                for property in resolved_iface.properties {
-                    if !merged.properties.iter().any(|p| p.name == property.name) {
-                        merged.properties.push(property);
-                    }
-                }
-                for constant in resolved_iface.constants {
-                    if !merged.constants.iter().any(|c| c.name == constant.name) {
-                        merged.constants.push(constant);
-                    }
-                }
-            }
-        }
-
-        merged
+/// Resolve a class with full inheritance and virtual member providers.
+///
+/// This is the primary entry point for completion, go-to-definition,
+/// and any other feature that needs the complete set of members
+/// visible on a class instance or static access.
+///
+/// The resolution proceeds in two phases:
+///
+/// 1. **Base resolution** via
+///    [`resolve_class_with_inheritance`]: merges own members, trait
+///    members, and parent chain members, applying generic type
+///    substitution along the way.
+///
+/// 2. **Virtual member providers**: queries each registered provider
+///    in priority order and merges their contributions.  Virtual
+///    members never overwrite real declared members or contributions
+///    from higher-priority providers.
+///
+/// Code that needs only the base resolution (e.g. providers
+/// themselves, to avoid circular loading) should call
+/// [`resolve_class_with_inheritance`] directly.
+pub fn resolve_class_fully(
+    class: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+) -> ClassInfo {
+    let mut merged = resolve_class_with_inheritance(class, class_loader);
+    let providers = default_providers();
+    if !providers.is_empty() {
+        apply_virtual_members(&mut merged, class_loader, &providers);
     }
+
+    // 3. Merge members from implemented interfaces.
+    //    Interfaces can declare `@method` / `@property` / `@property-read`
+    //    tags that should be visible on implementing classes.  We collect
+    //    interfaces from the class itself and from every parent in the
+    //    extends chain, then fully resolve each interface (which applies
+    //    its own virtual member providers) and merge any members that
+    //    don't already exist.
+    let mut all_iface_names: Vec<String> = class.interfaces.clone();
+    {
+        let mut current = class.clone();
+        let mut depth = 0u32;
+        while let Some(ref parent_name) = current.parent_class {
+            depth += 1;
+            if depth > 20 {
+                break;
+            }
+            if let Some(parent) = class_loader(parent_name) {
+                for iface in &parent.interfaces {
+                    if !all_iface_names.contains(iface) {
+                        all_iface_names.push(iface.clone());
+                    }
+                }
+                current = parent;
+            } else {
+                break;
+            }
+        }
+    }
+    for iface_name in &all_iface_names {
+        if let Some(iface) = class_loader(iface_name) {
+            let mut resolved_iface = resolve_class_with_inheritance(&iface, class_loader);
+            if !providers.is_empty() {
+                apply_virtual_members(&mut resolved_iface, class_loader, &providers);
+            }
+            for method in resolved_iface.methods {
+                if !merged.methods.iter().any(|m| m.name == method.name) {
+                    merged.methods.push(method);
+                }
+            }
+            for property in resolved_iface.properties {
+                if !merged.properties.iter().any(|p| p.name == property.name) {
+                    merged.properties.push(property);
+                }
+            }
+            for constant in resolved_iface.constants {
+                if !merged.constants.iter().any(|c| c.name == constant.name) {
+                    merged.constants.push(constant);
+                }
+            }
+        }
+    }
+
+    merged
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

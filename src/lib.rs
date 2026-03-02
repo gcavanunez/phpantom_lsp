@@ -68,22 +68,21 @@ pub mod test_fixtures;
 
 // Re-export public types so that dependents (tests, main) can import them
 // from the crate root, e.g. `use phpantom_lsp::{Backend, AccessKind}`.
-pub use types::{
-    AccessKind, ArrayShapeEntry, AssertionKind, BracketSegment, ClassInfo, CompletionTarget,
-    ConstantInfo, FunctionInfo, MethodInfo, ParameterInfo, PropertyInfo, SubjectExpr,
-    TypeAssertion, Visibility,
-};
+pub use completion::target::extract_completion_target;
+pub use types::{AccessKind, ClassInfo, FunctionInfo, Visibility};
+pub use virtual_members::resolve_class_fully;
 
 // ─── Backend ────────────────────────────────────────────────────────────────
 
 /// The main LSP backend that holds all server state.
 ///
 /// Method implementations are spread across several modules:
-/// - `parser` — `parse_php`, `update_ast`, AST extraction helpers
+/// - `parser` — `parse_php`, `update_ast`, and module-level AST extraction helpers
+///   (`extract_hint_string`, `extract_parameters`, `extract_visibility`, `extract_property_info`)
 /// - `completion::handler` — Top-level completion request orchestration
-/// - `completion::target` — `extract_completion_target`
+/// - `completion::target` — module-level `extract_completion_target`
 /// - `completion::resolver` — `resolve_target_classes` and type-resolution helpers
-/// - `completion::builder` — `build_completion_items`, `build_method_label`
+/// - `completion::builder` — module-level `build_completion_items`, `build_method_label`
 /// - [`composer`] — PSR-4 autoload mapping and class file resolution
 /// - `server` — `impl LanguageServer` (initialize, completion, did_open, …)
 /// - `resolution` — `find_or_load_class`, `find_or_load_function`, `resolve_class_name`,
@@ -92,7 +91,8 @@ pub use types::{
 /// - `virtual_members` — `resolve_class_fully` (base resolution + virtual member providers),
 ///   `VirtualMemberProvider` trait, merge logic, provider registry
 /// - `subject_extraction` — Shared subject extraction helpers for `->`, `?->`, `::` operators
-/// - `util` — `position_to_offset`, `find_class_at_offset`, `log`, `get_classes_for_uri`
+/// - `util` — module-level `position_to_offset`, `find_class_at_offset`,
+///   `find_class_by_name`, plus `log`, `get_classes_for_uri`
 /// - `definition` — `resolve_definition`, member resolution, function resolution
 pub struct Backend {
     pub(crate) name: String,

@@ -18,10 +18,11 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::completion::named_args::position_to_char_offset;
+use crate::completion::use_edit;
 use crate::types::*;
 use crate::util::short_name;
 
-use super::builder::{
+use crate::completion::builder::{
     analyze_use_block, build_callable_snippet, build_use_edit, use_import_conflicts,
 };
 
@@ -437,7 +438,7 @@ fn likely_non_instantiable(short_name: &str) -> bool {
 /// Check whether a class name is a synthetic anonymous class name
 /// (e.g. `__anonymous@27775`).  These are internal bookkeeping entries
 /// that should never appear in completion results.
-pub(super) fn is_anonymous_class(name: &str) -> bool {
+pub(in crate::completion) fn is_anonymous_class(name: &str) -> bool {
     name.starts_with("__anonymous@")
 }
 
@@ -448,7 +449,7 @@ pub(super) fn is_anonymous_class(name: &str) -> bool {
 /// `App\Models\User`.  In non-FQN mode only the short name is checked
 /// to avoid flooding the response with every class under a broad
 /// namespace prefix.
-pub(super) fn matches_class_prefix(
+pub(in crate::completion) fn matches_class_prefix(
     short_name: &str,
     fqn: &str,
     prefix_lower: &str,
@@ -504,7 +505,7 @@ fn shorten_fqn_via_use_map(fqn: &str, use_map: &HashMap<String, String>) -> Opti
 /// Returns `(label, insert_base, filter_text, use_import_fqn)`.
 /// `use_import_fqn` is `None` when no `use` statement is needed (FQN
 /// mode or same-namespace class).
-pub(super) fn class_completion_texts(
+pub(in crate::completion) fn class_completion_texts(
     short_name: &str,
     fqn: &str,
     is_fqn: bool,
@@ -552,22 +553,22 @@ pub(super) fn class_completion_texts(
 /// Bundles the parameters that are constant across all class sources
 /// within a single completion request, so that `apply_import_fixups`
 /// and `build_item` don't need seven-plus arguments each.
-pub(super) struct ClassItemCtx<'a> {
-    pub(super) is_fqn_prefix: bool,
-    pub(super) is_new: bool,
-    pub(super) fqn_replace_range: Option<Range>,
-    pub(super) file_use_map: &'a HashMap<String, String>,
-    pub(super) use_block: super::use_edit::UseBlockInfo,
-    pub(super) file_namespace: &'a Option<String>,
+pub(in crate::completion) struct ClassItemCtx<'a> {
+    pub(in crate::completion) is_fqn_prefix: bool,
+    pub(in crate::completion) is_new: bool,
+    pub(in crate::completion) fqn_replace_range: Option<Range>,
+    pub(in crate::completion) file_use_map: &'a HashMap<String, String>,
+    pub(in crate::completion) use_block: use_edit::UseBlockInfo,
+    pub(in crate::completion) file_namespace: &'a Option<String>,
 }
 
 /// Per-item text fields produced by `class_completion_texts` and
 /// post-processed by `apply_import_fixups`.
-pub(super) struct ClassItemTexts {
-    pub(super) label: String,
-    pub(super) base_name: String,
-    pub(super) filter: String,
-    pub(super) use_import: Option<String>,
+pub(in crate::completion) struct ClassItemTexts {
+    pub(in crate::completion) label: String,
+    pub(in crate::completion) base_name: String,
+    pub(in crate::completion) filter: String,
+    pub(in crate::completion) use_import: Option<String>,
 }
 
 impl ClassItemCtx<'_> {
@@ -583,7 +584,7 @@ impl ClassItemCtx<'_> {
     /// - In FQN mode, if the first namespace segment matches an existing
     ///   alias (and the name wasn't intentionally shortened through that
     ///   alias), prepends `\` so PHP resolves from the global namespace.
-    pub(super) fn apply_import_fixups(
+    pub(in crate::completion) fn apply_import_fixups(
         &self,
         base_name: &mut String,
         use_import: &mut Option<String>,
@@ -614,7 +615,7 @@ impl ClassItemCtx<'_> {
     /// `build_class_name_completions` and
     /// `build_catch_class_name_completions` for class_index, classmap,
     /// and stub sources.
-    pub(super) fn build_item(
+    pub(in crate::completion) fn build_item(
         &self,
         texts: ClassItemTexts,
         fqn: &str,
@@ -768,7 +769,7 @@ impl Backend {
     /// to build a snippet with tab-stops for each required argument.
     /// When `None`, a plain `Name()$0` snippet is returned so the user
     /// still gets parentheses inserted automatically.
-    pub(super) fn build_new_insert(
+    pub(in crate::completion) fn build_new_insert(
         short_name: &str,
         ctor_params: Option<&[ParameterInfo]>,
     ) -> (String, Option<InsertTextFormat>) {
@@ -798,7 +799,7 @@ impl Backend {
     /// matching classes exceeds [`MAX_CLASS_COMPLETIONS`], the result is
     /// truncated and `is_incomplete` is `true`, signalling the client to
     /// re-request as the user types more characters.
-    pub(super) const MAX_CLASS_COMPLETIONS: usize = 100;
+    pub(in crate::completion) const MAX_CLASS_COMPLETIONS: usize = 100;
 
     /// Build completion items for class, interface, trait, and enum names
     /// matching `prefix`.

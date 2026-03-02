@@ -27,24 +27,25 @@
 ///     (function return types, variable/property annotations, inline @var).
 ///
 /// Type narrowing (instanceof, assert, custom type guards) is delegated
-/// to the [`super::type_narrowing`] module.  Closure/arrow-function scope
+/// to the [`crate::completion::type_narrowing`] module.  Closure/arrow-function scope
 /// handling is delegated to [`super::closure_resolution`].
 use mago_span::HasSpan;
 use mago_syntax::ast::*;
 
 use crate::Backend;
+use crate::completion::types::narrowing;
 use crate::docblock;
-use crate::parser::with_parsed_program;
+use crate::parser::{extract_hint_string, with_parsed_program};
 use crate::types::ClassInfo;
 
-use super::resolver::{FunctionLoaderFn, VarResolutionCtx};
+use crate::completion::resolver::{FunctionLoaderFn, VarResolutionCtx};
 
 /// Build a [`VarClassStringResolver`] closure from a [`VarResolutionCtx`].
 ///
 /// The returned closure resolves a variable name (e.g. `"$requestType"`)
 /// to the class names it holds as class-string values by delegating to
 /// [`Backend::resolve_class_string_targets`].
-pub(super) fn build_var_resolver_from_ctx<'a>(
+pub(in crate::completion) fn build_var_resolver_from_ctx<'a>(
     ctx: &'a VarResolutionCtx<'a>,
 ) -> impl Fn(&str) -> Vec<String> + 'a {
     move |var_name: &str| -> Vec<String> {
@@ -156,7 +157,7 @@ impl Backend {
     /// Walk a sequence of top-level statements to find the class or
     /// function body that contains the cursor, then resolve the target
     /// variable's type within that scope.
-    pub(super) fn resolve_variable_in_statements<'b>(
+    pub(in crate::completion) fn resolve_variable_in_statements<'b>(
         statements: impl Iterator<Item = &'b Statement<'b>>,
         ctx: &VarResolutionCtx<'_>,
     ) -> Vec<ClassInfo> {
@@ -232,16 +233,7 @@ impl Backend {
                             ctx.content,
                             (body_start + 1) as usize,
                         );
-                        let body_ctx = VarResolutionCtx {
-                            var_name: ctx.var_name,
-                            current_class: ctx.current_class,
-                            all_classes: ctx.all_classes,
-                            content: ctx.content,
-                            cursor_offset: ctx.cursor_offset,
-                            class_loader: ctx.class_loader,
-                            function_loader: ctx.function_loader,
-                            enclosing_return_type: enclosing_ret,
-                        };
+                        let body_ctx = ctx.with_enclosing_return_type(enclosing_ret);
                         // The cursor is inside this function body.  PHP
                         // function scopes are isolated, so return the
                         // result directly (even if empty after `unset`).
@@ -261,7 +253,9 @@ impl Backend {
                         // top-level functions.
                         if let Some(ref ret_type) = body_ctx.enclosing_return_type {
                             let yield_results =
-                                Self::try_infer_from_generator_yield(ret_type, &body_ctx);
+                                super::raw_type_inference::try_infer_from_generator_yield(
+                                    ret_type, &body_ctx,
+                                );
                             if !yield_results.is_empty() {
                                 return yield_results;
                             }
@@ -303,8 +297,7 @@ impl Backend {
                     let pname = param.variable.name.to_string();
                     if pname == ctx.var_name {
                         // Try the native AST type hint first.
-                        let native_type_str =
-                            param.hint.as_ref().map(|h| Self::extract_hint_string(h));
+                        let native_type_str = param.hint.as_ref().map(|h| extract_hint_string(h));
 
                         // ── Eloquent scope Builder inference ────────
                         // When the enclosing method is a scope on an
@@ -336,7 +329,7 @@ impl Backend {
 
                         let resolved_from_native = type_str_for_resolution
                             .map(|ts| {
-                                Self::type_hint_to_classes(
+                                crate::completion::type_resolution::type_hint_to_classes(
                                     ts,
                                     &ctx.current_class.name,
                                     ctx.all_classes,
@@ -362,7 +355,7 @@ impl Backend {
                                 ctx.var_name,
                             )
                         {
-                            let resolved = Self::type_hint_to_classes(
+                            let resolved = crate::completion::type_resolution::type_hint_to_classes(
                                 &raw_docblock_type,
                                 &ctx.current_class.name,
                                 ctx.all_classes,
@@ -394,16 +387,7 @@ impl Backend {
                             ctx.content,
                             (blk_start + 1) as usize,
                         );
-                        let body_ctx = VarResolutionCtx {
-                            var_name: ctx.var_name,
-                            current_class: ctx.current_class,
-                            all_classes: ctx.all_classes,
-                            content: ctx.content,
-                            cursor_offset: ctx.cursor_offset,
-                            class_loader: ctx.class_loader,
-                            function_loader: ctx.function_loader,
-                            enclosing_return_type: enclosing_ret,
-                        };
+                        let body_ctx = ctx.with_enclosing_return_type(enclosing_ret);
                         // Seed the result set with the parameter type hint
                         // (if any) so that instanceof narrowing and
                         // unconditional reassignments can refine it.
@@ -426,7 +410,9 @@ impl Backend {
                         // type from the Generator's TValue parameter.
                         if let Some(ref ret_type) = body_ctx.enclosing_return_type {
                             let yield_results =
-                                Self::try_infer_from_generator_yield(ret_type, &body_ctx);
+                                super::raw_type_inference::try_infer_from_generator_yield(
+                                    ret_type, &body_ctx,
+                                );
                             if !yield_results.is_empty() {
                                 return yield_results;
                             }
@@ -465,7 +451,7 @@ impl Backend {
     /// is being unconditionally reassigned).  When `conditional` is `true`,
     /// a new assignment **adds** to the list (the variable *might* be this
     /// type).
-    pub(super) fn walk_statements_for_assignments<'b>(
+    pub(in crate::completion) fn walk_statements_for_assignments<'b>(
         statements: impl Iterator<Item = &'b Statement<'b>>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -515,22 +501,30 @@ impl Backend {
                     // When `assert($var instanceof Foo)` appears before
                     // the cursor, narrow the variable to `Foo` for the
                     // remainder of the current scope.
-                    Self::try_apply_assert_instanceof_narrowing(expr_stmt.expression, ctx, results);
+                    narrowing::try_apply_assert_instanceof_narrowing(
+                        expr_stmt.expression,
+                        ctx,
+                        results,
+                    );
 
                     // ── @phpstan-assert / @psalm-assert narrowing ──
                     // When a function with `@phpstan-assert Type $param`
                     // is called as a standalone statement, narrow the
                     // corresponding argument variable unconditionally.
-                    Self::try_apply_custom_assert_narrowing(expr_stmt.expression, ctx, results);
+                    narrowing::try_apply_custom_assert_narrowing(
+                        expr_stmt.expression,
+                        ctx,
+                        results,
+                    );
 
                     // ── match(true) { $var instanceof Foo => … } narrowing ──
-                    Self::try_apply_match_true_narrowing(expr_stmt.expression, ctx, results);
+                    narrowing::try_apply_match_true_narrowing(expr_stmt.expression, ctx, results);
 
                     // ── ternary instanceof narrowing ──
                     // `$var instanceof Foo ? $var->method() : …`
                     // When the cursor is inside a ternary whose condition
                     // checks instanceof, narrow accordingly.
-                    Self::try_apply_ternary_instanceof_narrowing(
+                    narrowing::try_apply_ternary_instanceof_narrowing(
                         expr_stmt.expression,
                         ctx,
                         results,
@@ -625,14 +619,14 @@ impl Backend {
         match &if_stmt.body {
             IfBody::Statement(body) => {
                 // ── instanceof narrowing for then-body ──
-                Self::try_apply_instanceof_narrowing(
+                narrowing::try_apply_instanceof_narrowing(
                     if_stmt.condition,
                     body.statement.span(),
                     ctx,
                     results,
                 );
                 // ── @phpstan-assert-if-true/false narrowing for then-body ──
-                Self::try_apply_assert_condition_narrowing(
+                narrowing::try_apply_assert_condition_narrowing(
                     if_stmt.condition,
                     body.statement.span(),
                     ctx,
@@ -640,7 +634,7 @@ impl Backend {
                     false, // not inverted — this is the then-body
                 );
                 // ── in_array strict-mode narrowing for then-body ──
-                Self::try_apply_in_array_narrowing(
+                narrowing::try_apply_in_array_narrowing(
                     if_stmt.condition,
                     body.statement.span(),
                     ctx,
@@ -650,20 +644,20 @@ impl Backend {
 
                 for else_if in body.else_if_clauses.iter() {
                     // ── instanceof narrowing for elseif-body ──
-                    Self::try_apply_instanceof_narrowing(
+                    narrowing::try_apply_instanceof_narrowing(
                         else_if.condition,
                         else_if.statement.span(),
                         ctx,
                         results,
                     );
-                    Self::try_apply_assert_condition_narrowing(
+                    narrowing::try_apply_assert_condition_narrowing(
                         else_if.condition,
                         else_if.statement.span(),
                         ctx,
                         results,
                         false,
                     );
-                    Self::try_apply_in_array_narrowing(
+                    narrowing::try_apply_in_array_narrowing(
                         else_if.condition,
                         else_if.statement.span(),
                         ctx,
@@ -675,20 +669,20 @@ impl Backend {
                     // ── inverse instanceof narrowing for else-body ──
                     // `if ($v instanceof Foo) { … } else { ← here }`
                     // means $v is NOT Foo in the else branch.
-                    Self::try_apply_instanceof_narrowing_inverse(
+                    narrowing::try_apply_instanceof_narrowing_inverse(
                         if_stmt.condition,
                         else_clause.statement.span(),
                         ctx,
                         results,
                     );
-                    Self::try_apply_assert_condition_narrowing(
+                    narrowing::try_apply_assert_condition_narrowing(
                         if_stmt.condition,
                         else_clause.statement.span(),
                         ctx,
                         results,
                         true, // inverted — this is the else-body
                     );
-                    Self::try_apply_in_array_narrowing_inverse(
+                    narrowing::try_apply_in_array_narrowing_inverse(
                         if_stmt.condition,
                         else_clause.statement.span(),
                         ctx,
@@ -723,15 +717,20 @@ impl Backend {
                     body.colon.start,
                     mago_span::Position::new(then_end),
                 );
-                Self::try_apply_instanceof_narrowing(if_stmt.condition, then_span, ctx, results);
-                Self::try_apply_assert_condition_narrowing(
+                narrowing::try_apply_instanceof_narrowing(
+                    if_stmt.condition,
+                    then_span,
+                    ctx,
+                    results,
+                );
+                narrowing::try_apply_assert_condition_narrowing(
                     if_stmt.condition,
                     then_span,
                     ctx,
                     results,
                     false,
                 );
-                Self::try_apply_in_array_narrowing(if_stmt.condition, then_span, ctx, results);
+                narrowing::try_apply_in_array_narrowing(if_stmt.condition, then_span, ctx, results);
                 Self::walk_statements_for_assignments(body.statements.iter(), ctx, results, true);
                 for else_if in body.else_if_clauses.iter() {
                     let ei_span = mago_span::Span::new(
@@ -745,15 +744,25 @@ impl Backend {
                                 .offset,
                         ),
                     );
-                    Self::try_apply_instanceof_narrowing(else_if.condition, ei_span, ctx, results);
-                    Self::try_apply_assert_condition_narrowing(
+                    narrowing::try_apply_instanceof_narrowing(
+                        else_if.condition,
+                        ei_span,
+                        ctx,
+                        results,
+                    );
+                    narrowing::try_apply_assert_condition_narrowing(
                         else_if.condition,
                         ei_span,
                         ctx,
                         results,
                         false,
                     );
-                    Self::try_apply_in_array_narrowing(else_if.condition, ei_span, ctx, results);
+                    narrowing::try_apply_in_array_narrowing(
+                        else_if.condition,
+                        ei_span,
+                        ctx,
+                        results,
+                    );
                     Self::walk_statements_for_assignments(
                         else_if.statements.iter(),
                         ctx,
@@ -774,20 +783,20 @@ impl Backend {
                                 .offset,
                         ),
                     );
-                    Self::try_apply_instanceof_narrowing_inverse(
+                    narrowing::try_apply_instanceof_narrowing_inverse(
                         if_stmt.condition,
                         else_span,
                         ctx,
                         results,
                     );
-                    Self::try_apply_assert_condition_narrowing(
+                    narrowing::try_apply_assert_condition_narrowing(
                         if_stmt.condition,
                         else_span,
                         ctx,
                         results,
                         true, // inverted — else-body
                     );
-                    Self::try_apply_in_array_narrowing_inverse(
+                    narrowing::try_apply_in_array_narrowing_inverse(
                         if_stmt.condition,
                         else_span,
                         ctx,
@@ -814,8 +823,8 @@ impl Backend {
         //   if (!$var instanceof Foo) { return; }
         //   $var-> // narrowed to Foo here
         if enclosing_stmt.span().end.offset < ctx.cursor_offset {
-            Self::apply_guard_clause_narrowing(if_stmt, ctx, results);
-            Self::apply_guard_clause_in_array_narrowing(if_stmt, ctx, results);
+            narrowing::apply_guard_clause_narrowing(if_stmt, ctx, results);
+            narrowing::apply_guard_clause_in_array_narrowing(if_stmt, ctx, results);
         }
     }
 
@@ -883,20 +892,20 @@ impl Backend {
     ) {
         match &while_stmt.body {
             WhileBody::Statement(inner) => {
-                Self::try_apply_instanceof_narrowing(
+                narrowing::try_apply_instanceof_narrowing(
                     while_stmt.condition,
                     inner.span(),
                     ctx,
                     results,
                 );
-                Self::try_apply_assert_condition_narrowing(
+                narrowing::try_apply_assert_condition_narrowing(
                     while_stmt.condition,
                     inner.span(),
                     ctx,
                     results,
                     false,
                 );
-                Self::try_apply_in_array_narrowing(
+                narrowing::try_apply_in_array_narrowing(
                     while_stmt.condition,
                     inner.span(),
                     ctx,
@@ -910,15 +919,25 @@ impl Backend {
                     body.colon.start,
                     mago_span::Position::new(body.end_while.span().start.offset),
                 );
-                Self::try_apply_instanceof_narrowing(while_stmt.condition, body_span, ctx, results);
-                Self::try_apply_assert_condition_narrowing(
+                narrowing::try_apply_instanceof_narrowing(
+                    while_stmt.condition,
+                    body_span,
+                    ctx,
+                    results,
+                );
+                narrowing::try_apply_assert_condition_narrowing(
                     while_stmt.condition,
                     body_span,
                     ctx,
                     results,
                     false,
                 );
-                Self::try_apply_in_array_narrowing(while_stmt.condition, body_span, ctx, results);
+                narrowing::try_apply_in_array_narrowing(
+                    while_stmt.condition,
+                    body_span,
+                    ctx,
+                    results,
+                );
                 Self::walk_statements_for_assignments(body.statements.iter(), ctx, results, true);
             }
         }
@@ -945,8 +964,8 @@ impl Backend {
             if let Some(ref var) = catch.variable
                 && var.name == ctx.var_name
             {
-                let hint_str = Self::extract_hint_string(&catch.hint);
-                let resolved = Self::type_hint_to_classes(
+                let hint_str = extract_hint_string(&catch.hint);
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
                     &hint_str,
                     &ctx.current_class.name,
                     ctx.all_classes,
@@ -973,7 +992,7 @@ impl Backend {
 
     /// Convenience wrapper that walks a single statement for assignments
     /// to the target variable, delegating to `walk_statements_for_assignments`.
-    pub(super) fn check_statement_for_assignments<'b>(
+    pub(in crate::completion) fn check_statement_for_assignments<'b>(
         stmt: &'b Statement<'b>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -1001,7 +1020,7 @@ impl Backend {
     ///
     /// Returns `true` when the override was applied (results updated) and
     /// `false` when there is no applicable `@var` annotation.
-    pub(super) fn try_inline_var_override<'b>(
+    pub(in crate::completion) fn try_inline_var_override<'b>(
         expr: &'b Expression<'b>,
         stmt_start: usize,
         ctx: &VarResolutionCtx<'_>,
@@ -1045,7 +1064,7 @@ impl Backend {
             None => return false,
         };
 
-        let resolved = Self::type_hint_to_classes(
+        let resolved = crate::completion::type_resolution::type_hint_to_classes(
             &eff_type,
             &ctx.current_class.name,
             ctx.all_classes,
@@ -1171,7 +1190,7 @@ impl Backend {
     /// the new type is appended (the variable *might* be this type).
     ///
     /// Duplicate class names are suppressed automatically.
-    pub(super) fn check_expression_for_assignment<'b>(
+    pub(in crate::completion) fn check_expression_for_assignment<'b>(
         expr: &'b Expression<'b>,
         ctx: &VarResolutionCtx<'_>,
         results: &mut Vec<ClassInfo>,
@@ -1235,16 +1254,7 @@ impl Backend {
             // would re-discover the same assignment, resolve its RHS
             // again, and so on until a stack overflow crashes the
             // process.
-            let rhs_ctx = VarResolutionCtx {
-                var_name: ctx.var_name,
-                current_class: ctx.current_class,
-                all_classes: ctx.all_classes,
-                content: ctx.content,
-                cursor_offset: assignment.span().start.offset,
-                class_loader: ctx.class_loader,
-                function_loader: ctx.function_loader,
-                enclosing_return_type: ctx.enclosing_return_type.clone(),
-            };
+            let rhs_ctx = ctx.with_cursor_offset(assignment.span().start.offset);
             let resolved = Self::resolve_rhs_expression(assignment.rhs, &rhs_ctx);
             push_results(results, resolved, conditional);
         }
@@ -1254,7 +1264,9 @@ impl Backend {
 
     /// Extract the first positional argument expression from an
     /// argument list.
-    pub(super) fn first_arg_expr<'b>(args: &'b ArgumentList<'b>) -> Option<&'b Expression<'b>> {
+    pub(in crate::completion) fn first_arg_expr<'b>(
+        args: &'b ArgumentList<'b>,
+    ) -> Option<&'b Expression<'b>> {
         args.arguments.first().map(|arg| match arg {
             Argument::Positional(pos) => pos.value,
             Argument::Named(named) => named.value,
@@ -1262,7 +1274,7 @@ impl Backend {
     }
 
     /// Extract the nth positional argument expression (0-based).
-    pub(super) fn nth_arg_expr<'b>(
+    pub(in crate::completion) fn nth_arg_expr<'b>(
         args: &'b ArgumentList<'b>,
         n: usize,
     ) -> Option<&'b Expression<'b>> {
@@ -1277,7 +1289,7 @@ impl Backend {
     /// Handles `$variable` (via docblock scanning) and delegates to
     /// `extract_rhs_iterable_raw_type` for method calls, property access,
     /// etc.
-    pub(super) fn resolve_arg_raw_type<'b>(
+    pub(in crate::completion) fn resolve_arg_raw_type<'b>(
         arg_expr: &'b Expression<'b>,
         ctx: &VarResolutionCtx<'_>,
     ) -> Option<String> {
@@ -1300,7 +1312,7 @@ impl Backend {
                 .all_classes
                 .iter()
                 .find(|c| c.name == ctx.current_class.name);
-            if let Some(raw) = Self::resolve_variable_assignment_raw_type(
+            if let Some(raw) = super::raw_type_inference::resolve_variable_assignment_raw_type(
                 &var_text,
                 ctx.content,
                 offset as u32,
@@ -1319,5 +1331,5 @@ impl Backend {
 }
 
 #[cfg(test)]
-#[path = "variable_resolution_tests.rs"]
+#[path = "resolution_tests.rs"]
 mod tests;

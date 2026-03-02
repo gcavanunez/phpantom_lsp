@@ -14,6 +14,7 @@ use crate::Backend;
 use crate::completion::resolver::ResolutionCtx;
 use crate::symbol_map::{SymbolKind, SymbolSpan};
 use crate::types::*;
+use crate::util::{find_class_at_offset, position_to_offset};
 
 impl Backend {
     /// Handle a `textDocument/hover` request.
@@ -22,7 +23,7 @@ impl Backend {
     /// resolved to a meaningful description, or `None` when resolution
     /// fails or the cursor is not on a navigable symbol.
     pub fn handle_hover(&self, uri: &str, content: &str, position: Position) -> Option<Hover> {
-        let offset = Self::position_to_offset(content, position);
+        let offset = position_to_offset(content, position);
 
         // Fast path: consult precomputed symbol map.
         if let Some(symbol) = self.lookup_symbol_map_for_hover(uri, offset)
@@ -65,7 +66,7 @@ impl Backend {
         cursor_offset: u32,
     ) -> Option<Hover> {
         let ctx = self.file_context(uri);
-        let current_class = Self::find_class_at_offset(&ctx.classes, cursor_offset);
+        let current_class = find_class_at_offset(&ctx.classes, cursor_offset);
         let class_loader = self.class_loader(&ctx);
         let function_loader = self.function_loader(&ctx);
 
@@ -95,10 +96,15 @@ impl Backend {
                     AccessKind::Arrow
                 };
 
-                let candidates = Self::resolve_target_classes(subject_text, access_kind, &rctx);
+                let candidates = crate::completion::resolver::resolve_target_classes(
+                    subject_text,
+                    access_kind,
+                    &rctx,
+                );
 
                 for target_class in &candidates {
-                    let merged = Self::resolve_class_fully(target_class, &class_loader);
+                    let merged =
+                        crate::virtual_members::resolve_class_fully(target_class, &class_loader);
 
                     if *is_method_call {
                         if let Some(method) = merged

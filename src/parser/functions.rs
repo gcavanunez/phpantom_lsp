@@ -10,7 +10,7 @@ use crate::Backend;
 use crate::docblock;
 use crate::types::*;
 
-use super::DocblockCtx;
+use super::{DocblockCtx, extract_hint_string, extract_parameters};
 
 impl Backend {
     /// Extract standalone function definitions from a sequence of statements.
@@ -29,11 +29,11 @@ impl Backend {
                 Statement::Function(func) => {
                     let name = func.name.value.to_string();
                     let name_offset = func.name.span.start.offset;
-                    let parameters = Self::extract_parameters(&func.parameter_list);
+                    let parameters = extract_parameters(&func.parameter_list);
                     let native_return_type = func
                         .return_type_hint
                         .as_ref()
-                        .map(|rth| Self::extract_hint_string(&rth.hint));
+                        .map(|rth| extract_hint_string(&rth.hint));
 
                     // Apply PHPDoc `@return` override for the function.
                     // Also extract PHPStan conditional return types,

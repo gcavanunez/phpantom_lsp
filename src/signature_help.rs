@@ -20,6 +20,7 @@ use crate::completion::named_args::{
 };
 use crate::symbol_map::SymbolMap;
 use crate::types::*;
+use crate::util::position_to_offset;
 
 /// Information about a signature help call site, extracted from the source
 /// text around the cursor.
@@ -45,7 +46,7 @@ fn detect_call_site_from_map(
     content: &str,
     position: Position,
 ) -> Option<CallSiteContext> {
-    let cursor_byte_offset = crate::Backend::position_to_offset(content, position);
+    let cursor_byte_offset = position_to_offset(content, position);
     let cs = symbol_map.find_enclosing_call_site(cursor_byte_offset)?;
     // Active parameter = number of commas before the cursor.
     let active = cs

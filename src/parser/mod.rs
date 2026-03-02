@@ -19,7 +19,6 @@ mod use_statements;
 
 use mago_syntax::ast::*;
 
-use crate::Backend;
 use crate::types::*;
 
 /// Context for resolving PHPDoc type annotations from docblock comments.
@@ -63,125 +62,125 @@ pub(crate) fn with_parsed_program<T: Default>(
     }
 }
 
+/// Extract a string representation of a type hint from the AST.
+pub(crate) fn extract_hint_string(hint: &Hint) -> String {
+    match hint {
+        Hint::Identifier(ident) => ident.value().to_string(),
+        Hint::Nullable(nullable) => {
+            format!("?{}", extract_hint_string(nullable.hint))
+        }
+        Hint::Union(union) => {
+            let left = extract_hint_string(union.left);
+            let right = extract_hint_string(union.right);
+            format!("{}|{}", left, right)
+        }
+        Hint::Intersection(intersection) => {
+            let left = extract_hint_string(intersection.left);
+            let right = extract_hint_string(intersection.right);
+            format!("{}&{}", left, right)
+        }
+        Hint::Void(ident)
+        | Hint::Never(ident)
+        | Hint::Float(ident)
+        | Hint::Bool(ident)
+        | Hint::Integer(ident)
+        | Hint::String(ident)
+        | Hint::Object(ident)
+        | Hint::Mixed(ident)
+        | Hint::Iterable(ident) => ident.value.to_string(),
+        Hint::Null(keyword)
+        | Hint::True(keyword)
+        | Hint::False(keyword)
+        | Hint::Array(keyword)
+        | Hint::Callable(keyword)
+        | Hint::Static(keyword)
+        | Hint::Self_(keyword)
+        | Hint::Parent(keyword) => keyword.value.to_string(),
+        Hint::Parenthesized(paren) => {
+            format!("({})", extract_hint_string(paren.hint))
+        }
+    }
+}
+
+/// Extract parameter information from a method's parameter list.
+pub(crate) fn extract_parameters(parameter_list: &FunctionLikeParameterList) -> Vec<ParameterInfo> {
+    parameter_list
+        .parameters
+        .iter()
+        .map(|param| {
+            let name = param.variable.name.to_string();
+            let is_variadic = param.ellipsis.is_some();
+            let is_reference = param.ampersand.is_some();
+            let has_default = param.default_value.is_some();
+            let is_required = !has_default && !is_variadic;
+
+            let type_hint = param.hint.as_ref().map(|h| extract_hint_string(h));
+
+            ParameterInfo {
+                name,
+                is_required,
+                type_hint,
+                is_variadic,
+                is_reference,
+            }
+        })
+        .collect()
+}
+
+/// Extract visibility from a set of modifiers.
+/// Defaults to `Public` if no visibility modifier is present.
+pub(crate) fn extract_visibility<'a>(
+    modifiers: impl Iterator<Item = &'a Modifier<'a>>,
+) -> Visibility {
+    for m in modifiers {
+        if m.is_private() {
+            return Visibility::Private;
+        }
+        if m.is_protected() {
+            return Visibility::Protected;
+        }
+        if m.is_public() {
+            return Visibility::Public;
+        }
+    }
+    Visibility::Public
+}
+
+/// Extract property information from a class member Property node.
+pub(crate) fn extract_property_info(property: &Property) -> Vec<PropertyInfo> {
+    let is_static = property.modifiers().iter().any(|m| m.is_static());
+    let visibility = extract_visibility(property.modifiers().iter());
+
+    let type_hint = property.hint().map(|h| extract_hint_string(h));
+
+    property
+        .variables()
+        .iter()
+        .map(|var| {
+            let raw_name = var.name.to_string();
+            // Strip the leading `$` for property names since PHP access
+            // syntax is `$this->name` not `$this->$name`.
+            let name = if let Some(stripped) = raw_name.strip_prefix('$') {
+                stripped.to_string()
+            } else {
+                raw_name
+            };
+
+            PropertyInfo {
+                name,
+                name_offset: var.span.start.offset,
+                type_hint: type_hint.clone(),
+                is_static,
+                visibility,
+                is_deprecated: false,
+            }
+        })
+        .collect()
+}
+
+use crate::Backend;
+
 impl Backend {
-    /// Extract a string representation of a type hint from the AST.
-    pub(crate) fn extract_hint_string(hint: &Hint) -> String {
-        match hint {
-            Hint::Identifier(ident) => ident.value().to_string(),
-            Hint::Nullable(nullable) => {
-                format!("?{}", Self::extract_hint_string(nullable.hint))
-            }
-            Hint::Union(union) => {
-                let left = Self::extract_hint_string(union.left);
-                let right = Self::extract_hint_string(union.right);
-                format!("{}|{}", left, right)
-            }
-            Hint::Intersection(intersection) => {
-                let left = Self::extract_hint_string(intersection.left);
-                let right = Self::extract_hint_string(intersection.right);
-                format!("{}&{}", left, right)
-            }
-            Hint::Void(ident)
-            | Hint::Never(ident)
-            | Hint::Float(ident)
-            | Hint::Bool(ident)
-            | Hint::Integer(ident)
-            | Hint::String(ident)
-            | Hint::Object(ident)
-            | Hint::Mixed(ident)
-            | Hint::Iterable(ident) => ident.value.to_string(),
-            Hint::Null(keyword)
-            | Hint::True(keyword)
-            | Hint::False(keyword)
-            | Hint::Array(keyword)
-            | Hint::Callable(keyword)
-            | Hint::Static(keyword)
-            | Hint::Self_(keyword)
-            | Hint::Parent(keyword) => keyword.value.to_string(),
-            Hint::Parenthesized(paren) => {
-                format!("({})", Self::extract_hint_string(paren.hint))
-            }
-        }
-    }
-
-    /// Extract parameter information from a method's parameter list.
-    pub(crate) fn extract_parameters(
-        parameter_list: &FunctionLikeParameterList,
-    ) -> Vec<ParameterInfo> {
-        parameter_list
-            .parameters
-            .iter()
-            .map(|param| {
-                let name = param.variable.name.to_string();
-                let is_variadic = param.ellipsis.is_some();
-                let is_reference = param.ampersand.is_some();
-                let has_default = param.default_value.is_some();
-                let is_required = !has_default && !is_variadic;
-
-                let type_hint = param.hint.as_ref().map(|h| Self::extract_hint_string(h));
-
-                ParameterInfo {
-                    name,
-                    is_required,
-                    type_hint,
-                    is_variadic,
-                    is_reference,
-                }
-            })
-            .collect()
-    }
-
-    /// Extract visibility from a set of modifiers.
-    /// Defaults to `Public` if no visibility modifier is present.
-    pub(crate) fn extract_visibility<'a>(
-        modifiers: impl Iterator<Item = &'a Modifier<'a>>,
-    ) -> Visibility {
-        for m in modifiers {
-            if m.is_private() {
-                return Visibility::Private;
-            }
-            if m.is_protected() {
-                return Visibility::Protected;
-            }
-            if m.is_public() {
-                return Visibility::Public;
-            }
-        }
-        Visibility::Public
-    }
-
-    /// Extract property information from a class member Property node.
-    pub(crate) fn extract_property_info(property: &Property) -> Vec<PropertyInfo> {
-        let is_static = property.modifiers().iter().any(|m| m.is_static());
-        let visibility = Self::extract_visibility(property.modifiers().iter());
-
-        let type_hint = property.hint().map(|h| Self::extract_hint_string(h));
-
-        property
-            .variables()
-            .iter()
-            .map(|var| {
-                let raw_name = var.name.to_string();
-                // Strip the leading `$` for property names since PHP access
-                // syntax is `$this->name` not `$this->$name`.
-                let name = if let Some(stripped) = raw_name.strip_prefix('$') {
-                    stripped.to_string()
-                } else {
-                    raw_name
-                };
-
-                PropertyInfo {
-                    name,
-                    name_offset: var.span.start.offset,
-                    type_hint: type_hint.clone(),
-                    is_static,
-                    visibility,
-                    is_deprecated: false,
-                }
-            })
-            .collect()
-    }
-
     /// Parse PHP source text and extract class information.
     /// Returns a Vec of ClassInfo for all classes found in the file.
     pub fn parse_php(&self, content: &str) -> Vec<ClassInfo> {

@@ -39,7 +39,7 @@ fn has_scope_attribute(method: &Method<'_>) -> bool {
 ///
 /// Anonymous classes (`new class { ... }`) are also extracted.  They are
 /// given synthetic names of the form `__anonymous@<offset>` so that
-/// [`find_class_at_offset`](Backend::find_class_at_offset) can resolve
+/// [`find_class_at_offset`](crate::util::find_class_at_offset) can resolve
 /// `$this` inside their bodies.
 use mago_syntax::ast::*;
 
@@ -49,7 +49,9 @@ use crate::docblock::types::parse_generic_args;
 use crate::types::*;
 use crate::virtual_members::laravel::infer_relationship_from_body;
 
-use super::DocblockCtx;
+use super::{
+    DocblockCtx, extract_hint_string, extract_parameters, extract_property_info, extract_visibility,
+};
 
 /// Docblock-derived metadata common to all class-like declarations.
 ///
@@ -711,12 +713,12 @@ impl Backend {
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
                         file_namespace: None,
-                        laravel: LaravelMetadata {
+                        laravel: Some(Box::new(LaravelMetadata {
                             custom_collection,
                             casts_definitions,
                             attributes_definitions,
                             column_names,
-                        },
+                        })),
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -789,7 +791,7 @@ impl Backend {
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
                         file_namespace: None,
-                        laravel: LaravelMetadata::default(),
+                        laravel: None,
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -844,7 +846,7 @@ impl Backend {
                         trait_aliases,
                         class_docblock: doc_info.raw_docblock,
                         file_namespace: None,
-                        laravel: LaravelMetadata::default(),
+                        laravel: None,
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -917,7 +919,7 @@ impl Backend {
                         trait_aliases: vec![],
                         class_docblock: doc_info.raw_docblock,
                         file_namespace: None,
-                        laravel: LaravelMetadata::default(),
+                        laravel: None,
                     });
 
                     // Walk method bodies for anonymous classes.
@@ -1004,7 +1006,7 @@ impl Backend {
             trait_aliases,
             class_docblock: None,
             file_namespace: None,
-            laravel: LaravelMetadata::default(),
+            laravel: None,
         }
     }
 
@@ -1431,13 +1433,13 @@ impl Backend {
                 ClassLikeMember::Method(method) => {
                     let name = method.name.value.to_string();
                     let name_offset = method.name.span.start.offset;
-                    let mut parameters = Self::extract_parameters(&method.parameter_list);
+                    let mut parameters = extract_parameters(&method.parameter_list);
                     let native_return_type = method
                         .return_type_hint
                         .as_ref()
-                        .map(|rth| Self::extract_hint_string(&rth.hint));
+                        .map(|rth| extract_hint_string(&rth.hint));
                     let is_static = method.modifiers.iter().any(|m| m.is_static());
-                    let visibility = Self::extract_visibility(method.modifiers.iter());
+                    let visibility = extract_visibility(method.modifiers.iter());
 
                     // Look up the PHPDoc `@return` tag (if any) and apply
                     // type override logic.  Also extract PHPStan conditional
@@ -1526,9 +1528,8 @@ impl Backend {
                                 let prop_name =
                                     raw_name.strip_prefix('$').unwrap_or(&raw_name).to_string();
                                 let native_hint =
-                                    param.hint.as_ref().map(|h| Self::extract_hint_string(h));
-                                let prop_visibility =
-                                    Self::extract_visibility(param.modifiers.iter());
+                                    param.hint.as_ref().map(|h| extract_hint_string(h));
+                                let prop_visibility = extract_visibility(param.modifiers.iter());
 
                                 // Check for a `@param` docblock annotation
                                 // that overrides the native type hint.
@@ -1608,7 +1609,7 @@ impl Backend {
                     });
                 }
                 ClassLikeMember::Property(property) => {
-                    let mut prop_infos = Self::extract_property_info(property);
+                    let mut prop_infos = extract_property_info(property);
 
                     // Apply PHPDoc `@var` override and `@deprecated` for each property.
                     if let Some(ctx) = doc_ctx
@@ -1634,8 +1635,8 @@ impl Backend {
                     properties.append(&mut prop_infos);
                 }
                 ClassLikeMember::Constant(constant) => {
-                    let type_hint = constant.hint.as_ref().map(|h| Self::extract_hint_string(h));
-                    let visibility = Self::extract_visibility(constant.modifiers.iter());
+                    let type_hint = constant.hint.as_ref().map(|h| extract_hint_string(h));
+                    let visibility = extract_visibility(constant.modifiers.iter());
                     let is_deprecated = if let Some(ctx) = doc_ctx {
                         docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, member)
                             .is_some_and(docblock::has_deprecated_tag)
