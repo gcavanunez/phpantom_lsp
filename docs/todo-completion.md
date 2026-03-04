@@ -300,3 +300,44 @@ argument position, check whether the target parameter has expected
 values and offer the listed constants at the top of the suggestions
 list. Flag-style parameters should also suggest bitwise-OR
 combinations.
+
+---
+
+## 10. `class_alias()` support
+**Impact: Low-Medium · Effort: Medium**
+
+Resolve `class_alias('OriginalClass', 'AliasName')` so that the alias
+name works for completion, go-to-definition, and hover. PHP's
+`class_alias()` creates a runtime alias for a class, and many codebases
+rely on this for backwards compatibility layers and framework internals
+(Laravel's Facade loader uses `class_alias` to register short names).
+
+Today, if a file calls `class_alias('\App\Services\UserService',
+'UserService')`, using `UserService` elsewhere produces no completions
+and no go-to-definition because PHPantom has no record of the alias.
+
+**Implementation:**
+
+1. **Detect `class_alias()` calls** — during AST extraction (in
+   `parser/functions.rs` or a new pass), scan for top-level
+   `class_alias(string, string)` calls where both arguments are string
+   literals.
+
+2. **Store aliases in the use map** — treat each alias as an implicit
+   `use OriginalClass as AliasName` entry. This slots into the existing
+   class resolution pipeline: when resolving `AliasName`, the use map
+   lookup finds `OriginalClass`, and all existing resolution, completion,
+   and definition logic works without changes.
+
+3. **Cross-file aliases** — for aliases defined in autoloaded files
+   (e.g. a `_ide_helper.php` or a framework bootstrap file), the alias
+   mapping needs to be stored in `class_index` or a parallel index so
+   that it's available project-wide. This is the main effort: deciding
+   where to persist the alias data and when to scan for it.
+
+4. **Edge cases** — `class_alias` with a variable or concatenated
+   string as an argument is not statically resolvable. Only handle
+   literal string arguments. Conditional `class_alias` calls (inside
+   `if (!class_exists(...))` guards) are common and should still be
+   processed since the alias is expected to be available at analysis
+   time.

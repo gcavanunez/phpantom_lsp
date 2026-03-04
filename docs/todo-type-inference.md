@@ -498,3 +498,86 @@ containers and middleware patterns but is a niche use case.
 
 See `ClosureBindDynamicReturnTypeExtension` and
 `ClosureFromCallableDynamicReturnTypeExtension` in PHPStan.
+
+---
+
+## 15. `@param-closure-this`
+**Impact: Medium-High · Effort: Medium**
+
+The `@param-closure-this` PHPDoc tag declares what `$this` refers to
+inside a closure parameter. This is critical for frameworks like Laravel
+where closures are commonly rebound via `Closure::bindTo()`:
+
+```php
+/**
+ * @param-closure-this \Illuminate\Routing\Route $callback
+ */
+function group(Closure $callback): void;
+```
+
+Without this, `$this->` inside the closure body produces no completions.
+Laravel's routing (`Route::group`), testing (`$this->get(...)` inside
+test closures), and macro APIs all rely on closure rebinding.
+
+**Implementation:**
+
+1. **Docblock parsing** — recognise `@param-closure-this` in
+   `docblock/tags.rs`. The tag format is
+   `@param-closure-this TypeName $paramName`. Extract the type string
+   and the parameter name it applies to.
+
+2. **Store on `ParameterInfo`** — add an optional `closure_this_type:
+   Option<String>` field to `ParameterInfo`. During function/method
+   extraction, if the docblock contains `@param-closure-this` for a
+   parameter, populate this field.
+
+3. **Closure `$this` resolution** — when resolving `$this` inside a
+   closure body, check whether the closure is passed as an argument to
+   a function/method call. If so, resolve the receiving function,
+   find the target parameter, and check for `closure_this_type`. If
+   present, use that type instead of the lexical `$this` class.
+
+4. **Interaction with `Closure::bind()`** — this tag is the static
+   analysis equivalent of runtime `Closure::bindTo()`. The two
+   features are complementary: `@param-closure-this` handles the
+   common case where the rebinding happens inside the called function,
+   while `Closure::bind()` support (§14) handles explicit user-side
+   rebinding.
+
+---
+
+## 16. `key-of<T>` and `value-of<T>` resolution
+**Impact: Medium · Effort: Medium**
+
+PHPantom already parses `key-of<T>` and `value-of<T>` as type keywords
+but does not resolve them to concrete types. When `T` is bound to a
+concrete array type, these utility types should resolve:
+
+- `value-of<array{a: string, b: int}>` → `string|int`
+- `key-of<array{a: string, b: int}>` → `'a'|'b'`
+- `value-of<array<string, User>>` → `User`
+- `key-of<array<string, User>>` → `string`
+
+These types commonly appear in PHPStan-typed libraries and in
+`@template` constraints. For example:
+
+```php
+/**
+ * @template T of array
+ * @param T $array
+ * @return value-of<T>
+ */
+function first(array $array): mixed;
+```
+
+**Implementation:** plug into the generic substitution pipeline in
+`inheritance.rs` / `completion/types/resolution.rs`. After template
+parameters are substituted with concrete types, detect `key-of<...>`
+and `value-of<...>` wrappers and resolve them by inspecting the inner
+type:
+
+- If the inner type is an `array{...}` shape, collect the key or value
+  types from the shape fields.
+- If the inner type is `array<K, V>`, extract `K` or `V` directly.
+- If the inner type is still an unresolved template parameter, leave
+  it as-is (it may resolve later in the chain).

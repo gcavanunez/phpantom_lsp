@@ -212,6 +212,17 @@ class SimpleXMLElement
 }
 ";
 
+// ─── stdClass stub ──────────────────────────────────────────────────────────
+
+static STDCLASS_STUB: &str = "\
+<?php
+/**
+ * Created by typecasting to object.
+ * @link https://php.net/manual/en/reserved.classes.php
+ */
+class stdClass {}
+";
+
 // ─── Exception class stubs ──────────────────────────────────────────────────
 
 static EXCEPTION_CLASS_STUB: &str = "\
@@ -286,6 +297,15 @@ pub fn create_test_backend_with_exception_stubs() -> Backend {
     let mut stubs: HashMap<&'static str, &'static str> = HashMap::new();
     stubs.insert("Exception", EXCEPTION_CLASS_STUB);
     stubs.insert("RuntimeException", RUNTIME_EXCEPTION_CLASS_STUB);
+    Backend::new_test_with_stubs(stubs)
+}
+
+/// Create a test backend whose `stub_index` contains a minimal `stdClass`
+/// stub.  This makes hover tests that resolve `\stdClass` from stubs
+/// self-contained — they work without phpstorm-stubs installed.
+pub fn create_test_backend_with_stdclass_stub() -> Backend {
+    let mut stubs: HashMap<&'static str, &'static str> = HashMap::new();
+    stubs.insert("stdClass", STDCLASS_STUB);
     Backend::new_test_with_stubs(stubs)
 }
 

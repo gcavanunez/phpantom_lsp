@@ -376,3 +376,201 @@ built-in PHP symbols from stubs are affected.
 write them to a temporary directory and use real file URIs), or accept
 that stub go-to-definition is out of scope and document it as a known
 limitation.
+
+---
+
+## 12. Folding Ranges (`textDocument/foldingRange`)
+**Impact: Medium · Effort: Low**
+
+Code folding for classes, methods, functions, arrays, comment blocks,
+and multi-line argument lists. Most editors provide basic indentation-
+based folding without LSP support, but an AST-aware provider is more
+accurate (e.g. it won't break on blank lines inside a method body).
+
+Mago's AST provides span information for every block-level construct.
+Walk the AST once and emit `FoldingRange` entries for each compound
+statement, array literal, argument list, and doc comment. Set the
+`kind` field to `FoldingRangeKind::Comment` for doc blocks and
+`FoldingRangeKind::Region` for code blocks.
+
+**Implementation:**
+
+1. **Register the capability** — set `folding_range_provider:
+   Some(FoldingRangeProviderCapability::Simple(true))` in
+   `ServerCapabilities`.
+
+2. **Handler:** Walk the file's AST and emit a `FoldingRange` for each:
+   - Class / interface / trait / enum body
+   - Method / function body (compound statement)
+   - Closure / arrow function body (if multi-line)
+   - Array literals spanning multiple lines
+   - Multi-line argument and parameter lists
+   - Doc comments (`/** ... */`)
+   - Multi-line single-line comment blocks (`// ...` sequences)
+   - `if`/`else`/`switch`/`match`/`try`/`catch`/`finally` blocks
+
+3. **Collapse text** — set `collapsed_text` to a summary where useful
+   (e.g. `"/** ... */"` for doc comments, `"{ ... }"` for code blocks).
+
+---
+
+## 13. Selection Ranges (`textDocument/selectionRange`)
+**Impact: Medium · Effort: Low**
+
+"Smart select" / expand selection. Given a cursor position, returns a
+nested chain of ranges from innermost to outermost (e.g. identifier,
+expression, statement, block, function, class, file). Most editors have
+basic word/line/block expansion, but AST-aware selection ranges produce
+much tighter expansions (e.g. selecting just the condition of an `if`,
+then the full `if` block, then the enclosing method).
+
+**Implementation:**
+
+1. **Register the capability** — set `selection_range_provider:
+   Some(SelectionRangeProviderCapability::Simple(true))` in
+   `ServerCapabilities`.
+
+2. **Handler:** For each requested position:
+   - Walk the AST to collect all nodes whose span contains the position,
+     from root down to the deepest leaf.
+   - Reverse the list (deepest first) and build a `SelectionRange`
+     linked list where each entry's `parent` points to the next wider
+     range.
+   - Return the innermost `SelectionRange`.
+
+---
+
+## 14. Type Definition (`textDocument/typeDefinition`)
+**Impact: Medium · Effort: Low**
+
+"Go to Type Definition" jumps from a variable or expression to the
+class of its resolved type, rather than to the definition site. For
+example, if `$user` is typed as `User`, go-to-definition jumps to the
+`$user = ...` assignment, while go-to-type-definition jumps to the
+`User` class declaration.
+
+The variable type resolution infrastructure already exists. The handler
+resolves the variable's type (or the expression type for property
+accesses and method calls), strips nullability and generic parameters,
+and looks up the class definition location.
+
+**Implementation:**
+
+1. **Register the capability** — set `type_definition_provider:
+   Some(TypeDefinitionProviderCapability::Simple(true))` in
+   `ServerCapabilities`.
+
+2. **Handler:** Given a position:
+   - If the symbol under the cursor is a variable, resolve its type via
+     the existing variable resolution pipeline.
+   - If it's a property access or method call, resolve the subject type.
+   - Strip `?`, `|null`, and generic parameters from the resolved type
+     string to get the base class name.
+   - Look up the class via `find_or_load_class` and return its
+     definition location.
+   - For union types, return multiple locations (one per class in the
+     union).
+
+---
+
+## 15. Document Links (`textDocument/documentLink`)
+**Impact: Low-Medium · Effort: Low**
+
+Makes `require`, `require_once`, `include`, and `include_once` paths
+Ctrl+Clickable in the editor. Useful for legacy codebases that use
+file-based includes rather than PSR-4 autoloading.
+
+**Implementation:**
+
+1. **Register the capability** — set `document_link_provider:
+   Some(DocumentLinkOptions { resolve_provider: Some(false) })` in
+   `ServerCapabilities`.
+
+2. **Handler:** Walk the AST for include/require expressions. For each:
+   - Extract the path string from the argument (only handle string
+     literals and simple concatenations like `__DIR__ . '/file.php'`).
+   - Resolve the path relative to the current file's directory and the
+     workspace root.
+   - If the resolved path exists on disk, emit a `DocumentLink` with
+     the target URI and the range of the string literal.
+
+---
+
+## 16. Type Hierarchy (`textDocument/prepareTypeHierarchy`)
+**Impact: Low-Medium · Effort: Medium**
+
+Shows the class hierarchy (supertypes and subtypes) for a class under
+the cursor. The LSP Type Hierarchy is a three-step protocol:
+
+1. `textDocument/prepareTypeHierarchy` — returns a `TypeHierarchyItem`
+   for the class/interface/trait under the cursor.
+2. `typeHierarchy/supertypes` — returns parents. Walk the
+   `extends`/`implements` chain, which is already resolved during
+   inheritance. Essentially free.
+3. `typeHierarchy/subtypes` — returns children. Calls
+   `find_implementors`, same cost profile as go-to-implementation.
+
+The supertypes direction is cheap (data already computed). The subtypes
+direction has the same cost as go-to-implementation, but it's user-
+initiated (triggered via a command, not automatic), so the latency is
+acceptable.
+
+*Depends on: go-to-implementation infrastructure (already shipped).*
+
+**Implementation:**
+
+1. **Register the capability** — set `type_hierarchy_provider:
+   Some(TypeHierarchyServerCapabilities::Options(...))` in
+   `ServerCapabilities`.
+
+2. **Prepare handler:** Resolve the class under the cursor via
+   `find_or_load_class`. Return a `TypeHierarchyItem` with the class
+   name, kind, URI, range, and selection range.
+
+3. **Supertypes handler:** Walk the class's `extends` and `implements`
+   lists. For each parent/interface, resolve via `find_or_load_class`
+   and return a `TypeHierarchyItem`.
+
+4. **Subtypes handler:** Call `find_implementors` for the class name
+   and return a `TypeHierarchyItem` for each result.
+
+---
+
+## 17. Incremental text sync
+**Impact: Low-Medium · Effort: Medium**
+
+PHPantom uses `TextDocumentSyncKind::FULL`, meaning every
+`textDocument/didChange` notification sends the entire file content.
+Switching to `TextDocumentSyncKind::INCREMENTAL` means the client sends
+only the changed range (line/column start, line/column end, replacement
+text), reducing IPC bandwidth for large files.
+
+The practical benefit is bounded: Mago requires a full re-parse of the
+file regardless of how the change was received, so the saving is purely
+in the data transferred over the IPC channel. For files under ~1000
+lines this is negligible. For very large files (5000+ lines, common in
+legacy PHP), sending 200KB on every keystroke can become noticeable.
+
+**Implementation:**
+
+1. **Change the capability** — set `text_document_sync` to
+   `TextDocumentSyncKind::INCREMENTAL` in `ServerCapabilities`.
+
+2. **Apply diffs** — in the `did_change` handler, apply each
+   `TextDocumentContentChangeEvent` to the stored file content string.
+   The events contain a `range` (start/end position) and `text`
+   (replacement). Convert positions to byte offsets and splice.
+
+3. **Re-parse** — after applying all change events, re-parse the full
+   file with Mago as today. No incremental parsing needed initially.
+
+**Relationship with partial result streaming (§6):** These two features
+address different performance axes. Incremental text sync reduces the
+cost of *inbound* data (client to server per keystroke). Partial result
+streaming (§6) reduces the *perceived latency* of *outbound* results
+(server to client for large result sets). They are independent and can
+be implemented in either order, but if both are planned, incremental
+text sync is lower priority because full-file sync is rarely the
+bottleneck in practice. Partial result streaming has a more immediate
+user-visible impact for go-to-implementation, find references, and
+workspace symbols on large codebases.

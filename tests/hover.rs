@@ -2,7 +2,10 @@
 
 mod common;
 
-use common::{create_psr4_workspace, create_test_backend, create_test_backend_with_function_stubs};
+use common::{
+    create_psr4_workspace, create_test_backend, create_test_backend_with_function_stubs,
+    create_test_backend_with_stdclass_stub,
+};
 use phpantom_lsp::Backend;
 use tower_lsp::lsp_types::*;
 
@@ -2943,7 +2946,7 @@ class Util {
 /// prepend the current namespace.
 #[test]
 fn hover_fqn_class_in_docblock_resolves_stub() {
-    let backend = create_test_backend();
+    let backend = create_test_backend_with_stdclass_stub();
     let uri = "file:///test.php";
     let content = r#"<?php
 namespace App\Models;
@@ -2985,7 +2988,7 @@ class Repo {
 /// `Collection<int, \stdClass>`.
 #[test]
 fn hover_fqn_class_in_generic_arg_resolves_stub() {
-    let backend = create_test_backend();
+    let backend = create_test_backend_with_stdclass_stub();
     let uri = "file:///test.php";
     let content = r#"<?php
 namespace App\Models;
