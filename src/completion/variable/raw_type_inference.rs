@@ -20,7 +20,7 @@ use mago_span::HasSpan;
 use mago_syntax::ast::*;
 
 use super::{ARRAY_ELEMENT_FUNCS, ARRAY_PRESERVING_FUNCS};
-use crate::Backend;
+
 use crate::docblock;
 use crate::parser::{extract_hint_string, with_parsed_program};
 use crate::types::ClassInfo;
@@ -436,9 +436,8 @@ fn infer_expression_type_string<'b>(
             .unwrap_or_else(|| "array".to_string()),
         Expression::Parenthesized(p) => infer_expression_type_string(p.expression, ctx),
         // For calls and property access, try the iterable extractor.
-        _ => {
-            Backend::extract_rhs_iterable_raw_type(expr, ctx).unwrap_or_else(|| "mixed".to_string())
-        }
+        _ => super::foreach_resolution::extract_rhs_iterable_raw_type(expr, ctx)
+            .unwrap_or_else(|| "mixed".to_string()),
     }
 }
 
@@ -504,7 +503,7 @@ fn resolve_rhs_raw_type<'b>(rhs: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
         // ── Call / property access — delegate to iterable extractor,
         //    with a source-scan fallback for standalone function calls
         //    when no `function_loader` is available. ──
-        _ => Backend::extract_rhs_iterable_raw_type(rhs, ctx).or_else(|| {
+        _ => super::foreach_resolution::extract_rhs_iterable_raw_type(rhs, ctx).or_else(|| {
             // When function_loader is None, standalone function calls
             // like `$user = getUser()` won't resolve through the
             // iterable extractor.  Fall back to scanning the source
@@ -618,7 +617,7 @@ fn infer_element_type<'b>(value: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
         },
         Expression::Call(_) => {
             // Resolve call return type via the iterable extractor.
-            Backend::extract_rhs_iterable_raw_type(value, ctx)
+            super::foreach_resolution::extract_rhs_iterable_raw_type(value, ctx)
         }
         Expression::Variable(Variable::Direct(dv)) => {
             let var_text = dv.name.to_string();
@@ -646,8 +645,8 @@ pub(in crate::completion) fn resolve_array_func_raw_type(
         .iter()
         .any(|f| f.eq_ignore_ascii_case(func_name))
     {
-        let arr_expr = Backend::first_arg_expr(args)?;
-        let raw = Backend::resolve_arg_raw_type(arr_expr, ctx)?;
+        let arr_expr = super::resolution::first_arg_expr(args)?;
+        let raw = super::resolution::resolve_arg_raw_type(arr_expr, ctx)?;
         // If the raw type already has generic params, return it as-is
         // so downstream `extract_generic_value_type` can extract the
         // element type.  Otherwise it's a plain class name and we
@@ -671,8 +670,8 @@ pub(in crate::completion) fn resolve_array_func_raw_type(
         .iter()
         .any(|f| f.eq_ignore_ascii_case(func_name))
     {
-        let arr_expr = Backend::first_arg_expr(args)?;
-        let raw = Backend::resolve_arg_raw_type(arr_expr, ctx)?;
+        let arr_expr = super::resolution::first_arg_expr(args)?;
+        let raw = super::resolution::resolve_arg_raw_type(arr_expr, ctx)?;
         if docblock::types::extract_generic_value_type(&raw).is_some() {
             return Some(raw);
         }
@@ -698,8 +697,8 @@ pub(in crate::completion) fn resolve_array_func_element_type(
         .iter()
         .any(|f| f.eq_ignore_ascii_case(func_name))
     {
-        let arr_expr = Backend::first_arg_expr(args)?;
-        let raw = Backend::resolve_arg_raw_type(arr_expr, ctx)?;
+        let arr_expr = super::resolution::first_arg_expr(args)?;
+        let raw = super::resolution::resolve_arg_raw_type(arr_expr, ctx)?;
         return docblock::types::extract_generic_value_type(&raw);
     }
 
@@ -740,7 +739,7 @@ fn extract_array_map_element_type(
     args: &ArgumentList<'_>,
     ctx: &VarResolutionCtx<'_>,
 ) -> Option<String> {
-    let callback_expr = Backend::first_arg_expr(args)?;
+    let callback_expr = super::resolution::first_arg_expr(args)?;
 
     // Try to get the callback's return type hint.
     let return_hint = match callback_expr {
@@ -763,8 +762,8 @@ fn extract_array_map_element_type(
     }
 
     // Fallback: use the input array's element type.
-    let arr_expr = Backend::nth_arg_expr(args, 1)?;
-    let raw = Backend::resolve_arg_raw_type(arr_expr, ctx)?;
+    let arr_expr = super::resolution::nth_arg_expr(args, 1)?;
+    let raw = super::resolution::resolve_arg_raw_type(arr_expr, ctx)?;
     docblock::types::extract_generic_value_type(&raw)
 }
 

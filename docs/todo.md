@@ -18,7 +18,7 @@ with each step.
 | [Type Inference](todo-type-inference.md) | Generic resolution, conditional return types, type narrowing, stub attribute handling |
 | [Completion](todo-completion.md) | Completion-specific improvements (enum return types, array shapes, expected values) |
 | [Diagnostics](todo-diagnostics.md) | `@deprecated` warnings, resolution-failure diagnostics, unused `use` dimming, suppression intelligence |
-| [Code Actions](todo-actions.md) | Implement missing methods, null coalescing simplification, extract function, switch→match |
+| [Code Actions](todo-actions.md) | Import class, remove unused imports, implement missing methods, null coalescing simplification, extract function, switch→match |
 | [LSP Features](todo-lsp-features.md) | Find references, document highlighting, document/workspace symbols, rename, code lens, inlay hints, PHPDoc generation, partial result streaming |
 | [Hover](todo-hover.md) | Deprecation messages, constant values, member origin indicators, enum case listing, trait method summaries |
 | [Signature Help](todo-signatureHelp.md) | Parameter descriptions, signature-level docs, default values, attribute/closure support |
@@ -29,97 +29,124 @@ with each step.
 
 ---
 
-## Sprint 1 — Widen the intelligence lead & polish
+## Sprint 1 — Finish hover & signature help
 
-Type intelligence depth is PHPantom's defining advantage. This sprint
-deepens that lead with the two highest-value type inference gaps, wires
-up the signature help data that already exists, and ships the two
+Hover and signature help are functional but missing data that users
+expect. This sprint finishes both features so they feel complete.
+
+| # | Item | Effort | Domain | Doc Link |
+|---|---|---|---|---|
+| 1 | Deprecation message text in hover | Low | Hover | [todo-hover.md §1](todo-hover.md#1-deprecation-message-text) |
+| 2 | Constant value display in hover | Low | Hover | [todo-hover.md §2](todo-hover.md#2-constant-value-display) |
+| 3 | Member origin indicators in hover | Low-Medium | Hover | [todo-hover.md §3](todo-hover.md#3-member-origin-indicators) |
+| 4 | Enum case listing in enum hover | Low | Hover | [todo-hover.md §4](todo-hover.md#4-enum-case-listing-in-enum-hover) |
+| 5 | Trait hover shows public method signatures | Low | Hover | [todo-hover.md §5](todo-hover.md#5-trait-hover-shows-public-method-signatures) |
+| 6 | Per-parameter `@param` descriptions in signature help | Trivial | Signature Help | [todo-signatureHelp.md §1](todo-signatureHelp.md#1-per-parameter-param-descriptions) |
+| 7 | Signature-level documentation | Small | Signature Help | [todo-signatureHelp.md §2](todo-signatureHelp.md#2-signature-level-documentation-methodfunction-docblock) |
+| 8 | Default values in signature help parameter labels | Trivial | Signature Help | [todo-signatureHelp.md §3](todo-signatureHelp.md#3-default-values-in-parameter-labels) |
+| 9 | Retrigger on `)` to dismiss signature help | Trivial | Signature Help | [todo-signatureHelp.md §6](todo-signatureHelp.md#6-retrigger-on--to-dismiss) |
+
+**Why this order:** Hover items 1-5 are all low effort and surface data
+we already have or can cheaply derive. Signature help items 6-9 are pure
+wiring (the data already exists on `ParameterInfo`/`MethodInfo`/
+`FunctionInfo`). A few days of work for noticeably richer hover and
+signature popups.
+
+---
+
+## Sprint 2 — Code actions (imports & diagnostics)
+
+Ship the first code actions. Import management is the single most
+requested code action in any PHP language server. Pair it with the
 cheapest diagnostics for maximum visual impact.
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
-| 1 | Function-level `@template` generic resolution | Medium | Type Inference | [todo-type-inference.md §2](todo-type-inference.md#2-function-level-template-generic-resolution) |
-| 2 | Inherited docblock type propagation | Medium | Type Inference | [todo-type-inference.md §4](todo-type-inference.md#4-inherited-docblock-type-propagation) |
-| 3 | Per-parameter `@param` descriptions in signature help | Trivial | Signature Help | [todo-signatureHelp.md §1](todo-signatureHelp.md#1-per-parameter-param-descriptions) |
-| 4 | Signature-level documentation | Small | Signature Help | [todo-signatureHelp.md §2](todo-signatureHelp.md#2-signature-level-documentation-methodfunction-docblock) |
-| 5 | Default values in signature help parameter labels | Trivial | Signature Help | [todo-signatureHelp.md §3](todo-signatureHelp.md#3-default-values-in-parameter-labels) |
-| 6 | `@deprecated` usage diagnostics | Low | Diagnostics | [todo-diagnostics.md §1](todo-diagnostics.md#1-deprecated-usage-diagnostics) |
-| 7 | Unused `use` dimming | Low | Diagnostics | [todo-diagnostics.md §4](todo-diagnostics.md#4-unused-use-dimming) |
+| 10 | Import class (code action) | Medium | Code Actions | [todo-actions.md §5](todo-actions.md#5-import-class) |
+| 11 | Remove unused imports (code action) | Low | Code Actions | [todo-actions.md §6](todo-actions.md#6-remove-unused-imports) |
+| 12 | Unused `use` dimming | Low | Diagnostics | [todo-diagnostics.md §4](todo-diagnostics.md#4-unused-use-dimming) |
+| 13 | `@deprecated` usage diagnostics | Low | Diagnostics | [todo-diagnostics.md §1](todo-diagnostics.md#1-deprecated-usage-diagnostics) |
+| 14 | Implement missing abstract/interface methods (code action) | Medium | Code Actions | [todo-actions.md §1](todo-actions.md#1-implement-missing-abstractinterface-methods) |
 
-**Why this order:** Items 1–2 are the highest-value type inference gaps.
-Function-level `@template` unlocks `collect()` and every generic helper
-function — huge for Laravel. Inherited docblock propagation fixes every
-"why doesn't completion work on this override?" report. Items 3–5 are
-pure wiring — the data already exists on `ParameterInfo`/`MethodInfo`/
-`FunctionInfo`, it just needs plumbing to the LSP response. Half a day
-of work for noticeably richer signature popups. Items 6–7 are the
-cheapest diagnostics to ship and the most visually impactful —
-strikethrough on deprecated calls and dimmed unused imports signal
-"production-ready" to new users.
+**Why this order:** Items 10-11 are the bread-and-butter code actions
+that every developer uses daily. Item 12 pairs naturally with item 11
+(dimmed imports that can be removed with a quick-fix). Item 13 adds
+strikethrough on deprecated calls, signalling "production-ready" to new
+users. Item 14 builds on the code action infrastructure from 10-11.
 
 ---
 
-## Sprint 2 — Close the LSP feature gap
+## Sprint 3 — Refactoring & references
 
-These items close the most commonly expected LSP feature surface gaps.
-Each one removes a reason someone might look elsewhere. Ordered so that
-low-effort items land first, then the bigger pieces that round out the
-core editing experience.
+Rename and Extract Function are the two refactoring pillars. Find
+References is a prerequisite for Rename and broadly useful on its own.
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
-| 8 | Document Highlighting (`textDocument/documentHighlight`) | Low | LSP Features | [todo-lsp-features.md §2](todo-lsp-features.md#2-document-highlighting-textdocumentdocumenthighlight) |
-| 9 | Document Symbols (`textDocument/documentSymbol`) | Low | LSP Features | [todo-lsp-features.md §4](todo-lsp-features.md#4-document-symbols-textdocumentdocumentsymbol) |
-| 10 | Workspace Symbols (`workspace/symbol`) | Low-Medium | LSP Features | [todo-lsp-features.md §5](todo-lsp-features.md#5-workspace-symbols-workspacesymbol) |
-| 11 | Folding Ranges (`textDocument/foldingRange`) | Low | LSP Features | [todo-lsp-features.md §12](todo-lsp-features.md#12-folding-ranges-textdocumentfoldingrange) |
-| 12 | Selection Ranges (`textDocument/selectionRange`) | Low | LSP Features | [todo-lsp-features.md §13](todo-lsp-features.md#13-selection-ranges-textdocumentselectionrange) |
-| 13 | Type Definition (`textDocument/typeDefinition`) | Low | LSP Features | [todo-lsp-features.md §14](todo-lsp-features.md#14-type-definition-textdocumenttypedefinition) |
-| 14 | Find References (`textDocument/references`) | Medium-High | LSP Features | [todo-lsp-features.md §1](todo-lsp-features.md#1-find-references-textdocumentreferences) |
-| 15 | Rename (`textDocument/rename`) | Medium-High | LSP Features | [todo-lsp-features.md §7](todo-lsp-features.md#7-rename-textdocumentrename) |
-| 16 | Implement missing abstract/interface methods (code action) | Medium | Code Actions | [todo-actions.md §1](todo-actions.md#1-implement-missing-abstractinterface-methods) |
-| 17 | Retrigger on `)` to dismiss signature help | Trivial | Signature Help | [todo-signatureHelp.md §6](todo-signatureHelp.md#6-retrigger-on--to-dismiss) |
+| 15 | Find References (`textDocument/references`) | Medium-High | LSP Features | [todo-lsp-features.md §1](todo-lsp-features.md#1-find-references-textdocumentreferences) |
+| 16 | Rename (`textDocument/rename`) | Medium-High | LSP Features | [todo-lsp-features.md §7](todo-lsp-features.md#7-rename-textdocumentrename) |
+| 17 | Extract Function refactoring | Very High | Code Actions | [todo-actions.md §3](todo-actions.md#3-extract-function-refactoring) |
 
-**After Sprint 2:** PHPantom covers every commonly expected LSP feature
+**Why this order:** Find References (15) provides the variable/symbol
+usage tracking infrastructure that Rename (16) and Extract Function (17)
+both depend on. Rename is a smaller step that validates the
+infrastructure before tackling Extract Function.
+
+---
+
+## Sprint 4 — Close the LSP feature gap
+
+These items close the most commonly expected LSP feature surface gaps.
+Each one removes a reason someone might look elsewhere.
+
+| # | Item | Effort | Domain | Doc Link |
+|---|---|---|---|---|
+| 18 | Document Highlighting (`textDocument/documentHighlight`) | Low | LSP Features | [todo-lsp-features.md §2](todo-lsp-features.md#2-document-highlighting-textdocumentdocumenthighlight) |
+| 19 | Document Symbols (`textDocument/documentSymbol`) | Low | LSP Features | [todo-lsp-features.md §4](todo-lsp-features.md#4-document-symbols-textdocumentdocumentsymbol) |
+| 20 | Workspace Symbols (`workspace/symbol`) | Low-Medium | LSP Features | [todo-lsp-features.md §5](todo-lsp-features.md#5-workspace-symbols-workspacesymbol) |
+| 21 | Folding Ranges (`textDocument/foldingRange`) | Low | LSP Features | [todo-lsp-features.md §12](todo-lsp-features.md#12-folding-ranges-textdocumentfoldingrange) |
+| 22 | Selection Ranges (`textDocument/selectionRange`) | Low | LSP Features | [todo-lsp-features.md §13](todo-lsp-features.md#13-selection-ranges-textdocumentselectionrange) |
+| 23 | Type Definition (`textDocument/typeDefinition`) | Low | LSP Features | [todo-lsp-features.md §14](todo-lsp-features.md#14-type-definition-textdocumenttypedefinition) |
+| 24 | PHPDoc block generation on `/**` | Medium | LSP Features | [todo-lsp-features.md §3](todo-lsp-features.md#3-phpdoc-block-generation-on-) |
+
+**After Sprint 4:** PHPantom covers every commonly expected LSP feature
 and surpasses the field on type intelligence, generics, Laravel, and
 performance. No feature gaps remain for typical day-to-day editing.
 
 ---
 
-## Sprint 3 — Complete feature set & project polish
+## Sprint 5 — Type intelligence depth & polish
 
-This sprint adds the features that power users and full-IDE migrants
-expect and would miss. Ordered so that each item provides maximum
-coverage of what's expected from a mature PHP language server.
+Type intelligence depth is PHPantom's defining advantage. This sprint
+deepens that lead and rounds out the remaining feature surface.
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
-| 18 | Deprecation message text in hover | Low | Hover | [todo-hover.md §1](todo-hover.md#1-deprecation-message-text) |
-| 19 | Constant value display in hover | Low | Hover | [todo-hover.md §2](todo-hover.md#2-constant-value-display) |
-| 20 | Member origin indicators in hover | Low-Medium | Hover | [todo-hover.md §3](todo-hover.md#3-member-origin-indicators) |
-| 21 | `BackedEnum::from()` / `::tryFrom()` return type refinement | Low | Completion | [todo-completion.md §1](todo-completion.md#1-backedenumfrom--tryfrom-return-type-refinement) |
-| 22 | Pipe operator (PHP 8.5) type resolution | Low | Type Inference | [todo-type-inference.md §1](todo-type-inference.md#1-pipe-operator-php-85) |
-| 23 | Code Lens: jump to prototype method | Low | LSP Features | [todo-lsp-features.md §8](todo-lsp-features.md#8-code-lens-jump-to-prototype-method) |
-| 24 | Implementation → interface method declaration (reverse jump) | Low | LSP Features | [todo-lsp-features.md §10](todo-lsp-features.md#10-reverse-jump-implementation--interface-method-declaration) |
-| 25 | `@param-closure-this` | Medium | Type Inference | [todo-type-inference.md §15](todo-type-inference.md#15-param-closure-this) |
-| 26 | `key-of<T>` and `value-of<T>` resolution | Medium | Type Inference | [todo-type-inference.md §16](todo-type-inference.md#16-key-oft-and-value-oft-resolution) |
-| 27 | Document Links (`textDocument/documentLink`) | Low | LSP Features | [todo-lsp-features.md §15](todo-lsp-features.md#15-document-links-textdocumentdocumentlink) |
-| 28 | Conditional return types `($param is T ? A : B)` | Medium | Type Inference | [todo-type-inference.md §3](todo-type-inference.md#3-parse-and-resolve-param-is-t--a--b-return-types) |
-| 29 | PHPDoc block generation on `/**` | Medium | LSP Features | [todo-lsp-features.md §3](todo-lsp-features.md#3-phpdoc-block-generation-on-) |
-| 30 | Resolution-failure diagnostics | Medium | Diagnostics | [todo-diagnostics.md §2](todo-diagnostics.md#2-resolution-failure-diagnostics) |
-| 31 | Warn when composer.json is missing or classmap not optimized | Medium | Diagnostics | [todo-diagnostics.md §5](todo-diagnostics.md#5-warn-when-composerjson-is-missing-or-classmap-is-not-optimized) |
-| 32 | File system watching for vendor and project changes | Medium | Type Inference | [todo-type-inference.md §5](todo-type-inference.md#5-file-system-watching-for-vendor-and-project-changes) |
-| 33 | Property hooks (PHP 8.4) | Medium | Type Inference | [todo-type-inference.md §6](todo-type-inference.md#6-property-hooks-php-84) |
-| 34 | Simplify with null coalescing / null-safe operator (code action) | Medium | Code Actions | [todo-actions.md §2](todo-actions.md#2-simplify-with-null-coalescing--null-safe-operator) |
-| 35 | Inlay hints (`textDocument/inlayHint`) | Medium | LSP Features | [todo-lsp-features.md §9](todo-lsp-features.md#9-inlay-hints-textdocumentinlayhint) |
+| 25 | Function-level `@template` generic resolution | Medium | Type Inference | [todo-type-inference.md §2](todo-type-inference.md#2-function-level-template-generic-resolution) |
+| 26 | Inherited docblock type propagation | Medium | Type Inference | [todo-type-inference.md §4](todo-type-inference.md#4-inherited-docblock-type-propagation) |
+| 27 | `BackedEnum::from()` / `::tryFrom()` return type refinement | Low | Completion | [todo-completion.md §1](todo-completion.md#1-backedenumfrom--tryfrom-return-type-refinement) |
+| 28 | Pipe operator (PHP 8.5) type resolution | Low | Type Inference | [todo-type-inference.md §1](todo-type-inference.md#1-pipe-operator-php-85) |
+| 29 | Conditional return types `($param is T ? A : B)` | Medium | Type Inference | [todo-type-inference.md §3](todo-type-inference.md#3-parse-and-resolve-param-is-t--a--b-return-types) |
+| 30 | `@param-closure-this` | Medium | Type Inference | [todo-type-inference.md §15](todo-type-inference.md#15-param-closure-this) |
+| 31 | `key-of<T>` and `value-of<T>` resolution | Medium | Type Inference | [todo-type-inference.md §16](todo-type-inference.md#16-key-oft-and-value-oft-resolution) |
+| 32 | Code Lens: jump to prototype method | Low | LSP Features | [todo-lsp-features.md §8](todo-lsp-features.md#8-code-lens-jump-to-prototype-method) |
+| 33 | Implementation → interface method declaration (reverse jump) | Low | LSP Features | [todo-lsp-features.md §10](todo-lsp-features.md#10-reverse-jump-implementation--interface-method-declaration) |
+| 34 | Document Links (`textDocument/documentLink`) | Low | LSP Features | [todo-lsp-features.md §15](todo-lsp-features.md#15-document-links-textdocumentdocumentlink) |
+| 35 | Resolution-failure diagnostics | Medium | Diagnostics | [todo-diagnostics.md §2](todo-diagnostics.md#2-resolution-failure-diagnostics) |
+| 36 | Warn when composer.json is missing or classmap not optimized | Medium | Diagnostics | [todo-diagnostics.md §5](todo-diagnostics.md#5-warn-when-composerjson-is-missing-or-classmap-is-not-optimized) |
+| 37 | File system watching for vendor and project changes | Medium | Type Inference | [todo-type-inference.md §5](todo-type-inference.md#5-file-system-watching-for-vendor-and-project-changes) |
+| 38 | Property hooks (PHP 8.4) | Medium | Type Inference | [todo-type-inference.md §6](todo-type-inference.md#6-property-hooks-php-84) |
+| 39 | Simplify with null coalescing / null-safe operator (code action) | Medium | Code Actions | [todo-actions.md §2](todo-actions.md#2-simplify-with-null-coalescing--null-safe-operator) |
+| 40 | Inlay hints (`textDocument/inlayHint`) | Medium | LSP Features | [todo-lsp-features.md §9](todo-lsp-features.md#9-inlay-hints-textdocumentinlayhint) |
 
-**After Sprint 3:** PHPantom has a complete, polished LSP feature set.
+**After Sprint 5:** PHPantom has a complete, polished LSP feature set.
 Users moving to Zed/Neovim/Helix lose nothing on the intelligence side
 and gain 1000× faster startup. The remaining gaps are Blade and
 formatting (not our domain).
 
 ---
 
-## Sprint 4 — Deep type accuracy & Laravel excellence
+## Sprint 6 — Deep type accuracy & Laravel excellence
 
 These items push type resolution accuracy beyond what any tool offers.
 They're the long tail that makes PHPantom the definitive choice for
@@ -127,34 +154,34 @@ projects that care about types.
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
-| 36 | `collect()` and helper functions lose generic type info | High | Laravel | [todo-laravel.md §5](todo-laravel.md#5-collect-and-other-helper-functions-lose-generic-type-info) |
-| 37 | Custom Eloquent builders (`HasBuilder` / `#[UseEloquentBuilder]`) | Medium | Laravel | [todo-laravel.md §3](todo-laravel.md#3-custom-eloquent-builders-hasbuilder--useeloquentbuilder) |
-| 38 | `abort_if`/`abort_unless` type narrowing | Medium | Laravel | [todo-laravel.md §4](todo-laravel.md#4-abort_ifabort_unless-type-narrowing) |
-| 39 | Narrow types of `&$var` parameters after function calls | Medium | Type Inference | [todo-type-inference.md §7](todo-type-inference.md#7-narrow-types-of-var-parameters-after-function-calls) |
-| 40 | SPL iterator generic stubs | Medium | Type Inference | [todo-type-inference.md §8](todo-type-inference.md#8-spl-iterator-generic-stubs) |
-| 41 | `LanguageLevelTypeAware` version-aware type hints | Medium | Completion | [todo-completion.md §3](todo-completion.md#3-languageleveltypeaware-version-aware-type-hints) |
-| 42 | `#[ArrayShape]` return shapes on stub functions | Medium | Completion | [todo-completion.md §4](todo-completion.md#4-arrayshape-return-shapes-on-stub-functions) |
-| 43 | `#[Deprecated]` structured deprecation metadata | Low | Completion | [todo-completion.md §5](todo-completion.md#5-deprecated-structured-deprecation-metadata) |
-| 44 | Asymmetric visibility (PHP 8.4) | Low | Type Inference | [todo-type-inference.md §9](todo-type-inference.md#9-asymmetric-visibility-php-84) |
-| 45 | Type Hierarchy (`textDocument/prepareTypeHierarchy`) | Medium | LSP Features | [todo-lsp-features.md §16](todo-lsp-features.md#16-type-hierarchy-textdocumentpreparetypehierarchy) |
-| 46 | `class_alias()` support | Medium | Completion | [todo-completion.md §10](todo-completion.md#10-class_alias-support) |
-| 47 | Attribute constructor signature help | Medium | Signature Help | [todo-signatureHelp.md §4](todo-signatureHelp.md#4-attribute-constructor-signature-help) |
-| 48 | Closure/arrow function parameter signature help | Medium | Signature Help | [todo-signatureHelp.md §5](todo-signatureHelp.md#5-closure--arrow-function-parameter-signature-help) |
-| 49 | Diagnostic suppression intelligence | Medium | Diagnostics | [todo-diagnostics.md §3](todo-diagnostics.md#3-diagnostic-suppression-intelligence) |
-| 50 | Partial result streaming via `$/progress` | Medium-High | LSP Features | [todo-lsp-features.md §6](todo-lsp-features.md#6-partial-result-streaming-via-progress) |
+| 41 | `collect()` and helper functions lose generic type info | High | Laravel | [todo-laravel.md §5](todo-laravel.md#5-collect-and-other-helper-functions-lose-generic-type-info) |
+| 42 | Custom Eloquent builders (`HasBuilder` / `#[UseEloquentBuilder]`) | Medium | Laravel | [todo-laravel.md §3](todo-laravel.md#3-custom-eloquent-builders-hasbuilder--useeloquentbuilder) |
+| 43 | `abort_if`/`abort_unless` type narrowing | Medium | Laravel | [todo-laravel.md §4](todo-laravel.md#4-abort_ifabort_unless-type-narrowing) |
+| 44 | Narrow types of `&$var` parameters after function calls | Medium | Type Inference | [todo-type-inference.md §7](todo-type-inference.md#7-narrow-types-of-var-parameters-after-function-calls) |
+| 45 | SPL iterator generic stubs | Medium | Type Inference | [todo-type-inference.md §8](todo-type-inference.md#8-spl-iterator-generic-stubs) |
+| 46 | `LanguageLevelTypeAware` version-aware type hints | Medium | Completion | [todo-completion.md §3](todo-completion.md#3-languageleveltypeaware-version-aware-type-hints) |
+| 47 | `#[ArrayShape]` return shapes on stub functions | Medium | Completion | [todo-completion.md §4](todo-completion.md#4-arrayshape-return-shapes-on-stub-functions) |
+| 48 | `#[Deprecated]` structured deprecation metadata | Low | Completion | [todo-completion.md §5](todo-completion.md#5-deprecated-structured-deprecation-metadata) |
+| 49 | Asymmetric visibility (PHP 8.4) | Low | Type Inference | [todo-type-inference.md §9](todo-type-inference.md#9-asymmetric-visibility-php-84) |
+| 50 | Type Hierarchy (`textDocument/prepareTypeHierarchy`) | Medium | LSP Features | [todo-lsp-features.md §16](todo-lsp-features.md#16-type-hierarchy-textdocumentpreparetypehierarchy) |
+| 51 | `class_alias()` support | Medium | Completion | [todo-completion.md §10](todo-completion.md#10-class_alias-support) |
+| 52 | Attribute constructor signature help | Medium | Signature Help | [todo-signatureHelp.md §4](todo-signatureHelp.md#4-attribute-constructor-signature-help) |
+| 53 | Closure/arrow function parameter signature help | Medium | Signature Help | [todo-signatureHelp.md §5](todo-signatureHelp.md#5-closure--arrow-function-parameter-signature-help) |
+| 54 | Diagnostic suppression intelligence | Medium | Diagnostics | [todo-diagnostics.md §3](todo-diagnostics.md#3-diagnostic-suppression-intelligence) |
+| 55 | Partial result streaming via `$/progress` | Medium-High | LSP Features | [todo-lsp-features.md §6](todo-lsp-features.md#6-partial-result-streaming-via-progress) |
 
-**Note:** Item 36 (`collect()` generics) is a direct payoff of Sprint 1
-item 1 (function-level `@template`). Once the infrastructure exists, the
-Laravel-specific manifestation is a small incremental step. Item 45
+**Note:** Item 41 (`collect()` generics) is a direct payoff of Sprint 5
+item 25 (function-level `@template`). Once the infrastructure exists,
+the Laravel-specific manifestation is a small incremental step. Item 50
 (Type Hierarchy) depends on the go-to-implementation infrastructure and
-should be scheduled after that work is stable. Item 50 (partial result
+should be scheduled after that work is stable. Item 55 (partial result
 streaming) addresses outbound latency for large result sets. See also
-item 68 (incremental text sync) in the backlog, which addresses the
+item 73 (incremental text sync) in the backlog, which addresses the
 complementary inbound direction.
 
 ---
 
-## Sprint 5 — Blade support
+## Sprint 7 — Blade support
 
 Blade is a multi-phase project tracked in [todo-blade.md](todo-blade.md).
 Shipping Blade support makes PHPantom the first open-source PHP language
@@ -178,41 +205,38 @@ eventually but don't move the needle.
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
-| 51 | Array functions needing new code paths | High | Completion | [todo-completion.md §2](todo-completion.md#2-array-functions-needing-new-code-paths) |
-| 52 | Go-to-definition for array shape keys via bracket access | Medium | Completion | [todo-completion.md §6](todo-completion.md#6-go-to-definition-for-array-shape-keys-via-bracket-access) |
-| 53 | No go-to-definition for built-in (stub) functions and constants | Medium | LSP Features | [todo-lsp-features.md §11](todo-lsp-features.md#11-no-go-to-definition-for-built-in-stub-functions-and-constants) |
-| 54 | `str_contains` / `str_starts_with` / `str_ends_with` → non-empty-string narrowing | Low | Type Inference | [todo-type-inference.md §10](todo-type-inference.md#10-str_contains--str_starts_with--str_ends_with--non-empty-string-narrowing) |
-| 55 | `count` / `sizeof` comparison → non-empty-array narrowing | Low | Type Inference | [todo-type-inference.md §11](todo-type-inference.md#11-count--sizeof-comparison--non-empty-array-narrowing) |
-| 56 | Fiber type resolution | Low | Type Inference | [todo-type-inference.md §12](todo-type-inference.md#12-fiber-type-resolution) |
-| 57 | Non-empty-string propagation through string functions | Low | Type Inference | [todo-type-inference.md §13](todo-type-inference.md#13-non-empty-string-propagation-through-string-functions) |
-| 58 | `Closure::bind()` / `Closure::fromCallable()` return type preservation | Low-Medium | Type Inference | [todo-type-inference.md §14](todo-type-inference.md#14-closurebind--closurefromcallable-return-type-preservation) |
-| 59 | Non-array functions with dynamic return types | High | Completion | [todo-completion.md §7](todo-completion.md#7-non-array-functions-with-dynamic-return-types) |
-| 60 | `#[ReturnTypeContract]` parameter-dependent return types | Low | Completion | [todo-completion.md §8](todo-completion.md#8-returntypecontract-parameter-dependent-return-types) |
-| 61 | `#[ExpectedValues]` parameter value suggestions | Medium | Completion | [todo-completion.md §9](todo-completion.md#9-expectedvalues-parameter-value-suggestions) |
+| 56 | Array functions needing new code paths | High | Completion | [todo-completion.md §2](todo-completion.md#2-array-functions-needing-new-code-paths) |
+| 57 | Go-to-definition for array shape keys via bracket access | Medium | Completion | [todo-completion.md §6](todo-completion.md#6-go-to-definition-for-array-shape-keys-via-bracket-access) |
+| 58 | No go-to-definition for built-in (stub) functions and constants | Medium | LSP Features | [todo-lsp-features.md §11](todo-lsp-features.md#11-no-go-to-definition-for-built-in-stub-functions-and-constants) |
+| 59 | `str_contains` / `str_starts_with` / `str_ends_with` → non-empty-string narrowing | Low | Type Inference | [todo-type-inference.md §10](todo-type-inference.md#10-str_contains--str_starts_with--str_ends_with--non-empty-string-narrowing) |
+| 60 | `count` / `sizeof` comparison → non-empty-array narrowing | Low | Type Inference | [todo-type-inference.md §11](todo-type-inference.md#11-count--sizeof-comparison--non-empty-array-narrowing) |
+| 61 | Fiber type resolution | Low | Type Inference | [todo-type-inference.md §12](todo-type-inference.md#12-fiber-type-resolution) |
+| 62 | Non-empty-string propagation through string functions | Low | Type Inference | [todo-type-inference.md §13](todo-type-inference.md#13-non-empty-string-propagation-through-string-functions) |
+| 63 | `Closure::bind()` / `Closure::fromCallable()` return type preservation | Low-Medium | Type Inference | [todo-type-inference.md §14](todo-type-inference.md#14-closurebind--closurefromcallable-return-type-preservation) |
+| 64 | Non-array functions with dynamic return types | High | Completion | [todo-completion.md §7](todo-completion.md#7-non-array-functions-with-dynamic-return-types) |
+| 65 | `#[ReturnTypeContract]` parameter-dependent return types | Low | Completion | [todo-completion.md §8](todo-completion.md#8-returntypecontract-parameter-dependent-return-types) |
+| 66 | `#[ExpectedValues]` parameter value suggestions | Medium | Completion | [todo-completion.md §9](todo-completion.md#9-expectedvalues-parameter-value-suggestions) |
 
-### Hover & signature help polish
+### Signature help polish
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
-| 62 | Enum case listing in enum hover | Low | Hover | [todo-hover.md §4](todo-hover.md#4-enum-case-listing-in-enum-hover) |
-| 63 | Trait hover shows public method signatures | Low | Hover | [todo-hover.md §5](todo-hover.md#5-trait-hover-shows-public-method-signatures) |
-| 64 | Multiple overloaded signatures | Medium-High | Signature Help | [todo-signatureHelp.md §7](todo-signatureHelp.md#7-multiple-overloaded-signatures) |
-| 65 | Named argument awareness in active parameter | Medium | Signature Help | [todo-signatureHelp.md §8](todo-signatureHelp.md#8-named-argument-awareness-in-active-parameter) |
-| 66 | Language construct signature help and hover | Low | Signature Help | [todo-signatureHelp.md §9](todo-signatureHelp.md#9-language-construct-signature-help-and-hover) |
+| 67 | Multiple overloaded signatures | Medium-High | Signature Help | [todo-signatureHelp.md §7](todo-signatureHelp.md#7-multiple-overloaded-signatures) |
+| 68 | Named argument awareness in active parameter | Medium | Signature Help | [todo-signatureHelp.md §8](todo-signatureHelp.md#8-named-argument-awareness-in-active-parameter) |
+| 69 | Language construct signature help and hover | Low | Signature Help | [todo-signatureHelp.md §9](todo-signatureHelp.md#9-language-construct-signature-help-and-hover) |
 
 ### LSP features & code actions
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
-| 67 | Switch → match conversion | Medium | Code Actions | [todo-actions.md §4](todo-actions.md#4-switch--match-conversion) |
-| 68 | Incremental text sync | Medium | LSP Features | [todo-lsp-features.md §17](todo-lsp-features.md#17-incremental-text-sync) |
-| 69 | Extract Function refactoring | Very High | Code Actions | [todo-actions.md §3](todo-actions.md#3-extract-function-refactoring) |
+| 70 | Switch → match conversion | Medium | Code Actions | [todo-actions.md §4](todo-actions.md#4-switch--match-conversion) |
+| 71 | Incremental text sync | Medium | LSP Features | [todo-lsp-features.md §17](todo-lsp-features.md#17-incremental-text-sync) |
 
 ### Bug fixes
 
 | # | Item | Effort | Domain | Doc Link |
 |---|---|---|---|---|
-| 70 | Short-name collisions in `find_implementors` | Low | Bug Fixes | [todo-bugs.md §1](todo-bugs.md#1-short-name-collisions-in-find_implementors) |
+| 72 | Short-name collisions in `find_implementors` | Low | Bug Fixes | [todo-bugs.md §1](todo-bugs.md#1-short-name-collisions-in-find_implementors) |
 
 ---
 

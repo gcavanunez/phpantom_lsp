@@ -21,7 +21,6 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::*;
 
-use crate::Backend;
 use crate::docblock;
 use crate::types::{AssertionKind, ClassInfo};
 
@@ -976,12 +975,13 @@ fn try_extract_in_array<'b>(
 ///
 /// Handles `$variable` (via docblock + assignment chasing) as well as
 /// method calls, property access, and other expressions supported by
-/// `Backend::resolve_arg_raw_type`.
+/// [`resolve_arg_raw_type`](crate::completion::variable::resolution::resolve_arg_raw_type).
 fn resolve_in_array_element_type(
     haystack_expr: &Expression<'_>,
     ctx: &VarResolutionCtx<'_>,
 ) -> Option<String> {
-    let raw_type = Backend::resolve_arg_raw_type(haystack_expr, ctx)?;
+    let raw_type =
+        crate::completion::variable::resolution::resolve_arg_raw_type(haystack_expr, ctx)?;
     docblock::types::extract_iterable_element_type(&raw_type)
 }
 

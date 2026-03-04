@@ -22,174 +22,462 @@ use mago_span::HasSpan;
 use mago_syntax::ast::sequence::TokenSeparatedSequence;
 use mago_syntax::ast::*;
 
-use crate::Backend;
 use crate::docblock::replace_self_in_type;
 use crate::parser::extract_hint_string;
 use crate::types::{AccessKind, ClassInfo};
 
 use crate::completion::resolver::VarResolutionCtx;
 
-impl Backend {
-    /// Check whether `stmt` contains a closure or arrow function whose
-    /// body encloses the cursor.  If so, resolve the variable from the
-    /// closure's parameter list and walk its body, then return `true`.
-    pub(in crate::completion) fn try_resolve_in_closure_stmt<'b>(
-        stmt: &'b Statement<'b>,
-        ctx: &VarResolutionCtx<'_>,
-        results: &mut Vec<ClassInfo>,
-    ) -> bool {
-        match stmt {
-            Statement::Expression(expr_stmt) => {
-                Self::try_resolve_in_closure_expr(expr_stmt.expression, ctx, results)
+/// Check whether `stmt` contains a closure or arrow function whose
+/// body encloses the cursor.  If so, resolve the variable from the
+/// closure's parameter list and walk its body, then return `true`.
+pub(in crate::completion) fn try_resolve_in_closure_stmt<'b>(
+    stmt: &'b Statement<'b>,
+    ctx: &VarResolutionCtx<'_>,
+    results: &mut Vec<ClassInfo>,
+) -> bool {
+    match stmt {
+        Statement::Expression(expr_stmt) => {
+            try_resolve_in_closure_expr(expr_stmt.expression, ctx, results)
+        }
+        Statement::Return(ret) => {
+            if let Some(val) = &ret.value {
+                try_resolve_in_closure_expr(val, ctx, results)
+            } else {
+                false
             }
-            Statement::Return(ret) => {
-                if let Some(val) = &ret.value {
-                    Self::try_resolve_in_closure_expr(val, ctx, results)
+        }
+        Statement::Block(block) => {
+            for inner in block.statements.iter() {
+                let s = inner.span();
+                if ctx.cursor_offset >= s.start.offset
+                    && ctx.cursor_offset <= s.end.offset
+                    && try_resolve_in_closure_stmt(inner, ctx, results)
+                {
+                    return true;
+                }
+            }
+            false
+        }
+        Statement::If(if_stmt) => match &if_stmt.body {
+            IfBody::Statement(body) => try_resolve_in_closure_stmt(body.statement, ctx, results),
+            IfBody::ColonDelimited(body) => {
+                for inner in body.statements.iter() {
+                    let s = inner.span();
+                    if ctx.cursor_offset >= s.start.offset
+                        && ctx.cursor_offset <= s.end.offset
+                        && try_resolve_in_closure_stmt(inner, ctx, results)
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+        },
+        Statement::Foreach(foreach) => match &foreach.body {
+            ForeachBody::Statement(inner) => try_resolve_in_closure_stmt(inner, ctx, results),
+            ForeachBody::ColonDelimited(body) => {
+                for inner in body.statements.iter() {
+                    let s = inner.span();
+                    if ctx.cursor_offset >= s.start.offset
+                        && ctx.cursor_offset <= s.end.offset
+                        && try_resolve_in_closure_stmt(inner, ctx, results)
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+        },
+        Statement::While(while_stmt) => match &while_stmt.body {
+            WhileBody::Statement(inner) => try_resolve_in_closure_stmt(inner, ctx, results),
+            WhileBody::ColonDelimited(body) => {
+                for inner in body.statements.iter() {
+                    let s = inner.span();
+                    if ctx.cursor_offset >= s.start.offset
+                        && ctx.cursor_offset <= s.end.offset
+                        && try_resolve_in_closure_stmt(inner, ctx, results)
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+        },
+        Statement::For(for_stmt) => match &for_stmt.body {
+            ForBody::Statement(inner) => try_resolve_in_closure_stmt(inner, ctx, results),
+            ForBody::ColonDelimited(body) => {
+                for inner in body.statements.iter() {
+                    let s = inner.span();
+                    if ctx.cursor_offset >= s.start.offset
+                        && ctx.cursor_offset <= s.end.offset
+                        && try_resolve_in_closure_stmt(inner, ctx, results)
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+        },
+        Statement::DoWhile(dw) => try_resolve_in_closure_stmt(dw.statement, ctx, results),
+        Statement::Try(try_stmt) => {
+            for inner in try_stmt.block.statements.iter() {
+                let s = inner.span();
+                if ctx.cursor_offset >= s.start.offset
+                    && ctx.cursor_offset <= s.end.offset
+                    && try_resolve_in_closure_stmt(inner, ctx, results)
+                {
+                    return true;
+                }
+            }
+            for catch in try_stmt.catch_clauses.iter() {
+                for inner in catch.block.statements.iter() {
+                    let s = inner.span();
+                    if ctx.cursor_offset >= s.start.offset
+                        && ctx.cursor_offset <= s.end.offset
+                        && try_resolve_in_closure_stmt(inner, ctx, results)
+                    {
+                        return true;
+                    }
+                }
+            }
+            if let Some(finally) = &try_stmt.finally_clause {
+                for inner in finally.block.statements.iter() {
+                    let s = inner.span();
+                    if ctx.cursor_offset >= s.start.offset
+                        && ctx.cursor_offset <= s.end.offset
+                        && try_resolve_in_closure_stmt(inner, ctx, results)
+                    {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Recursively walk an expression looking for a `Closure` or
+/// `ArrowFunction` whose body contains the cursor.  When found,
+/// resolve the target variable from the closure's parameters and
+/// walk its body statements, returning `true`.
+pub(in crate::completion) fn try_resolve_in_closure_expr<'b>(
+    expr: &'b Expression<'b>,
+    ctx: &VarResolutionCtx<'_>,
+    results: &mut Vec<ClassInfo>,
+) -> bool {
+    // Quick span-based prune: if the cursor is not within this
+    // expression at all, skip the entire sub-tree.
+    let sp = expr.span();
+    if ctx.cursor_offset < sp.start.offset || ctx.cursor_offset > sp.end.offset {
+        return false;
+    }
+
+    match expr {
+        // ── Closure: `function (Type $param) { … }` ──
+        Expression::Closure(closure) => {
+            let body_start = closure.body.left_brace.start.offset;
+            let body_end = closure.body.right_brace.end.offset;
+            if ctx.cursor_offset >= body_start && ctx.cursor_offset <= body_end {
+                resolve_closure_params(&closure.parameter_list, ctx, results);
+                super::resolution::walk_statements_for_assignments(
+                    closure.body.statements.iter(),
+                    ctx,
+                    results,
+                    false,
+                );
+                return true;
+            }
+            false
+        }
+        // ── Arrow function: `fn(Type $param) => expr` ──
+        Expression::ArrowFunction(arrow) => {
+            let arrow_body_span = arrow.expression.span();
+            if ctx.cursor_offset >= arrow.arrow.start.offset
+                && ctx.cursor_offset <= arrow_body_span.end.offset
+            {
+                resolve_closure_params(&arrow.parameter_list, ctx, results);
+                // Arrow functions have a single expression body — no
+                // statements to walk, but the params are resolved.
+                return true;
+            }
+            false
+        }
+        Expression::Parenthesized(p) => try_resolve_in_closure_expr(p.expression, ctx, results),
+        Expression::Assignment(a) => {
+            try_resolve_in_closure_expr(a.lhs, ctx, results)
+                || try_resolve_in_closure_expr(a.rhs, ctx, results)
+        }
+        Expression::Binary(bin) => {
+            try_resolve_in_closure_expr(bin.lhs, ctx, results)
+                || try_resolve_in_closure_expr(bin.rhs, ctx, results)
+        }
+        Expression::Conditional(cond) => {
+            try_resolve_in_closure_expr(cond.condition, ctx, results)
+                || cond
+                    .then
+                    .is_some_and(|e| try_resolve_in_closure_expr(e, ctx, results))
+                || try_resolve_in_closure_expr(cond.r#else, ctx, results)
+        }
+        Expression::Call(call) => try_resolve_in_closure_call(call, ctx, results),
+        Expression::Array(arr) => {
+            for elem in arr.elements.iter() {
+                let found = match elem {
+                    ArrayElement::KeyValue(kv) => {
+                        try_resolve_in_closure_expr(kv.key, ctx, results)
+                            || try_resolve_in_closure_expr(kv.value, ctx, results)
+                    }
+                    ArrayElement::Value(v) => try_resolve_in_closure_expr(v.value, ctx, results),
+                    ArrayElement::Variadic(v) => try_resolve_in_closure_expr(v.value, ctx, results),
+                    _ => false,
+                };
+                if found {
+                    return true;
+                }
+            }
+            false
+        }
+        Expression::LegacyArray(arr) => {
+            for elem in arr.elements.iter() {
+                let found = match elem {
+                    ArrayElement::KeyValue(kv) => {
+                        try_resolve_in_closure_expr(kv.key, ctx, results)
+                            || try_resolve_in_closure_expr(kv.value, ctx, results)
+                    }
+                    ArrayElement::Value(v) => try_resolve_in_closure_expr(v.value, ctx, results),
+                    ArrayElement::Variadic(v) => try_resolve_in_closure_expr(v.value, ctx, results),
+                    _ => false,
+                };
+                if found {
+                    return true;
+                }
+            }
+            false
+        }
+        Expression::Match(m) => {
+            if try_resolve_in_closure_expr(m.expression, ctx, results) {
+                return true;
+            }
+            for arm in m.arms.iter() {
+                if try_resolve_in_closure_expr(arm.expression(), ctx, results) {
+                    return true;
+                }
+            }
+            false
+        }
+        Expression::Access(access) => match access {
+            Access::Property(pa) => try_resolve_in_closure_expr(pa.object, ctx, results),
+            Access::NullSafeProperty(pa) => try_resolve_in_closure_expr(pa.object, ctx, results),
+            Access::StaticProperty(pa) => try_resolve_in_closure_expr(pa.class, ctx, results),
+            Access::ClassConstant(pa) => try_resolve_in_closure_expr(pa.class, ctx, results),
+        },
+        Expression::Instantiation(inst) => {
+            if let Some(ref args) = inst.argument_list {
+                try_resolve_in_closure_args(&args.arguments, ctx, results)
+            } else {
+                false
+            }
+        }
+        Expression::UnaryPrefix(u) => try_resolve_in_closure_expr(u.operand, ctx, results),
+        Expression::UnaryPostfix(u) => try_resolve_in_closure_expr(u.operand, ctx, results),
+        Expression::Yield(y) => match y {
+            Yield::Value(yv) => {
+                if let Some(val) = &yv.value {
+                    try_resolve_in_closure_expr(val, ctx, results)
                 } else {
                     false
                 }
             }
-            Statement::Block(block) => {
-                for inner in block.statements.iter() {
-                    let s = inner.span();
-                    if ctx.cursor_offset >= s.start.offset
-                        && ctx.cursor_offset <= s.end.offset
-                        && Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                    {
-                        return true;
-                    }
-                }
-                false
+            Yield::Pair(yp) => {
+                try_resolve_in_closure_expr(yp.key, ctx, results)
+                    || try_resolve_in_closure_expr(yp.value, ctx, results)
             }
-            Statement::If(if_stmt) => match &if_stmt.body {
-                IfBody::Statement(body) => {
-                    Self::try_resolve_in_closure_stmt(body.statement, ctx, results)
-                }
-                IfBody::ColonDelimited(body) => {
-                    for inner in body.statements.iter() {
-                        let s = inner.span();
-                        if ctx.cursor_offset >= s.start.offset
-                            && ctx.cursor_offset <= s.end.offset
-                            && Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                        {
-                            return true;
-                        }
-                    }
-                    false
-                }
-            },
-            Statement::Foreach(foreach) => match &foreach.body {
-                ForeachBody::Statement(inner) => {
-                    Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                }
-                ForeachBody::ColonDelimited(body) => {
-                    for inner in body.statements.iter() {
-                        let s = inner.span();
-                        if ctx.cursor_offset >= s.start.offset
-                            && ctx.cursor_offset <= s.end.offset
-                            && Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                        {
-                            return true;
-                        }
-                    }
-                    false
-                }
-            },
-            Statement::While(while_stmt) => match &while_stmt.body {
-                WhileBody::Statement(inner) => {
-                    Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                }
-                WhileBody::ColonDelimited(body) => {
-                    for inner in body.statements.iter() {
-                        let s = inner.span();
-                        if ctx.cursor_offset >= s.start.offset
-                            && ctx.cursor_offset <= s.end.offset
-                            && Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                        {
-                            return true;
-                        }
-                    }
-                    false
-                }
-            },
-            Statement::For(for_stmt) => match &for_stmt.body {
-                ForBody::Statement(inner) => Self::try_resolve_in_closure_stmt(inner, ctx, results),
-                ForBody::ColonDelimited(body) => {
-                    for inner in body.statements.iter() {
-                        let s = inner.span();
-                        if ctx.cursor_offset >= s.start.offset
-                            && ctx.cursor_offset <= s.end.offset
-                            && Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                        {
-                            return true;
-                        }
-                    }
-                    false
-                }
-            },
-            Statement::DoWhile(dw) => Self::try_resolve_in_closure_stmt(dw.statement, ctx, results),
-            Statement::Try(try_stmt) => {
-                for inner in try_stmt.block.statements.iter() {
-                    let s = inner.span();
-                    if ctx.cursor_offset >= s.start.offset
-                        && ctx.cursor_offset <= s.end.offset
-                        && Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                    {
-                        return true;
-                    }
-                }
-                for catch in try_stmt.catch_clauses.iter() {
-                    for inner in catch.block.statements.iter() {
-                        let s = inner.span();
-                        if ctx.cursor_offset >= s.start.offset
-                            && ctx.cursor_offset <= s.end.offset
-                            && Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                if let Some(finally) = &try_stmt.finally_clause {
-                    for inner in finally.block.statements.iter() {
-                        let s = inner.span();
-                        if ctx.cursor_offset >= s.start.offset
-                            && ctx.cursor_offset <= s.end.offset
-                            && Self::try_resolve_in_closure_stmt(inner, ctx, results)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                false
+            Yield::From(yf) => try_resolve_in_closure_expr(yf.iterator, ctx, results),
+        },
+        Expression::Throw(t) => try_resolve_in_closure_expr(t.exception, ctx, results),
+        Expression::Clone(c) => try_resolve_in_closure_expr(c.object, ctx, results),
+        Expression::Pipe(p) => {
+            try_resolve_in_closure_expr(p.input, ctx, results)
+                || try_resolve_in_closure_expr(p.callable, ctx, results)
+        }
+        _ => false,
+    }
+}
+
+/// Dispatch a `Call` expression: recurse into function, method, and
+/// static method calls, checking their argument lists for closures.
+fn try_resolve_in_closure_call<'b>(
+    call: &'b Call<'b>,
+    ctx: &VarResolutionCtx<'_>,
+    results: &mut Vec<ClassInfo>,
+) -> bool {
+    match call {
+        Call::Function(fc) => {
+            // Try with callable parameter inference from the function signature.
+            if let Some(func_name) = extract_function_name_from_call(fc)
+                && try_resolve_closure_in_call_args(
+                    &fc.argument_list.arguments,
+                    ctx,
+                    results,
+                    |arg_idx| infer_callable_params_from_function(&func_name, arg_idx, ctx),
+                )
+            {
+                return true;
             }
-            _ => false,
+            try_resolve_in_closure_args(&fc.argument_list.arguments, ctx, results)
+        }
+        Call::Method(mc) => {
+            if try_resolve_in_closure_expr(mc.object, ctx, results) {
+                return true;
+            }
+            // Try with callable parameter inference from the method signature.
+            if let ClassLikeMemberSelector::Identifier(ident) = &mc.method {
+                let method_name = ident.value.to_string();
+                let obj_span = mc.object.span();
+                if try_resolve_closure_in_call_args(
+                    &mc.argument_list.arguments,
+                    ctx,
+                    results,
+                    |arg_idx| {
+                        infer_callable_params_from_receiver(
+                            obj_span.start.offset,
+                            obj_span.end.offset,
+                            &method_name,
+                            arg_idx,
+                            ctx,
+                        )
+                    },
+                ) {
+                    return true;
+                }
+            }
+            try_resolve_in_closure_args(&mc.argument_list.arguments, ctx, results)
+        }
+        Call::NullSafeMethod(mc) => {
+            if try_resolve_in_closure_expr(mc.object, ctx, results) {
+                return true;
+            }
+            if let ClassLikeMemberSelector::Identifier(ident) = &mc.method {
+                let method_name = ident.value.to_string();
+                let obj_span = mc.object.span();
+                if try_resolve_closure_in_call_args(
+                    &mc.argument_list.arguments,
+                    ctx,
+                    results,
+                    |arg_idx| {
+                        infer_callable_params_from_receiver(
+                            obj_span.start.offset,
+                            obj_span.end.offset,
+                            &method_name,
+                            arg_idx,
+                            ctx,
+                        )
+                    },
+                ) {
+                    return true;
+                }
+            }
+            try_resolve_in_closure_args(&mc.argument_list.arguments, ctx, results)
+        }
+        Call::StaticMethod(sc) => {
+            if try_resolve_in_closure_expr(sc.class, ctx, results) {
+                return true;
+            }
+            if let ClassLikeMemberSelector::Identifier(ident) = &sc.method {
+                let method_name = ident.value.to_string();
+                if try_resolve_closure_in_call_args(
+                    &sc.argument_list.arguments,
+                    ctx,
+                    results,
+                    |arg_idx| {
+                        infer_callable_params_from_static_receiver(
+                            sc.class,
+                            &method_name,
+                            arg_idx,
+                            ctx,
+                        )
+                    },
+                ) {
+                    return true;
+                }
+            }
+            try_resolve_in_closure_args(&sc.argument_list.arguments, ctx, results)
         }
     }
+}
 
-    /// Recursively search an expression tree for a `Closure` or
-    /// `ArrowFunction` whose body contains the cursor.  When found,
-    /// resolve the target variable from the closure's parameters and
-    /// walk its body statements, returning `true`.
-    pub(in crate::completion) fn try_resolve_in_closure_expr<'b>(
-        expr: &'b Expression<'b>,
-        ctx: &VarResolutionCtx<'_>,
-        results: &mut Vec<ClassInfo>,
-    ) -> bool {
-        // Quick span-based prune: if the cursor is not within this
-        // expression at all, skip the entire sub-tree.
-        let sp = expr.span();
-        if ctx.cursor_offset < sp.start.offset || ctx.cursor_offset > sp.end.offset {
-            return false;
+/// Walk a flat list of call arguments, recursing into each expression.
+fn try_resolve_in_closure_args<'b>(
+    arguments: &'b TokenSeparatedSequence<'b, Argument<'b>>,
+    ctx: &VarResolutionCtx<'_>,
+    results: &mut Vec<ClassInfo>,
+) -> bool {
+    for arg in arguments.iter() {
+        let arg_expr = match arg {
+            Argument::Positional(pos) => pos.value,
+            Argument::Named(named) => named.value,
+        };
+        if try_resolve_in_closure_expr(arg_expr, ctx, results) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Walk call arguments looking for a closure/arrow-function that
+/// contains the cursor.  When found, resolve its parameters using
+/// both explicit type hints and inferred types from the enclosing
+/// call's signature (provided by `infer_fn`).
+///
+/// Returns `true` if the cursor was inside a closure argument and
+/// resolution was performed.
+fn try_resolve_closure_in_call_args<'b, F>(
+    arguments: &'b TokenSeparatedSequence<'b, Argument<'b>>,
+    ctx: &VarResolutionCtx<'_>,
+    results: &mut Vec<ClassInfo>,
+    infer_fn: F,
+) -> bool
+where
+    F: Fn(usize) -> Vec<String>,
+{
+    for (arg_idx, arg) in arguments.iter().enumerate() {
+        let arg_expr = match arg {
+            Argument::Positional(pos) => pos.value,
+            Argument::Named(named) => named.value,
+        };
+        let arg_span = arg_expr.span();
+        if ctx.cursor_offset < arg_span.start.offset || ctx.cursor_offset > arg_span.end.offset {
+            continue;
         }
 
-        match expr {
-            // ── Closure: `function (Type $param) { … }` ──
+        match arg_expr {
             Expression::Closure(closure) => {
                 let body_start = closure.body.left_brace.start.offset;
                 let body_end = closure.body.right_brace.end.offset;
                 if ctx.cursor_offset >= body_start && ctx.cursor_offset <= body_end {
-                    Self::resolve_closure_params(&closure.parameter_list, ctx, results);
-                    Self::walk_statements_for_assignments(
+                    // Only run inference when the target variable is
+                    // actually one of the closure's own parameters.
+                    // If the target variable is NOT a closure param,
+                    // the inference result would be unused anyway, so
+                    // skipping it avoids an infinite recursion cycle.
+                    let is_closure_param = closure
+                        .parameter_list
+                        .parameters
+                        .iter()
+                        .any(|p| *p.variable.name == *ctx.var_name);
+                    if is_closure_param {
+                        let inferred = infer_fn(arg_idx);
+                        resolve_closure_params_with_inferred(
+                            &closure.parameter_list,
+                            ctx,
+                            results,
+                            &inferred,
+                        );
+                    } else {
+                        resolve_closure_params(&closure.parameter_list, ctx, results);
+                    }
+                    super::resolution::walk_statements_for_assignments(
                         closure.body.statements.iter(),
                         ctx,
                         results,
@@ -197,581 +485,252 @@ impl Backend {
                     );
                     return true;
                 }
-                false
             }
-            // ── Arrow function: `fn(Type $param) => expr` ──
             Expression::ArrowFunction(arrow) => {
                 let arrow_body_span = arrow.expression.span();
                 if ctx.cursor_offset >= arrow.arrow.start.offset
                     && ctx.cursor_offset <= arrow_body_span.end.offset
                 {
-                    Self::resolve_closure_params(&arrow.parameter_list, ctx, results);
-                    // Arrow functions have a single expression body — no
-                    // statements to walk, but the params are resolved.
-                    return true;
-                }
-                false
-            }
-            // ── Recurse into sub-expressions that might contain closures ──
-            Expression::Parenthesized(p) => {
-                Self::try_resolve_in_closure_expr(p.expression, ctx, results)
-            }
-            Expression::Assignment(a) => {
-                Self::try_resolve_in_closure_expr(a.lhs, ctx, results)
-                    || Self::try_resolve_in_closure_expr(a.rhs, ctx, results)
-            }
-            Expression::Binary(bin) => {
-                Self::try_resolve_in_closure_expr(bin.lhs, ctx, results)
-                    || Self::try_resolve_in_closure_expr(bin.rhs, ctx, results)
-            }
-            Expression::Conditional(cond) => {
-                Self::try_resolve_in_closure_expr(cond.condition, ctx, results)
-                    || cond
-                        .then
-                        .is_some_and(|e| Self::try_resolve_in_closure_expr(e, ctx, results))
-                    || Self::try_resolve_in_closure_expr(cond.r#else, ctx, results)
-            }
-            Expression::Call(call) => Self::try_resolve_in_closure_call(call, ctx, results),
-            Expression::Array(arr) => {
-                for elem in arr.elements.iter() {
-                    let found = match elem {
-                        ArrayElement::KeyValue(kv) => {
-                            Self::try_resolve_in_closure_expr(kv.key, ctx, results)
-                                || Self::try_resolve_in_closure_expr(kv.value, ctx, results)
-                        }
-                        ArrayElement::Value(v) => {
-                            Self::try_resolve_in_closure_expr(v.value, ctx, results)
-                        }
-                        ArrayElement::Variadic(v) => {
-                            Self::try_resolve_in_closure_expr(v.value, ctx, results)
-                        }
-                        ArrayElement::Missing(_) => false,
-                    };
-                    if found {
-                        return true;
-                    }
-                }
-                false
-            }
-            Expression::LegacyArray(arr) => {
-                for elem in arr.elements.iter() {
-                    let found = match elem {
-                        ArrayElement::KeyValue(kv) => {
-                            Self::try_resolve_in_closure_expr(kv.key, ctx, results)
-                                || Self::try_resolve_in_closure_expr(kv.value, ctx, results)
-                        }
-                        ArrayElement::Value(v) => {
-                            Self::try_resolve_in_closure_expr(v.value, ctx, results)
-                        }
-                        ArrayElement::Variadic(v) => {
-                            Self::try_resolve_in_closure_expr(v.value, ctx, results)
-                        }
-                        ArrayElement::Missing(_) => false,
-                    };
-                    if found {
-                        return true;
-                    }
-                }
-                false
-            }
-            Expression::Match(m) => {
-                if Self::try_resolve_in_closure_expr(m.expression, ctx, results) {
-                    return true;
-                }
-                for arm in m.arms.iter() {
-                    if Self::try_resolve_in_closure_expr(arm.expression(), ctx, results) {
-                        return true;
-                    }
-                }
-                false
-            }
-            Expression::Access(access) => match access {
-                Access::Property(pa) => Self::try_resolve_in_closure_expr(pa.object, ctx, results),
-                Access::NullSafeProperty(pa) => {
-                    Self::try_resolve_in_closure_expr(pa.object, ctx, results)
-                }
-                Access::StaticProperty(pa) => {
-                    Self::try_resolve_in_closure_expr(pa.class, ctx, results)
-                }
-                Access::ClassConstant(pa) => {
-                    Self::try_resolve_in_closure_expr(pa.class, ctx, results)
-                }
-            },
-            Expression::Instantiation(inst) => {
-                if let Some(ref args) = inst.argument_list {
-                    Self::try_resolve_in_closure_args(&args.arguments, ctx, results)
-                } else {
-                    false
-                }
-            }
-            Expression::UnaryPrefix(u) => {
-                Self::try_resolve_in_closure_expr(u.operand, ctx, results)
-            }
-            Expression::UnaryPostfix(u) => {
-                Self::try_resolve_in_closure_expr(u.operand, ctx, results)
-            }
-            Expression::Yield(y) => match y {
-                Yield::Value(yv) => {
-                    if let Some(val) = &yv.value {
-                        Self::try_resolve_in_closure_expr(val, ctx, results)
-                    } else {
-                        false
-                    }
-                }
-                Yield::Pair(yp) => {
-                    Self::try_resolve_in_closure_expr(yp.key, ctx, results)
-                        || Self::try_resolve_in_closure_expr(yp.value, ctx, results)
-                }
-                Yield::From(yf) => Self::try_resolve_in_closure_expr(yf.iterator, ctx, results),
-            },
-            Expression::Throw(t) => Self::try_resolve_in_closure_expr(t.exception, ctx, results),
-            Expression::Clone(c) => Self::try_resolve_in_closure_expr(c.object, ctx, results),
-            Expression::Pipe(p) => {
-                Self::try_resolve_in_closure_expr(p.input, ctx, results)
-                    || Self::try_resolve_in_closure_expr(p.callable, ctx, results)
-            }
-            _ => false,
-        }
-    }
-
-    /// Check call-expression arguments for closures containing the cursor.
-    ///
-    /// When the cursor is inside a closure/arrow-function that is a direct
-    /// argument to a method or function call, this function additionally
-    /// attempts to infer types for untyped closure parameters from the
-    /// called method/function's callable parameter signature.
-    fn try_resolve_in_closure_call<'b>(
-        call: &'b Call<'b>,
-        ctx: &VarResolutionCtx<'_>,
-        results: &mut Vec<ClassInfo>,
-    ) -> bool {
-        match call {
-            Call::Function(fc) => {
-                // Try with callable parameter inference from the function signature.
-                if let Some(func_name) = Self::extract_function_name_from_call(fc)
-                    && Self::try_resolve_closure_in_call_args(
-                        &fc.argument_list.arguments,
-                        ctx,
-                        results,
-                        |arg_idx| {
-                            Self::infer_callable_params_from_function(&func_name, arg_idx, ctx)
-                        },
-                    )
-                {
-                    return true;
-                }
-                Self::try_resolve_in_closure_args(&fc.argument_list.arguments, ctx, results)
-            }
-            Call::Method(mc) => {
-                if Self::try_resolve_in_closure_expr(mc.object, ctx, results) {
-                    return true;
-                }
-                // Try with callable parameter inference from the method signature.
-                if let ClassLikeMemberSelector::Identifier(ident) = &mc.method {
-                    let method_name = ident.value.to_string();
-                    let obj_span = mc.object.span();
-                    if Self::try_resolve_closure_in_call_args(
-                        &mc.argument_list.arguments,
-                        ctx,
-                        results,
-                        |arg_idx| {
-                            Self::infer_callable_params_from_receiver(
-                                obj_span.start.offset,
-                                obj_span.end.offset,
-                                &method_name,
-                                arg_idx,
-                                ctx,
-                            )
-                        },
-                    ) {
-                        return true;
-                    }
-                }
-                Self::try_resolve_in_closure_args(&mc.argument_list.arguments, ctx, results)
-            }
-            Call::NullSafeMethod(mc) => {
-                if Self::try_resolve_in_closure_expr(mc.object, ctx, results) {
-                    return true;
-                }
-                if let ClassLikeMemberSelector::Identifier(ident) = &mc.method {
-                    let method_name = ident.value.to_string();
-                    let obj_span = mc.object.span();
-                    if Self::try_resolve_closure_in_call_args(
-                        &mc.argument_list.arguments,
-                        ctx,
-                        results,
-                        |arg_idx| {
-                            Self::infer_callable_params_from_receiver(
-                                obj_span.start.offset,
-                                obj_span.end.offset,
-                                &method_name,
-                                arg_idx,
-                                ctx,
-                            )
-                        },
-                    ) {
-                        return true;
-                    }
-                }
-                Self::try_resolve_in_closure_args(&mc.argument_list.arguments, ctx, results)
-            }
-            Call::StaticMethod(sc) => {
-                if Self::try_resolve_in_closure_expr(sc.class, ctx, results) {
-                    return true;
-                }
-                if let ClassLikeMemberSelector::Identifier(ident) = &sc.method {
-                    let method_name = ident.value.to_string();
-                    if Self::try_resolve_closure_in_call_args(
-                        &sc.argument_list.arguments,
-                        ctx,
-                        results,
-                        |arg_idx| {
-                            Self::infer_callable_params_from_static_receiver(
-                                sc.class,
-                                &method_name,
-                                arg_idx,
-                                ctx,
-                            )
-                        },
-                    ) {
-                        return true;
-                    }
-                }
-                Self::try_resolve_in_closure_args(&sc.argument_list.arguments, ctx, results)
-            }
-        }
-    }
-
-    /// Check a list of arguments for closures containing the cursor.
-    fn try_resolve_in_closure_args<'b>(
-        arguments: &'b TokenSeparatedSequence<'b, Argument<'b>>,
-        ctx: &VarResolutionCtx<'_>,
-        results: &mut Vec<ClassInfo>,
-    ) -> bool {
-        for arg in arguments.iter() {
-            let arg_expr = match arg {
-                Argument::Positional(pos) => pos.value,
-                Argument::Named(named) => named.value,
-            };
-            if Self::try_resolve_in_closure_expr(arg_expr, ctx, results) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Try to resolve a closure/arrow-function inside a call's argument
-    /// list, using callable parameter inference from the called
-    /// method/function's signature.
-    ///
-    /// `infer_fn` is called with the argument index to produce the
-    /// inferred callable parameter types (if any).  Returns `true` when
-    /// a closure containing the cursor was found and resolved.
-    fn try_resolve_closure_in_call_args<'b, F>(
-        arguments: &'b TokenSeparatedSequence<'b, Argument<'b>>,
-        ctx: &VarResolutionCtx<'_>,
-        results: &mut Vec<ClassInfo>,
-        infer_fn: F,
-    ) -> bool
-    where
-        F: Fn(usize) -> Vec<String>,
-    {
-        for (arg_idx, arg) in arguments.iter().enumerate() {
-            let arg_expr = match arg {
-                Argument::Positional(pos) => pos.value,
-                Argument::Named(named) => named.value,
-            };
-            let sp = arg_expr.span();
-            if ctx.cursor_offset < sp.start.offset || ctx.cursor_offset > sp.end.offset {
-                continue;
-            }
-            // The cursor is inside this argument.  Check if it is a
-            // closure or arrow function directly.
-            match arg_expr {
-                Expression::Closure(closure) => {
-                    let body_start = closure.body.left_brace.start.offset;
-                    let body_end = closure.body.right_brace.end.offset;
-                    if ctx.cursor_offset >= body_start && ctx.cursor_offset <= body_end {
-                        // Only invoke `infer_fn` when the variable we are
-                        // resolving is actually one of the closure's own
-                        // parameters.  Calling `infer_fn` triggers
-                        // receiver-type resolution which re-enters the
-                        // variable-resolution / closure-detection path.
-                        // If the target variable is NOT a closure param,
-                        // the inference result would be unused anyway, so
-                        // skipping it avoids an infinite recursion cycle.
-                        let is_closure_param = closure
-                            .parameter_list
-                            .parameters
-                            .iter()
-                            .any(|p| *p.variable.name == *ctx.var_name);
-                        if is_closure_param {
-                            let inferred = infer_fn(arg_idx);
-                            Self::resolve_closure_params_with_inferred(
-                                &closure.parameter_list,
-                                ctx,
-                                results,
-                                &inferred,
-                            );
-                        } else {
-                            Self::resolve_closure_params(&closure.parameter_list, ctx, results);
-                        }
-                        Self::walk_statements_for_assignments(
-                            closure.body.statements.iter(),
+                    let is_closure_param = arrow
+                        .parameter_list
+                        .parameters
+                        .iter()
+                        .any(|p| *p.variable.name == *ctx.var_name);
+                    if is_closure_param {
+                        let inferred = infer_fn(arg_idx);
+                        resolve_closure_params_with_inferred(
+                            &arrow.parameter_list,
                             ctx,
                             results,
-                            false,
+                            &inferred,
                         );
-                        return true;
+                    } else {
+                        resolve_closure_params(&arrow.parameter_list, ctx, results);
                     }
+                    return true;
                 }
-                Expression::ArrowFunction(arrow) => {
-                    let arrow_body_span = arrow.expression.span();
-                    if ctx.cursor_offset >= arrow.arrow.start.offset
-                        && ctx.cursor_offset <= arrow_body_span.end.offset
-                    {
-                        let is_closure_param = arrow
-                            .parameter_list
-                            .parameters
-                            .iter()
-                            .any(|p| *p.variable.name == *ctx.var_name);
-                        if is_closure_param {
-                            let inferred = infer_fn(arg_idx);
-                            Self::resolve_closure_params_with_inferred(
-                                &arrow.parameter_list,
-                                ctx,
-                                results,
-                                &inferred,
-                            );
-                        } else {
-                            Self::resolve_closure_params(&arrow.parameter_list, ctx, results);
-                        }
-                        return true;
-                    }
-                }
-                _ => {}
             }
-            // Not a direct closure — fall through so the normal recursive
-            // walker handles nested closures (without inference).
-            return false;
+            _ => {}
         }
-        false
+        // Not a direct closure — fall through so the normal recursive
+        // walker handles nested closures (without inference).
+        return false;
     }
+    false
+}
 
-    /// Resolve a variable's type from a closure / arrow-function
-    /// parameter list.  If the variable matches a typed parameter,
-    /// the resolved classes replace whatever is currently in `results`.
-    pub(in crate::completion) fn resolve_closure_params(
-        parameter_list: &FunctionLikeParameterList<'_>,
-        ctx: &VarResolutionCtx<'_>,
-        results: &mut Vec<ClassInfo>,
-    ) {
-        Self::resolve_closure_params_with_inferred(parameter_list, ctx, results, &[]);
-    }
+/// Resolve a variable's type from a closure / arrow-function
+/// parameter list.  If the variable matches a typed parameter,
+/// the resolved classes replace whatever is currently in `results`.
+pub(in crate::completion) fn resolve_closure_params(
+    parameter_list: &FunctionLikeParameterList<'_>,
+    ctx: &VarResolutionCtx<'_>,
+    results: &mut Vec<ClassInfo>,
+) {
+    resolve_closure_params_with_inferred(parameter_list, ctx, results, &[]);
+}
 
-    /// Like [`resolve_closure_params`] but accepts a list of inferred
-    /// parameter types from the enclosing callable signature.  When a
-    /// closure parameter has no explicit type hint, the corresponding
-    /// entry in `inferred_types` (matched by positional index) is used
-    /// as a fallback.
-    fn resolve_closure_params_with_inferred(
-        parameter_list: &FunctionLikeParameterList<'_>,
-        ctx: &VarResolutionCtx<'_>,
-        results: &mut Vec<ClassInfo>,
-        inferred_types: &[String],
-    ) {
-        for (idx, param) in parameter_list.parameters.iter().enumerate() {
-            let pname = param.variable.name.to_string();
-            if pname == ctx.var_name {
-                // 1. Try the explicit type hint first.
-                if let Some(hint) = &param.hint {
-                    let type_str = extract_hint_string(hint);
-                    let resolved = crate::completion::type_resolution::type_hint_to_classes(
-                        &type_str,
-                        &ctx.current_class.name,
-                        ctx.all_classes,
-                        ctx.class_loader,
-                    );
-                    if !resolved.is_empty() {
-                        *results = resolved;
-                        break;
-                    }
+/// Like [`resolve_closure_params`] but accepts a list of inferred
+/// parameter types from the enclosing callable signature.  When a
+/// closure parameter has no explicit type hint, the corresponding
+/// entry in `inferred_types` (matched by positional index) is used
+/// as a fallback.
+fn resolve_closure_params_with_inferred(
+    parameter_list: &FunctionLikeParameterList<'_>,
+    ctx: &VarResolutionCtx<'_>,
+    results: &mut Vec<ClassInfo>,
+    inferred_types: &[String],
+) {
+    for (idx, param) in parameter_list.parameters.iter().enumerate() {
+        let pname = param.variable.name.to_string();
+        if pname == ctx.var_name {
+            // 1. Try the explicit type hint first.
+            if let Some(hint) = &param.hint {
+                let type_str = extract_hint_string(hint);
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
+                    &type_str,
+                    &ctx.current_class.name,
+                    ctx.all_classes,
+                    ctx.class_loader,
+                );
+                if !resolved.is_empty() {
+                    *results = resolved;
+                    break;
                 }
-                // 2. Fall back to the inferred type from the callable
-                //    signature of the enclosing method/function call.
-                if let Some(inferred) = inferred_types.get(idx) {
-                    let resolved = crate::completion::type_resolution::type_hint_to_classes(
-                        inferred,
-                        &ctx.current_class.name,
-                        ctx.all_classes,
-                        ctx.class_loader,
-                    );
-                    if !resolved.is_empty() {
-                        *results = resolved;
-                    }
+            }
+            // 2. Fall back to the inferred type from the callable
+            //    signature of the enclosing method/function call.
+            if let Some(inferred) = inferred_types.get(idx) {
+                let resolved = crate::completion::type_resolution::type_hint_to_classes(
+                    inferred,
+                    &ctx.current_class.name,
+                    ctx.all_classes,
+                    ctx.class_loader,
+                );
+                if !resolved.is_empty() {
+                    *results = resolved;
                 }
-                break;
             }
+            break;
         }
     }
+}
 
-    // ── Callable parameter inference helpers ────────────────────────────
+// ── Callable parameter inference helpers ────────────────────────────
 
-    /// Extract the function name from a `FunctionCall` AST node.
-    fn extract_function_name_from_call(fc: &FunctionCall<'_>) -> Option<String> {
-        match fc.function {
-            Expression::Identifier(ident) => Some(ident.value().to_string()),
-            _ => None,
-        }
+/// Extract the function name from a `FunctionCall` AST node.
+fn extract_function_name_from_call(fc: &FunctionCall<'_>) -> Option<String> {
+    match fc.function {
+        Expression::Identifier(ident) => Some(ident.value().to_string()),
+        _ => None,
     }
+}
 
-    /// Infer callable parameter types for a closure passed at position
-    /// `arg_idx` to a standalone function call.
-    fn infer_callable_params_from_function(
-        func_name: &str,
-        arg_idx: usize,
-        ctx: &VarResolutionCtx<'_>,
-    ) -> Vec<String> {
-        let rctx = ctx.as_resolution_ctx();
-        let func_info = if let Some(fl) = rctx.function_loader {
-            fl(func_name)
-        } else {
-            None
-        };
-        if let Some(fi) = func_info {
-            Self::extract_callable_params_at(&fi.parameters, arg_idx, ctx)
-        } else {
-            vec![]
-        }
-    }
-
-    /// Infer callable parameter types for a closure passed at position
-    /// `arg_idx` to an instance method call whose receiver expression
-    /// spans `[obj_start, obj_end)` in the source text.
-    fn infer_callable_params_from_receiver(
-        obj_start: u32,
-        obj_end: u32,
-        method_name: &str,
-        arg_idx: usize,
-        ctx: &VarResolutionCtx<'_>,
-    ) -> Vec<String> {
-        let start = obj_start as usize;
-        let end = obj_end as usize;
-        if end > ctx.content.len() {
-            return vec![];
-        }
-        let obj_text = ctx.content[start..end].trim();
-        let rctx = ctx.as_resolution_ctx();
-        let receiver_classes =
-            crate::completion::resolver::resolve_target_classes(obj_text, AccessKind::Arrow, &rctx);
-
-        let params =
-            Self::find_callable_params_on_classes(&receiver_classes, method_name, arg_idx, ctx);
-
-        // Replace `$this` / `static` tokens with the receiver class FQN
-        // so that `resolve_closure_params_with_inferred` resolves them
-        // against the declaring class rather than the user's current class.
-        if let Some(receiver) = receiver_classes.first() {
-            params
-                .into_iter()
-                .map(|ty| replace_self_in_type(&ty, &receiver.name))
-                .collect()
-        } else {
-            params
-        }
-    }
-
-    /// Infer callable parameter types for a closure passed at position
-    /// `arg_idx` to a static method call.
-    fn infer_callable_params_from_static_receiver(
-        class_expr: &Expression<'_>,
-        method_name: &str,
-        arg_idx: usize,
-        ctx: &VarResolutionCtx<'_>,
-    ) -> Vec<String> {
-        let class_name = match class_expr {
-            Expression::Self_(_) => Some(ctx.current_class.name.clone()),
-            Expression::Static(_) => Some(ctx.current_class.name.clone()),
-            Expression::Identifier(ident) => Some(ident.value().to_string()),
-            Expression::Parent(_) => ctx.current_class.parent_class.clone(),
-            _ => None,
-        };
-        let owner = class_name.and_then(|name| {
-            ctx.all_classes
-                .iter()
-                .find(|c| c.name == name)
-                .cloned()
-                .or_else(|| (ctx.class_loader)(&name))
-        });
-        if let Some(ref cls) = owner {
-            let resolved = crate::virtual_members::resolve_class_fully_maybe_cached(
-                cls,
-                ctx.class_loader,
-                ctx.resolved_class_cache,
-            );
-            let params = Self::find_callable_params_on_method(&resolved, method_name, arg_idx, ctx);
-            params
-                .into_iter()
-                .map(|ty| replace_self_in_type(&ty, &cls.name))
-                .collect()
-        } else {
-            vec![]
-        }
-    }
-
-    /// Search for the method `method_name` on each of `classes` and
-    /// extract callable parameter types at `arg_idx`.
-    fn find_callable_params_on_classes(
-        classes: &[ClassInfo],
-        method_name: &str,
-        arg_idx: usize,
-        ctx: &VarResolutionCtx<'_>,
-    ) -> Vec<String> {
-        for cls in classes {
-            let resolved = crate::virtual_members::resolve_class_fully_maybe_cached(
-                cls,
-                ctx.class_loader,
-                ctx.resolved_class_cache,
-            );
-            let result = Self::find_callable_params_on_method(&resolved, method_name, arg_idx, ctx);
-            if !result.is_empty() {
-                return result;
-            }
-        }
+/// Infer callable parameter types for a closure passed at position
+/// `arg_idx` to a standalone function call.
+fn infer_callable_params_from_function(
+    func_name: &str,
+    arg_idx: usize,
+    ctx: &VarResolutionCtx<'_>,
+) -> Vec<String> {
+    let rctx = ctx.as_resolution_ctx();
+    let func_info = if let Some(fl) = rctx.function_loader {
+        fl(func_name)
+    } else {
+        None
+    };
+    if let Some(fi) = func_info {
+        extract_callable_params_at(&fi.parameters, arg_idx, ctx)
+    } else {
         vec![]
     }
+}
 
-    /// Look up method `method_name` on `class` and extract callable
-    /// parameter types from the parameter at position `arg_idx`.
-    fn find_callable_params_on_method(
-        class: &ClassInfo,
-        method_name: &str,
-        arg_idx: usize,
-        ctx: &VarResolutionCtx<'_>,
-    ) -> Vec<String> {
-        let method = class.methods.iter().find(|m| m.name == method_name);
-        if let Some(m) = method {
-            Self::extract_callable_params_at(&m.parameters, arg_idx, ctx)
-        } else {
-            vec![]
-        }
+/// Infer callable parameter types for a closure passed at position
+/// `arg_idx` to an instance method call whose receiver expression
+/// spans `[obj_start, obj_end)` in the source text.
+fn infer_callable_params_from_receiver(
+    obj_start: u32,
+    obj_end: u32,
+    method_name: &str,
+    arg_idx: usize,
+    ctx: &VarResolutionCtx<'_>,
+) -> Vec<String> {
+    let start = obj_start as usize;
+    let end = obj_end as usize;
+    if end > ctx.content.len() {
+        return vec![];
     }
+    let obj_text = ctx.content[start..end].trim();
+    let rctx = ctx.as_resolution_ctx();
+    let receiver_classes =
+        crate::completion::resolver::resolve_target_classes(obj_text, AccessKind::Arrow, &rctx);
 
-    /// Given a list of method/function parameters, look at the parameter
-    /// at `arg_idx`.  If its type hint is a `callable(…)` or
-    /// `Closure(…)`, extract and return the callable's parameter types.
-    fn extract_callable_params_at(
-        params: &[crate::types::ParameterInfo],
-        arg_idx: usize,
-        _ctx: &VarResolutionCtx<'_>,
-    ) -> Vec<String> {
-        let param = params.get(arg_idx);
-        if let Some(p) = param
-            && let Some(ref hint) = p.type_hint
-            && let Some(types) = crate::docblock::extract_callable_param_types(hint)
-        {
-            return types;
-        }
+    let params = find_callable_params_on_classes(&receiver_classes, method_name, arg_idx, ctx);
+
+    // Replace `$this` / `static` tokens with the receiver class FQN
+    // so that `resolve_closure_params_with_inferred` resolves them
+    // against the declaring class rather than the user's current class.
+    if let Some(receiver) = receiver_classes.first() {
+        params
+            .into_iter()
+            .map(|ty| replace_self_in_type(&ty, &receiver.name))
+            .collect()
+    } else {
+        params
+    }
+}
+
+/// Infer callable parameter types for a closure passed at position
+/// `arg_idx` to a static method call.
+fn infer_callable_params_from_static_receiver(
+    class_expr: &Expression<'_>,
+    method_name: &str,
+    arg_idx: usize,
+    ctx: &VarResolutionCtx<'_>,
+) -> Vec<String> {
+    let class_name = match class_expr {
+        Expression::Self_(_) => Some(ctx.current_class.name.clone()),
+        Expression::Static(_) => Some(ctx.current_class.name.clone()),
+        Expression::Identifier(ident) => Some(ident.value().to_string()),
+        Expression::Parent(_) => ctx.current_class.parent_class.clone(),
+        _ => None,
+    };
+    let owner = class_name.and_then(|name| {
+        ctx.all_classes
+            .iter()
+            .find(|c| c.name == name)
+            .cloned()
+            .or_else(|| (ctx.class_loader)(&name))
+    });
+    if let Some(ref cls) = owner {
+        let resolved = crate::virtual_members::resolve_class_fully_maybe_cached(
+            cls,
+            ctx.class_loader,
+            ctx.resolved_class_cache,
+        );
+        let params = find_callable_params_on_method(&resolved, method_name, arg_idx, ctx);
+        params
+            .into_iter()
+            .map(|ty| replace_self_in_type(&ty, &cls.name))
+            .collect()
+    } else {
         vec![]
     }
+}
+
+/// Search for the method `method_name` on each of `classes` and
+/// extract callable parameter types at `arg_idx`.
+fn find_callable_params_on_classes(
+    classes: &[ClassInfo],
+    method_name: &str,
+    arg_idx: usize,
+    ctx: &VarResolutionCtx<'_>,
+) -> Vec<String> {
+    for cls in classes {
+        let resolved = crate::virtual_members::resolve_class_fully_maybe_cached(
+            cls,
+            ctx.class_loader,
+            ctx.resolved_class_cache,
+        );
+        let result = find_callable_params_on_method(&resolved, method_name, arg_idx, ctx);
+        if !result.is_empty() {
+            return result;
+        }
+    }
+    vec![]
+}
+
+/// Look up method `method_name` on `class` and extract callable
+/// parameter types from the parameter at position `arg_idx`.
+fn find_callable_params_on_method(
+    class: &ClassInfo,
+    method_name: &str,
+    arg_idx: usize,
+    ctx: &VarResolutionCtx<'_>,
+) -> Vec<String> {
+    let method = class.methods.iter().find(|m| m.name == method_name);
+    if let Some(m) = method {
+        extract_callable_params_at(&m.parameters, arg_idx, ctx)
+    } else {
+        vec![]
+    }
+}
+
+/// Given a list of method/function parameters, look at the parameter
+/// at `arg_idx`.  If its type hint is a `callable(…)` or
+/// `Closure(…)`, extract and return the callable's parameter types.
+fn extract_callable_params_at(
+    params: &[crate::types::ParameterInfo],
+    arg_idx: usize,
+    _ctx: &VarResolutionCtx<'_>,
+) -> Vec<String> {
+    let param = params.get(arg_idx);
+    if let Some(p) = param
+        && let Some(ref hint) = p.type_hint
+        && let Some(types) = crate::docblock::extract_callable_param_types(hint)
+    {
+        return types;
+    }
+    vec![]
 }

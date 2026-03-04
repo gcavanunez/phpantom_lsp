@@ -337,20 +337,21 @@ fn resolve_variable_fallback(
 
     // ── `$var::` where `$var` holds a class-string ──
     if access_kind == AccessKind::DoubleColon {
-        let class_string_targets = Backend::resolve_class_string_targets(
-            var_name,
-            effective_class,
-            all_classes,
-            ctx.content,
-            ctx.cursor_offset,
-            class_loader,
-        );
+        let class_string_targets =
+            crate::completion::variable::class_string_resolution::resolve_class_string_targets(
+                var_name,
+                effective_class,
+                all_classes,
+                ctx.content,
+                ctx.cursor_offset,
+                class_loader,
+            );
         if !class_string_targets.is_empty() {
             return class_string_targets;
         }
     }
 
-    Backend::resolve_variable_types(
+    super::variable::resolution::resolve_variable_types(
         var_name,
         effective_class,
         all_classes,

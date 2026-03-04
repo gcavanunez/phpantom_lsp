@@ -191,3 +191,109 @@ expression when the conversion is safe (PHP 8.0+).
 resolution dependency, but the safety checks for fall-through and
 side-effect-free subjects require careful AST inspection. Not trivial,
 but bounded in scope.
+
+---
+
+## 5. Import class
+**Impact: High · Effort: Medium**
+
+When a class name is used without a corresponding `use` statement (or
+full qualification), offer a code action to add the import. This is the
+single most commonly used code action in any PHP language server.
+
+### Behaviour
+
+- **Trigger:** The cursor is on an unqualified or partially qualified
+  class name that does not match any existing `use` import or any class
+  defined in the current namespace.
+- **Resolution:** Search the class index (class_map, PSR-4 loader,
+  stubs) for classes whose short name matches. If multiple candidates
+  exist, offer one code action per candidate so the user can pick.
+- **Edit:** Insert `use Fully\Qualified\ClassName;` in the import block
+  at the top of the file (after the `namespace` declaration, grouped
+  with existing `use` statements). If no `use` block exists yet, create
+  one with a blank line separating it from the namespace declaration and
+  the first code line.
+- **Sorting:** Insert the new `use` statement in alphabetical order
+  among existing imports. Do not reorder or reformat existing imports.
+- **Code action kind:** `quickfix` (so it appears in the lightbulb menu
+  and can be triggered via the quick-fix keybinding).
+
+### Edge cases
+
+- **Group imports:** `use Foo\{Bar, Baz}` — insert a new standalone
+  `use` rather than modifying the group. Merging into groups is a
+  follow-up.
+- **Aliased imports:** If the short name collides with an existing
+  import (e.g. `use Other\Request;` already exists), offer to import
+  with an alias: `use Fully\Qualified\Request as FqRequest;`. Choosing
+  a good alias name automatically is hard — a simple heuristic is to
+  prepend the parent namespace segment (e.g. `HttpRequest`,
+  `FoundationRequest`).
+- **Trait `use` inside class bodies:** These are not namespace imports
+  and should not be touched.
+- **Functions and constants:** `use function` and `use const` imports
+  are a follow-up. Start with class imports only.
+
+### Implementation
+
+- Register as `codeActionProvider` in `ServerCapabilities` (first code
+  action to do so — builds the infrastructure).
+- Add a `textDocument/codeAction` handler that checks whether the
+  symbol under the cursor is an unresolved class reference.
+- Use `find_or_load_class` / class index to find candidates.
+- Generate a `WorkspaceEdit` containing a single `TextEdit` that
+  inserts the `use` line at the correct position.
+
+### Prerequisites
+
+None — the class resolution infrastructure already exists.
+
+---
+
+## 6. Remove unused imports
+**Impact: Medium · Effort: Low**
+
+Offer a code action to remove `use` statements that are not referenced
+anywhere in the file. Pairs naturally with the unused `use` dimming
+diagnostic (see `todo-diagnostics.md §4`).
+
+### Behaviour
+
+- **Trigger:** The cursor is on (or the diagnostic is attached to) a
+  `use` statement that is not referenced in the file.
+- **Single removal:** One code action per unused import:
+  `Remove unused import 'Foo\Bar'`.
+- **Bulk removal:** When multiple unused imports exist, also offer
+  `Remove all unused imports` which removes all of them in a single
+  edit.
+- **Code action kind:** `quickfix` for the single removal (attached to
+  the diagnostic), `source.organizeImports` for the bulk removal.
+
+### What counts as "used"
+
+A `use Foo\Bar;` import is considered used if `Bar` (or the alias name)
+appears as:
+- A type hint in a parameter, return type, property type, or catch clause.
+- A class reference in `new Bar()`, `Bar::method()`, `Bar::CONST`,
+  `Bar::$prop`, `instanceof Bar`, or `extends`/`implements` clauses.
+- A reference in a PHPDoc type: `@param Bar $x`, `@return Bar`,
+  `@var Bar`, `@throws Bar`, `@mixin Bar`, `@extends Bar<T>`,
+  `@implements Bar<T>`.
+- A reference in an attribute: `#[Bar]`, `#[Bar(args)]`.
+- A string literal class reference is NOT counted (too unreliable).
+
+### Implementation
+
+- Reuse the unused-use detection logic from the dimming diagnostic
+  (`todo-diagnostics.md §4`). The diagnostic marks which imports are
+  unused; the code action just generates `TextEdit`s to delete them.
+- When deleting a `use` line, also delete the trailing newline so no
+  blank lines accumulate.
+- For group imports (`use Foo\{Bar, Baz}`), if only some members are
+  unused, remove just those members from the group. If all members are
+  unused, remove the entire group statement.
+
+### Prerequisites
+
+- Unused `use` detection (shared with the dimming diagnostic).

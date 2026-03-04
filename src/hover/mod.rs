@@ -307,7 +307,7 @@ impl Backend {
             }
         };
 
-        let types = Self::resolve_variable_types(
+        let types = crate::completion::variable::resolution::resolve_variable_types(
             &var_name,
             effective_class,
             &ctx.classes,

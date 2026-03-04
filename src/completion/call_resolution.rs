@@ -61,13 +61,13 @@ pub(super) struct MethodReturnCtx<'a> {
 ///
 /// The returned closure resolves a variable name (e.g. `"$requestType"`)
 /// to the class names it holds as class-string values by delegating to
-/// [`Backend::resolve_class_string_targets`].
+/// [`resolve_class_string_targets`](crate::completion::variable::class_string_resolution::resolve_class_string_targets).
 pub(super) fn build_var_resolver<'a>(
     ctx: &'a ResolutionCtx<'a>,
 ) -> impl Fn(&str) -> Vec<String> + 'a {
     move |var_name: &str| -> Vec<String> {
         if let Some(cc) = ctx.current_class {
-            Backend::resolve_class_string_targets(
+            crate::completion::variable::class_string_resolution::resolve_class_string_targets(
                 var_name,
                 cc,
                 ctx.all_classes,
