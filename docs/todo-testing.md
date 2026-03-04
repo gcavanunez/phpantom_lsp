@@ -196,12 +196,12 @@ Use the `test_case` pattern or `datatest-stable` crate to generate one `#[test]`
 
 ### Tasks
 
-- [ ] Define the fixture header format (documented above)
-- [ ] Write `parse_fixture()` → `(TestMeta, Vec<(String, String)>, CursorPosition)`
-- [ ] Write runner functions for each feature: `run_completion_fixture`, `run_hover_fixture`, `run_definition_fixture`, `run_signature_help_fixture`
-- [ ] Integrate with `cargo test` via `datatest-stable` or a manual glob + `#[test_case]`
-- [ ] Add a `tests/fixtures/README.md` explaining the format
-- [ ] Add 3–5 trivial fixtures to prove the runner works end-to-end
+- [x] Define the fixture header format (documented above)
+- [x] Write `parse_fixture()` → `(TestMeta, Vec<(String, String)>, CursorPosition)`
+- [x] Write runner functions for each feature: `run_completion_fixture`, `run_hover_fixture`, `run_definition_fixture`, `run_signature_help_fixture`
+- [x] Integrate with `cargo test` via `datatest-stable` (`tests/fixture_runner.rs` with `harness = false`)
+- [x] Add a `tests/fixtures/README.md` explaining the format
+- [x] Add 3–5 trivial fixtures to prove the runner works end-to-end
 
 ---
 
