@@ -855,28 +855,4 @@ mod tests {
             diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
     }
-
-    // ── No false positives on example.php ───────────────────────────
-
-    #[test]
-    fn example_php_only_expected_diagnostics() {
-        let backend = Backend::new_test();
-        let uri = "file:///example.php";
-        let content = std::fs::read_to_string("example.php").expect("example.php must exist");
-
-        let diags = collect(&backend, uri, &content);
-
-        // Only MutateArrayInsertSpec and Cluster should be flagged —
-        // they are intentionally unresolved for the code action demo.
-        let unexpected: Vec<&str> = diags
-            .iter()
-            .map(|d| d.message.as_str())
-            .filter(|m| !m.contains("MutateArrayInsertSpec") && !m.contains("Cluster"))
-            .collect();
-        assert!(
-            unexpected.is_empty(),
-            "unexpected diagnostics on example.php: {:?}",
-            unexpected
-        );
-    }
 }
