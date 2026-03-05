@@ -110,6 +110,7 @@ impl VirtualMemberProvider for PHPDocProvider {
         &self,
         class: &ClassInfo,
         class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+        _cache: Option<&super::ResolvedClassCache>,
     ) -> VirtualMembers {
         let mut methods = Vec::new();
         let mut properties = Vec::new();

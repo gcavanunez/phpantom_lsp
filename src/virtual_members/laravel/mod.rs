@@ -96,7 +96,7 @@ pub(crate) use factory::{factory_to_model_fqn, model_to_factory_fqn};
 
 use crate::types::{ClassInfo, PropertyInfo};
 
-use super::{VirtualMemberProvider, VirtualMembers};
+use super::{ResolvedClassCache, VirtualMemberProvider, VirtualMembers};
 
 /// The fully-qualified name of the Eloquent base model.
 pub(crate) const ELOQUENT_MODEL_FQN: &str = "Illuminate\\Database\\Eloquent\\Model";
@@ -269,6 +269,7 @@ impl VirtualMemberProvider for LaravelModelProvider {
         &self,
         class: &ClassInfo,
         class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+        cache: Option<&ResolvedClassCache>,
     ) -> VirtualMembers {
         let mut properties = Vec::new();
         let mut methods = Vec::new();
@@ -399,7 +400,7 @@ impl VirtualMemberProvider for LaravelModelProvider {
         }
 
         // ── Builder-as-static forwarding ────────────────────────────
-        let forwarded = build_builder_forwarded_methods(class, class_loader);
+        let forwarded = build_builder_forwarded_methods(class, class_loader, cache);
         methods.extend(forwarded);
 
         VirtualMembers {

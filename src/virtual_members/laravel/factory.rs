@@ -163,6 +163,7 @@ impl VirtualMemberProvider for LaravelFactoryProvider {
         &self,
         class: &ClassInfo,
         class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+        _cache: Option<&crate::virtual_members::ResolvedClassCache>,
     ) -> VirtualMembers {
         let methods = build_factory_model_methods(class, class_loader);
         VirtualMembers {

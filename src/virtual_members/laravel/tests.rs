@@ -41,7 +41,7 @@ fn synthesizes_has_many_property() {
     user.methods
         .push(make_method("posts", Some("HasMany<Post, $this>")));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -65,7 +65,7 @@ fn synthesizes_has_one_property() {
     user.methods
         .push(make_method("profile", Some("HasOne<Profile, $this>")));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -82,7 +82,7 @@ fn synthesizes_belongs_to_property() {
     post.methods
         .push(make_method("author", Some("BelongsTo<User, $this>")));
 
-    let result = provider.provide(&post, &no_loader);
+    let result = provider.provide(&post, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -100,7 +100,7 @@ fn synthesizes_morph_to_property() {
         .methods
         .push(make_method("commentable", Some("MorphTo")));
 
-    let result = provider.provide(&comment, &no_loader);
+    let result = provider.provide(&comment, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -127,7 +127,7 @@ fn synthesizes_belongs_to_many_property() {
     user.methods
         .push(make_method("roles", Some("BelongsToMany<Role, $this>")));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -151,7 +151,7 @@ fn synthesizes_multiple_relationship_properties() {
     user.methods
         .push(make_method("roles", Some("BelongsToMany<Role, $this>")));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     // 3 relationship properties + 3 _count properties = 6
     assert_eq!(result.properties.len(), 6);
 
@@ -174,7 +174,7 @@ fn skips_non_relationship_methods() {
     user.methods.push(make_method("save", Some("bool")));
     user.methods.push(make_method("toArray", Some("array")));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(result.properties.is_empty());
 }
 
@@ -185,7 +185,7 @@ fn skips_methods_without_return_type() {
     user.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
     user.methods.push(make_method("posts", None));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(result.properties.is_empty());
 }
 
@@ -199,7 +199,7 @@ fn handles_fqn_relationship_return_types() {
         Some("\\Illuminate\\Database\\Eloquent\\Relations\\HasMany<Post, $this>"),
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -222,7 +222,7 @@ fn relationship_without_generics_and_singular_produces_nothing() {
     user.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
     user.methods.push(make_method("profile", Some("HasOne")));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(
         !result.properties.iter().any(|p| p.name == "profile"),
         "Singular relationship without generics should not produce a relationship property"
@@ -245,7 +245,7 @@ fn collection_relationship_without_generics_uses_model_fallback() {
     user.parent_class = Some("Illuminate\\Database\\Eloquent\\Model".to_string());
     user.methods.push(make_method("posts", Some("HasMany")));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -268,7 +268,7 @@ fn relationships_produce_no_virtual_methods_or_constants() {
     user.methods
         .push(make_method("posts", Some("HasMany<Post, $this>")));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(
         result.methods.is_empty(),
         "Relationship methods should not produce virtual methods"
@@ -286,7 +286,7 @@ fn provides_fqn_related_type_in_collection() {
         Some("HasMany<\\App\\Models\\Post, $this>"),
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -309,7 +309,7 @@ fn provides_fqn_related_type_singular() {
         Some("HasOne<\\App\\Models\\Profile, $this>"),
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let rel_prop = result
         .properties
         .iter()
@@ -338,7 +338,7 @@ fn synthesizes_scope_as_both_static_and_instance() {
         )],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert_eq!(result.methods.len(), 2, "Expected both static and instance");
 
     let instance = result.methods.iter().find(|m| !m.is_static).unwrap();
@@ -376,7 +376,7 @@ fn synthesizes_scope_with_extra_params() {
         ],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert_eq!(result.methods.len(), 2);
 
     let instance = result.methods.iter().find(|m| !m.is_static).unwrap();
@@ -402,7 +402,7 @@ fn synthesizes_multiple_scopes() {
         vec![make_param("$query", Some("Builder"), true)],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     // 2 scopes × 2 variants (static + instance) = 4
     assert_eq!(result.methods.len(), 4);
 
@@ -429,7 +429,7 @@ fn scope_and_relationship_coexist() {
         vec![make_param("$query", Some("Builder"), true)],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     // posts + posts_count = 2 properties
     assert_eq!(result.properties.len(), 2);
     assert!(result.properties.iter().any(|p| p.name == "posts"));
@@ -456,7 +456,7 @@ fn scope_method_not_treated_as_relationship() {
         vec![make_param("$query", Some("Builder"), true)],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(
         result.properties.is_empty(),
         "Scope methods should not produce relationship properties"
@@ -475,7 +475,7 @@ fn scope_with_custom_return_type() {
         vec![make_param("$query", Some("Builder"), true)],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let instance = result.methods.iter().find(|m| !m.is_static).unwrap();
     assert_eq!(
         instance.return_type.as_deref(),
@@ -503,7 +503,7 @@ fn synthesizes_scope_attribute_as_both_static_and_instance() {
     scope_method.has_scope_attribute = true;
     user.methods.push(scope_method);
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert_eq!(result.methods.len(), 2, "Expected both static and instance");
 
     let instance = result.methods.iter().find(|m| !m.is_static).unwrap();
@@ -536,7 +536,7 @@ fn synthesizes_scope_attribute_with_extra_params() {
     scope_method.has_scope_attribute = true;
     user.methods.push(scope_method);
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let instance = result.methods.iter().find(|m| !m.is_static).unwrap();
     assert_eq!(instance.name, "ofType");
     assert_eq!(instance.parameters.len(), 1);
@@ -564,7 +564,7 @@ fn scope_attribute_and_convention_scope_coexist() {
     scope_method.has_scope_attribute = true;
     user.methods.push(scope_method);
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     // 2 methods per scope × 2 scopes = 4
     let scope_methods: Vec<_> = result
         .methods
@@ -591,7 +591,7 @@ fn scope_attribute_and_relationship_coexist() {
     scope_method.has_scope_attribute = true;
     user.methods.push(scope_method);
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(
         !result.properties.is_empty(),
         "Should have relationship properties"
@@ -616,7 +616,7 @@ fn scope_attribute_with_custom_return_type() {
     scope_method.has_scope_attribute = true;
     user.methods.push(scope_method);
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let instance = result.methods.iter().find(|m| !m.is_static).unwrap();
     assert_eq!(
         instance.return_type.as_deref(),
@@ -638,7 +638,7 @@ fn scope_attribute_not_treated_as_relationship() {
     scope_method.has_scope_attribute = true;
     user.methods.push(scope_method);
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(
         result.properties.is_empty(),
         "Scope attribute methods should not produce relationship properties"
@@ -681,7 +681,7 @@ fn provide_includes_builder_forwarded_methods() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
 
     let static_methods: Vec<&str> = result
         .methods
@@ -737,7 +737,7 @@ fn provide_scope_beats_builder_method_with_same_name() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
 
     // Scope produces both static and instance "where".
     // Builder forwarding also produces a static "where".
@@ -778,7 +778,7 @@ fn synthesizes_legacy_accessor_property() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     let prop = result.properties.iter().find(|p| p.name == "full_name");
     assert!(
         prop.is_some(),
@@ -812,7 +812,7 @@ fn synthesizes_modern_accessor_property() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     let prop = result.properties.iter().find(|p| p.name == "full_name");
     assert!(
         prop.is_some(),
@@ -845,7 +845,7 @@ fn synthesizes_modern_accessor_property_with_generic_type() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     let prop = result.properties.iter().find(|p| p.name == "full_name");
     assert!(
         prop.is_some(),
@@ -875,7 +875,7 @@ fn synthesizes_modern_accessor_property_short_name_generic() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     let prop = result.properties.iter().find(|p| p.name == "age");
     assert!(prop.is_some());
     assert_eq!(prop.unwrap().type_hint.as_deref(), Some("int"));
@@ -902,7 +902,7 @@ fn accessor_and_relationship_coexist() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     let prop_names: Vec<_> = result.properties.iter().map(|p| p.name.as_str()).collect();
     assert!(
         prop_names.contains(&"full_name"),
@@ -932,7 +932,7 @@ fn get_attribute_method_not_treated_as_accessor() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     // getAttribute should not produce any virtual property.
     assert!(
         result.properties.is_empty(),
@@ -975,7 +975,7 @@ fn accessor_scope_and_relationship_all_coexist() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     let prop_names: Vec<_> = result.properties.iter().map(|p| p.name.as_str()).collect();
     assert!(
         prop_names.contains(&"full_name"),
@@ -1010,7 +1010,7 @@ fn legacy_accessor_preserves_deprecated() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     let prop = result.properties.iter().find(|p| p.name == "old_name");
     assert!(prop.is_some());
     assert!(
@@ -1041,7 +1041,7 @@ fn synthesizes_property_from_body_inferred_has_many() {
         }
     };
 
-    let result = provider.provide(&user, &loader);
+    let result = provider.provide(&user, &loader, None);
     let prop = result.properties.iter().find(|p| p.name == "posts");
     assert!(
         prop.is_some(),
@@ -1069,7 +1069,7 @@ fn synthesizes_property_from_body_inferred_morph_to() {
         }
     };
 
-    let result = provider.provide(&comment, &loader);
+    let result = provider.provide(&comment, &loader, None);
     let prop = result.properties.iter().find(|p| p.name == "commentable");
     assert!(
         prop.is_some(),
@@ -1093,7 +1093,7 @@ fn synthesizes_cast_properties() {
         ("options".to_string(), "array".to_string()),
     ];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     let is_admin = result.properties.iter().find(|p| p.name == "is_admin");
     assert!(is_admin.is_some(), "should produce is_admin property");
@@ -1119,7 +1119,7 @@ fn cast_properties_are_public_and_not_static() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let prop = result
         .properties
         .iter()
@@ -1145,7 +1145,7 @@ fn cast_properties_coexist_with_relationships_and_scopes() {
         vec![make_param("$query", Some("Builder"), true)],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     // Cast property
     assert!(result.properties.iter().any(|p| p.name == "is_admin"));
@@ -1180,7 +1180,7 @@ fn cast_properties_coexist_with_accessors() {
         Some("Illuminate\\Database\\Eloquent\\Casts\\Attribute"),
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     // Cast property
     assert!(result.properties.iter().any(|p| p.name == "is_admin"));
@@ -1198,7 +1198,7 @@ fn empty_casts_produces_no_properties() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().casts_definitions = Vec::new();
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(result.properties.is_empty());
 }
 
@@ -1210,7 +1210,7 @@ fn cast_decimal_with_precision_synthesizes_float() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().casts_definitions = vec![("price".to_string(), "decimal:2".to_string())];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let prop = result
         .properties
         .iter()
@@ -1233,7 +1233,7 @@ fn synthesizes_attribute_default_properties() {
         ("login_count".to_string(), "int".to_string()),
     ];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     let role = result.properties.iter().find(|p| p.name == "role");
     assert!(role.is_some(), "should produce role property");
@@ -1256,7 +1256,7 @@ fn attribute_defaults_are_public_and_not_static() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().attributes_definitions = vec![("role".to_string(), "string".to_string())];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let prop = result.properties.iter().find(|p| p.name == "role").unwrap();
     assert_eq!(prop.visibility, Visibility::Public);
     assert!(!prop.is_static);
@@ -1273,7 +1273,7 @@ fn casts_take_priority_over_attribute_defaults() {
     user.laravel_mut().casts_definitions = vec![("is_active".to_string(), "boolean".to_string())];
     user.laravel_mut().attributes_definitions = vec![("is_active".to_string(), "int".to_string())];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     // Should only have one is_active property (from casts)
     let matching: Vec<_> = result
@@ -1302,7 +1302,7 @@ fn attribute_defaults_coexist_with_casts_for_different_columns() {
     user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
     user.laravel_mut().attributes_definitions = vec![("role".to_string(), "string".to_string())];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     assert!(
         result.properties.iter().any(|p| p.name == "is_admin"),
@@ -1329,7 +1329,7 @@ fn attribute_defaults_coexist_with_relationships_and_scopes() {
         vec![make_param("$query", Some("Builder"), true)],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     assert!(
         result.properties.iter().any(|p| p.name == "role"),
@@ -1356,7 +1356,7 @@ fn empty_attributes_produces_no_properties() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().attributes_definitions = Vec::new();
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(result.properties.is_empty());
 }
 
@@ -1368,7 +1368,7 @@ fn attribute_default_float_type() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().attributes_definitions = vec![("rating".to_string(), "float".to_string())];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let prop = result
         .properties
         .iter()
@@ -1385,7 +1385,7 @@ fn attribute_default_null_type() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().attributes_definitions = vec![("bio".to_string(), "null".to_string())];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let prop = result.properties.iter().find(|p| p.name == "bio").unwrap();
     assert_eq!(prop.type_hint.as_deref(), Some("null"));
 }
@@ -1398,7 +1398,7 @@ fn attribute_default_array_type() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().attributes_definitions = vec![("settings".to_string(), "array".to_string())];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let prop = result
         .properties
         .iter()
@@ -1421,7 +1421,7 @@ fn synthesizes_column_name_properties_as_mixed() {
         "password".to_string(),
     ];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     let name = result.properties.iter().find(|p| p.name == "name");
     assert!(name.is_some(), "should produce name property");
@@ -1444,7 +1444,7 @@ fn column_name_properties_are_public_and_not_static() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().column_names = vec!["name".to_string()];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     let prop = result.properties.iter().find(|p| p.name == "name").unwrap();
     assert_eq!(prop.visibility, Visibility::Public);
     assert!(!prop.is_static);
@@ -1460,7 +1460,7 @@ fn casts_take_priority_over_column_names() {
     user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
     user.laravel_mut().column_names = vec!["is_admin".to_string(), "name".to_string()];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     let matching: Vec<_> = result
         .properties
@@ -1488,7 +1488,7 @@ fn attributes_take_priority_over_column_names() {
     user.laravel_mut().attributes_definitions = vec![("role".to_string(), "string".to_string())];
     user.laravel_mut().column_names = vec!["role".to_string(), "email".to_string()];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     let matching: Vec<_> = result
         .properties
@@ -1521,7 +1521,7 @@ fn all_three_sources_coexist() {
         "email".to_string(),
     ];
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     let is_admin = result
         .properties
@@ -1560,7 +1560,7 @@ fn column_names_coexist_with_relationships_and_scopes() {
         vec![make_param("$query", Some("Builder"), true)],
     ));
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
 
     assert!(
         result.properties.iter().any(|p| p.name == "email"),
@@ -1587,7 +1587,7 @@ fn empty_column_names_produces_no_extra_properties() {
     user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
     user.laravel_mut().column_names = Vec::new();
 
-    let result = provider.provide(&user, &no_loader);
+    let result = provider.provide(&user, &no_loader, None);
     assert!(result.properties.is_empty());
 }
 

@@ -119,10 +119,17 @@ pub trait VirtualMemberProvider {
     /// Only called when [`applies_to`](Self::applies_to) returned `true`.
     /// The returned members are merged into the class below all real
     /// declared members (own, trait, and parent chain).
+    ///
+    /// `cache` is the shared resolved-class cache.  Providers that need
+    /// to fully resolve helper classes (e.g. the Laravel model provider
+    /// resolving the Eloquent Builder) should use
+    /// [`resolve_class_fully_cached`] via this cache to avoid redundant
+    /// work across requests.
     fn provide(
         &self,
         class: &ClassInfo,
         class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+        cache: Option<&ResolvedClassCache>,
     ) -> VirtualMembers;
 }
 
@@ -188,10 +195,11 @@ pub fn apply_virtual_members(
     class: &mut ClassInfo,
     class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
     providers: &[Box<dyn VirtualMemberProvider>],
+    cache: Option<&ResolvedClassCache>,
 ) {
     for provider in providers {
         if provider.applies_to(class, class_loader) {
-            let virtual_members = provider.provide(class, class_loader);
+            let virtual_members = provider.provide(class, class_loader, cache);
             if !virtual_members.is_empty() {
                 merge_virtual_members(class, virtual_members);
             }
@@ -318,7 +326,7 @@ fn resolve_class_fully_inner(
     let mut merged = resolve_class_with_inheritance(class, class_loader);
     let providers = default_providers();
     if !providers.is_empty() {
-        apply_virtual_members(&mut merged, class_loader, &providers);
+        apply_virtual_members(&mut merged, class_loader, &providers, cache);
     }
 
     // 3. Merge members from implemented interfaces.
@@ -351,9 +359,37 @@ fn resolve_class_fully_inner(
     }
     for iface_name in &all_iface_names {
         if let Some(iface) = class_loader(iface_name) {
+            // Use the cache for interface resolution too — many classes
+            // implement the same interfaces (e.g. Countable, Iterator)
+            // and this avoids re-resolving them every time.
+            let iface_fqn = class_fqn(&iface);
+            if let Some(c) = cache
+                && let Ok(map) = c.lock()
+                && let Some(cached) = map.get(&iface_fqn)
+            {
+                let resolved_iface = cached.clone();
+                drop(map);
+                for method in &resolved_iface.methods {
+                    if !merged.methods.iter().any(|m| m.name == method.name) {
+                        merged.methods.push(method.clone());
+                    }
+                }
+                for property in &resolved_iface.properties {
+                    if !merged.properties.iter().any(|p| p.name == property.name) {
+                        merged.properties.push(property.clone());
+                    }
+                }
+                for constant in &resolved_iface.constants {
+                    if !merged.constants.iter().any(|c| c.name == constant.name) {
+                        merged.constants.push(constant.clone());
+                    }
+                }
+                continue;
+            }
+
             let mut resolved_iface = resolve_class_with_inheritance(&iface, class_loader);
             if !providers.is_empty() {
-                apply_virtual_members(&mut resolved_iface, class_loader, &providers);
+                apply_virtual_members(&mut resolved_iface, class_loader, &providers, cache);
             }
             for method in resolved_iface.methods {
                 if !merged.methods.iter().any(|m| m.name == method.name) {

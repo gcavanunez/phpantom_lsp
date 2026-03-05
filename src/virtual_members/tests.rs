@@ -352,6 +352,7 @@ impl VirtualMemberProvider for TestProvider {
         &self,
         _class: &ClassInfo,
         _class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+        _cache: Option<&ResolvedClassCache>,
     ) -> VirtualMembers {
         VirtualMembers {
             methods: self.methods.clone(),
@@ -377,6 +378,7 @@ impl VirtualMemberProvider for NeverProvider {
         &self,
         _class: &ClassInfo,
         _class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+        _cache: Option<&ResolvedClassCache>,
     ) -> VirtualMembers {
         panic!("provide should not be called when applies_to returns false")
     }
@@ -405,7 +407,7 @@ fn apply_providers_in_priority_order() {
     let providers: Vec<Box<dyn VirtualMemberProvider>> = vec![high_priority, low_priority];
     let class_loader = |_: &str| -> Option<ClassInfo> { None };
 
-    apply_virtual_members(&mut class, &class_loader, &providers);
+    apply_virtual_members(&mut class, &class_loader, &providers, None);
 
     assert_eq!(class.methods.len(), 2);
 
@@ -427,7 +429,7 @@ fn apply_providers_skips_non_applicable() {
     let providers: Vec<Box<dyn VirtualMemberProvider>> = vec![Box::new(NeverProvider)];
     let class_loader = |_: &str| -> Option<ClassInfo> { None };
 
-    apply_virtual_members(&mut class, &class_loader, &providers);
+    apply_virtual_members(&mut class, &class_loader, &providers, None);
 
     assert!(class.methods.is_empty());
     assert!(class.properties.is_empty());
@@ -448,7 +450,7 @@ fn apply_providers_real_members_beat_virtual() {
     let providers: Vec<Box<dyn VirtualMemberProvider>> = vec![provider];
     let class_loader = |_: &str| -> Option<ClassInfo> { None };
 
-    apply_virtual_members(&mut class, &class_loader, &providers);
+    apply_virtual_members(&mut class, &class_loader, &providers, None);
 
     assert_eq!(class.methods.len(), 1);
     assert_eq!(
@@ -478,7 +480,7 @@ fn apply_providers_property_priority() {
     let providers: Vec<Box<dyn VirtualMemberProvider>> = vec![high_priority, low_priority];
     let class_loader = |_: &str| -> Option<ClassInfo> { None };
 
-    apply_virtual_members(&mut class, &class_loader, &providers);
+    apply_virtual_members(&mut class, &class_loader, &providers, None);
 
     assert_eq!(class.properties.len(), 2);
 

@@ -71,7 +71,7 @@ fn provides_method_tags() {
         .to_string(),
     );
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.methods.len(), 2);
     assert!(result.methods.iter().any(|m| m.name == "getName"));
     assert!(result.methods.iter().any(|m| m.name == "setName"));
@@ -84,7 +84,7 @@ fn provides_static_method_tags() {
     class.class_docblock =
         Some(concat!("/**\n", " * @method static int count()\n", " */",).to_string());
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.methods.len(), 1);
     assert!(result.methods[0].is_static);
     assert_eq!(result.methods[0].name, "count");
@@ -104,7 +104,7 @@ fn method_tag_preserves_return_type() {
         .to_string(),
     );
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.methods.len(), 1);
     assert_eq!(
         result.methods[0].return_type.as_deref(),
@@ -122,7 +122,7 @@ fn method_tag_parses_parameters() {
         " */",
     ).to_string());
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.methods.len(), 1);
     let method = &result.methods[0];
     assert_eq!(method.parameters.len(), 3);
@@ -147,7 +147,7 @@ fn provides_property_tags() {
         .to_string(),
     );
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.properties.len(), 2);
     assert!(result.properties.iter().any(|p| p.name == "id"));
     assert!(result.properties.iter().any(|p| p.name == "name"));
@@ -167,7 +167,7 @@ fn provides_property_read_and_write_tags() {
         .to_string(),
     );
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.properties.len(), 2);
     let session = result
         .properties
@@ -189,7 +189,7 @@ fn property_tags_are_public_and_non_static() {
     let mut class = make_class("Model");
     class.class_docblock = Some("/** @property int $id */".to_string());
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.properties.len(), 1);
     assert_eq!(result.properties[0].visibility, Visibility::Public);
     assert!(!result.properties[0].is_static);
@@ -201,7 +201,7 @@ fn nullable_type_cleaned() {
     let mut class = make_class("Customer");
     class.class_docblock = Some("/** @property null|int $agreement_id */".to_string());
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.properties.len(), 1);
     assert_eq!(
         result.properties[0].type_hint.as_deref(),
@@ -226,7 +226,7 @@ fn tags_never_produce_constants() {
         .to_string(),
     );
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert!(result.constants.is_empty());
 }
 
@@ -238,7 +238,7 @@ fn empty_docblock_returns_empty() {
     let mut class = make_class("Foo");
     class.class_docblock = Some("/** */".to_string());
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert!(result.methods.is_empty());
     assert!(result.properties.is_empty());
     assert!(result.constants.is_empty());
@@ -249,7 +249,7 @@ fn no_docblock_returns_empty() {
     let provider = PHPDocProvider;
     let class = make_class("Foo");
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert!(result.is_empty());
 }
 
@@ -271,7 +271,7 @@ fn provides_both_methods_and_properties() {
         .to_string(),
     );
 
-    let result = provider.provide(&class, &no_loader);
+    let result = provider.provide(&class, &no_loader, None);
     assert_eq!(result.methods.len(), 2);
     assert_eq!(result.properties.len(), 2);
 }
@@ -298,7 +298,7 @@ fn provides_public_methods_from_mixin() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.methods.len(), 1);
     assert_eq!(result.methods[0].name, "doStuff");
 }
@@ -323,7 +323,7 @@ fn provides_public_properties_from_mixin() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.properties.len(), 1);
     assert_eq!(result.properties[0].name, "name");
 }
@@ -348,7 +348,7 @@ fn provides_public_constants_from_mixin() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.constants.len(), 1);
     assert_eq!(result.constants[0].name, "MAX_SIZE");
 }
@@ -372,7 +372,7 @@ fn mixin_does_not_overwrite_existing_class_members() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     // "doStuff" is already on the class, so only "barOnly" should appear
     assert_eq!(result.methods.len(), 1);
     assert_eq!(result.methods[0].name, "barOnly");
@@ -397,7 +397,7 @@ fn mixin_leaves_this_return_type_as_is_for_consumer_resolution() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.methods.len(), 3);
     // Return types are left as-is so that $this/self/static resolve
     // to the consuming class when the method is called on it.
@@ -437,7 +437,7 @@ fn mixin_collects_from_ancestor_mixins() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.methods.len(), 1);
     assert_eq!(result.methods[0].name, "mixinMethod");
 }
@@ -463,7 +463,7 @@ fn mixin_recurses_into_mixin_mixins() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.methods.len(), 2);
     assert!(result.methods.iter().any(|m| m.name == "barMethod"));
     assert!(result.methods.iter().any(|m| m.name == "bazMethod"));
@@ -489,7 +489,7 @@ fn multiple_mixins() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.methods.len(), 2);
     assert!(result.methods.iter().any(|m| m.name == "barMethod"));
     assert!(result.methods.iter().any(|m| m.name == "bazMethod"));
@@ -515,7 +515,7 @@ fn first_mixin_wins_on_name_collision() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.methods.len(), 1);
     assert_eq!(
         result.methods[0].return_type.as_deref(),
@@ -545,7 +545,7 @@ fn method_tag_beats_mixin_method() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.methods.len(), 2);
     let do_stuff = result.methods.iter().find(|m| m.name == "doStuff").unwrap();
     assert_eq!(
@@ -578,7 +578,7 @@ fn property_tag_beats_mixin_property() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.properties.len(), 2);
     let name = result.properties.iter().find(|p| p.name == "name").unwrap();
     assert_eq!(
@@ -610,7 +610,7 @@ fn mixin_only_no_docblock() {
         }
     };
 
-    let result = provider.provide(&class, &class_loader);
+    let result = provider.provide(&class, &class_loader, None);
     assert_eq!(result.methods.len(), 1);
     assert_eq!(result.methods[0].name, "barMethod");
     assert_eq!(result.properties.len(), 1);

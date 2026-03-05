@@ -51,7 +51,7 @@ fn replace_eloquent_collection_in_union() {
 #[test]
 fn builder_forwarding_returns_empty_when_builder_not_found() {
     let class = make_class("App\\Models\\User");
-    let result = build_builder_forwarded_methods(&class, &no_loader);
+    let result = build_builder_forwarded_methods(&class, &no_loader, None);
     assert!(result.is_empty());
 }
 
@@ -70,7 +70,7 @@ fn builder_forwarding_converts_instance_to_static() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert!(result[0].is_static, "Forwarded method should be static");
     assert_eq!(result[0].name, "where");
@@ -89,7 +89,7 @@ fn builder_forwarding_maps_static_to_builder_self_type() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert_eq!(
         result[0].return_type.as_deref(),
@@ -111,7 +111,7 @@ fn builder_forwarding_maps_this_to_builder_self_type() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert_eq!(
         result[0].return_type.as_deref(),
@@ -133,7 +133,7 @@ fn builder_forwarding_maps_self_to_builder_self_type() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert_eq!(
         result[0].return_type.as_deref(),
@@ -155,7 +155,7 @@ fn builder_forwarding_maps_tmodel_to_concrete_class() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert_eq!(
         result[0].return_type.as_deref(),
@@ -180,7 +180,7 @@ fn builder_forwarding_maps_generic_collection_return() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert_eq!(
         result[0].return_type.as_deref(),
@@ -202,7 +202,7 @@ fn builder_forwarding_maps_static_in_union() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert_eq!(
         result[0].return_type.as_deref(),
@@ -228,7 +228,7 @@ fn builder_forwarding_skips_magic_methods() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(
         result.len(),
         1,
@@ -254,7 +254,7 @@ fn builder_forwarding_skips_non_public_methods() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1, "Only public methods should be forwarded");
     assert_eq!(result[0].name, "where");
 }
@@ -279,7 +279,7 @@ fn builder_forwarding_skips_methods_already_on_model() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(
         result.len(),
         1,
@@ -307,7 +307,7 @@ fn builder_forwarding_does_not_skip_instance_method_with_same_name() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(
         result.len(),
         1,
@@ -333,7 +333,7 @@ fn builder_forwarding_maps_parameter_types() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert_eq!(
         result[0].parameters[0].type_hint.as_deref(),
@@ -364,7 +364,7 @@ fn builder_forwarding_preserves_method_metadata() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert!(
         result[0].deprecation_message.is_some(),
@@ -396,7 +396,7 @@ fn builder_forwarding_multiple_methods() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 4);
     let names: Vec<&str> = result.iter().map(|m| m.name.as_str()).collect();
     assert!(names.contains(&"where"));
@@ -419,7 +419,7 @@ fn builder_forwarding_with_no_return_type() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 1);
     assert!(
         result[0].return_type.is_none(),
@@ -443,7 +443,7 @@ fn builder_forwarding_preserves_non_template_return_types() {
         }
     };
 
-    let result = build_builder_forwarded_methods(&user, &loader);
+    let result = build_builder_forwarded_methods(&user, &loader, None);
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].return_type.as_deref(), Some("string"));
     assert_eq!(result[1].return_type.as_deref(), Some("bool"));

@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use crate::inheritance::{apply_substitution, apply_substitution_to_conditional};
 use crate::types::{ClassInfo, ELOQUENT_COLLECTION_FQN, MethodInfo, Visibility};
+use crate::virtual_members::ResolvedClassCache;
 
 use super::ELOQUENT_BUILDER_FQN;
 
@@ -55,6 +56,7 @@ pub(super) fn replace_eloquent_collection(type_str: &str, custom_collection: &st
 pub(super) fn build_builder_forwarded_methods(
     class: &ClassInfo,
     class_loader: &dyn Fn(&str) -> Option<ClassInfo>,
+    _cache: Option<&ResolvedClassCache>,
 ) -> Vec<MethodInfo> {
     // Load the Eloquent Builder class.
     let builder_class = match class_loader(ELOQUENT_BUILDER_FQN) {
@@ -66,14 +68,19 @@ pub(super) fn build_builder_forwarded_methods(
     // including @mixin Query\Builder).  This is safe because Builder
     // does not extend Model, so the LaravelModelProvider will not
     // recurse.
-    // Use the uncached variant here.  This code runs inside
-    // `resolve_class_fully` (called by the LaravelModelProvider),
-    // so the cache entry for the *model* class is still being
-    // built.  Caching the Builder resolution is safe (no deadlock
-    // — the mutex is never held across resolution), but Builder
-    // itself rarely changes, and the top-level `resolve_class_fully_cached`
-    // call on the model class already caches the final merged result
-    // that includes these forwarded methods.
+    // Use the uncached variant here.  Although the Builder is a
+    // different class from the model being resolved (no deadlock
+    // risk), caching the Builder causes a subtle problem: the
+    // cached Builder entry gets shared across all models, but
+    // scope injection (which is model-specific) happens at a
+    // higher layer (`try_inject_builder_scopes` in type
+    // resolution).  If the Builder is cached during one model's
+    // resolution, subsequent models may get a stale cached
+    // Builder that interferes with the scope injection path.
+    // The top-level `resolve_class_fully_cached` call on the
+    // model class already caches the final merged result
+    // (including these forwarded methods), so the per-model
+    // cost is paid only once anyway.
     let resolved_builder =
         crate::virtual_members::resolve_class_fully(&builder_class, class_loader);
 

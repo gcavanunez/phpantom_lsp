@@ -271,7 +271,7 @@ fn factory_provider_synthesizes_create_and_make() {
         }
     };
 
-    let result = provider.provide(&factory, &loader);
+    let result = provider.provide(&factory, &loader, None);
     assert_eq!(result.methods.len(), 2);
 
     let create = result.methods.iter().find(|m| m.name == "create").unwrap();
@@ -289,7 +289,7 @@ fn factory_provider_empty_when_model_not_found() {
     let mut factory = make_class("Database\\Factories\\UserFactory");
     factory.parent_class = Some(FACTORY_FQN.to_string());
 
-    let result = provider.provide(&factory, &no_loader);
+    let result = provider.provide(&factory, &no_loader, None);
     assert!(result.methods.is_empty());
 }
 
@@ -308,7 +308,7 @@ fn factory_provider_subdirectory_convention() {
         }
     };
 
-    let result = provider.provide(&factory, &loader);
+    let result = provider.provide(&factory, &loader, None);
     assert_eq!(result.methods.len(), 2);
 
     let create = result.methods.iter().find(|m| m.name == "create").unwrap();

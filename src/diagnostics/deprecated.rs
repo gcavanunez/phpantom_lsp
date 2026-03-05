@@ -8,6 +8,11 @@
 //! which renders as a subtle strikethrough in most editors — visible but
 //! not noisy.  The message includes the deprecation reason when one is
 //! provided in the tag (e.g. `@deprecated Use NewHelper instead`).
+//!
+//! Variable type resolution is cached per `(variable_name, enclosing_class)`
+//! pair so that multiple member accesses on the same variable (e.g.
+//! `$user->getName()` and `$user->getEmail()`) only trigger a single
+//! resolution pass instead of re-parsing the file for each access.
 
 use std::collections::HashMap;
 
@@ -32,6 +37,14 @@ impl Backend {
         content: &str,
         out: &mut Vec<Diagnostic>,
     ) {
+        // Cache of resolved variable types.  Keyed by
+        // `(variable_name, enclosing_class_name)` so that all member
+        // accesses on the same variable within the same class share a
+        // single resolution pass.  This turns O(n * parse) into O(k *
+        // parse) where k is the number of distinct variables, not the
+        // number of member accesses.
+        let mut var_type_cache: HashMap<(String, String), Option<ClassInfo>> = HashMap::new();
+
         // ── Gather context under locks ──────────────────────────────────
         let symbol_map = {
             let maps = match self.symbol_maps.lock() {
@@ -111,18 +124,36 @@ impl Backend {
                     .and_then(|name| self.find_or_load_class(&name));
 
                     // Fall back to variable type resolution for $var->member() calls.
+                    // Use the per-variable cache to avoid re-parsing the
+                    // file for every member access on the same variable.
                     let base_class = match base_class {
                         Some(c) => c,
                         None if subject_text.starts_with('$') => {
-                            match resolve_variable_subject(
-                                subject_text,
-                                span.start,
-                                content,
-                                &local_classes,
-                                &class_loader,
-                                &function_loader,
-                            ) {
-                                Some(c) => c,
+                            let enclosing_name = local_classes
+                                .iter()
+                                .find(|c| {
+                                    !c.name.starts_with("__anonymous@")
+                                        && span.start >= c.start_offset
+                                        && span.start <= c.end_offset
+                                })
+                                .map(|c| c.name.clone())
+                                .unwrap_or_default();
+
+                            let cache_key = (subject_text.trim().to_string(), enclosing_name);
+
+                            let cached = var_type_cache.entry(cache_key).or_insert_with_key(|_| {
+                                resolve_variable_subject(
+                                    subject_text,
+                                    span.start,
+                                    content,
+                                    &local_classes,
+                                    &class_loader,
+                                    &function_loader,
+                                )
+                            });
+
+                            match cached {
+                                Some(c) => c.clone(),
                                 None => continue,
                             }
                         }
