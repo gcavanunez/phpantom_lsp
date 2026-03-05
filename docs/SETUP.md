@@ -4,7 +4,7 @@
 
 ### Pre-built Binaries
 
-Download the latest binary for your platform from [GitHub Releases](../../releases). Available for:
+Download the latest binary for your platform from [GitHub Releases](https://github.com/AJenbo/phpantom_lsp/releases/latest). Available for:
 
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
