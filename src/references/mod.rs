@@ -715,11 +715,12 @@ impl Backend {
             // Include define() declaration sites if requested.
             if include_declaration
                 && let Ok(dmap) = self.global_defines.lock()
-                && let Some((def_uri, def_offset)) = dmap.get(target_name)
-                && def_uri == file_uri
+                && let Some(info) = dmap.get(target_name)
+                && info.file_uri == *file_uri
             {
-                let start = offset_to_position(&content, *def_offset as usize);
-                let end = offset_to_position(&content, *def_offset as usize + target_name.len());
+                let start = offset_to_position(&content, info.name_offset as usize);
+                let end =
+                    offset_to_position(&content, info.name_offset as usize + target_name.len());
                 push_unique_location(&mut locations, &parsed_uri, start, end);
             }
         }

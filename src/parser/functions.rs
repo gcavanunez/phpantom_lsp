@@ -291,46 +291,74 @@ impl Backend {
 
     // ─── define() constant extraction ───────────────────────────────
 
-    /// Walk statements and extract constant names from `define()` calls.
+    /// Walk statements and extract constant names from `define()` calls
+    /// and top-level `const` statements.
     ///
     /// Handles top-level `define('NAME', value)` calls, as well as those
     /// nested inside namespace blocks, block statements, and `if` guards
     /// (the common `if (!defined('X')) { define('X', …); }` pattern).
+    /// Also handles `const FOO = 'bar';` statements at the top level or
+    /// inside namespace blocks.
+    ///
+    /// The `content` parameter is the full source text of the file, used
+    /// to extract the initializer value as a string slice.
     ///
     /// Uses the parsed AST rather than regex, so it piggybacks on the
     /// parse pass that `update_ast` already performs.
     pub(crate) fn extract_defines_from_statements<'a>(
         statements: impl Iterator<Item = &'a Statement<'a>>,
-        defines: &mut Vec<(String, u32)>,
+        defines: &mut Vec<(String, u32, Option<String>)>,
+        content: &str,
     ) {
         for statement in statements {
             match statement {
                 Statement::Expression(expr_stmt) => {
-                    if let Some(entry) = Self::try_extract_define_info(expr_stmt.expression) {
+                    if let Some(entry) =
+                        Self::try_extract_define_info(expr_stmt.expression, content)
+                    {
                         defines.push(entry);
                     }
                 }
                 // Handle namespace-level const declarations
                 Statement::Constant(const_decl) => {
                     for item in const_decl.items.iter() {
-                        defines.push((item.name.value.to_string(), item.name.span.start.offset));
+                        let start = item.value.span().start.offset as usize;
+                        let end = item.value.span().end.offset as usize;
+                        let value = content.get(start..end).map(|s| s.to_string());
+                        defines.push((
+                            item.name.value.to_string(),
+                            item.name.span.start.offset,
+                            value,
+                        ));
                     }
                 }
                 Statement::Namespace(namespace) => {
-                    Self::extract_defines_from_statements(namespace.statements().iter(), defines);
+                    Self::extract_defines_from_statements(
+                        namespace.statements().iter(),
+                        defines,
+                        content,
+                    );
                 }
                 Statement::Block(block) => {
-                    Self::extract_defines_from_statements(block.statements.iter(), defines);
+                    Self::extract_defines_from_statements(
+                        block.statements.iter(),
+                        defines,
+                        content,
+                    );
                 }
                 Statement::If(if_stmt) => {
-                    Self::extract_defines_from_if_body(&if_stmt.body, defines);
+                    Self::extract_defines_from_if_body(&if_stmt.body, defines, content);
                 }
                 Statement::Class(class) => {
                     for member in class.members.iter() {
                         if let ClassLikeMember::Method(method) = member
                             && let MethodBody::Concrete(body) = &method.body
                         {
-                            Self::extract_defines_from_statements(body.statements.iter(), defines);
+                            Self::extract_defines_from_statements(
+                                body.statements.iter(),
+                                defines,
+                                content,
+                            );
                         }
                     }
                 }
@@ -339,7 +367,11 @@ impl Backend {
                         if let ClassLikeMember::Method(method) = member
                             && let MethodBody::Concrete(body) = &method.body
                         {
-                            Self::extract_defines_from_statements(body.statements.iter(), defines);
+                            Self::extract_defines_from_statements(
+                                body.statements.iter(),
+                                defines,
+                                content,
+                            );
                         }
                     }
                 }
@@ -348,12 +380,20 @@ impl Backend {
                         if let ClassLikeMember::Method(method) = member
                             && let MethodBody::Concrete(body) = &method.body
                         {
-                            Self::extract_defines_from_statements(body.statements.iter(), defines);
+                            Self::extract_defines_from_statements(
+                                body.statements.iter(),
+                                defines,
+                                content,
+                            );
                         }
                     }
                 }
                 Statement::Function(func) => {
-                    Self::extract_defines_from_statements(func.body.statements.iter(), defines);
+                    Self::extract_defines_from_statements(
+                        func.body.statements.iter(),
+                        defines,
+                        content,
+                    );
                 }
                 _ => {}
             }
@@ -362,40 +402,61 @@ impl Backend {
 
     /// Helper: recurse into an `if` statement body to extract `define()`
     /// calls.  Mirrors `extract_functions_from_if_body`.
-    fn extract_defines_from_if_body<'a>(body: &'a IfBody<'a>, defines: &mut Vec<(String, u32)>) {
+    fn extract_defines_from_if_body<'a>(
+        body: &'a IfBody<'a>,
+        defines: &mut Vec<(String, u32, Option<String>)>,
+        content: &str,
+    ) {
         match body {
             IfBody::Statement(body) => {
-                Self::extract_defines_from_statements(std::iter::once(body.statement), defines);
+                Self::extract_defines_from_statements(
+                    std::iter::once(body.statement),
+                    defines,
+                    content,
+                );
                 for else_if in body.else_if_clauses.iter() {
                     Self::extract_defines_from_statements(
                         std::iter::once(else_if.statement),
                         defines,
+                        content,
                     );
                 }
                 if let Some(else_clause) = &body.else_clause {
                     Self::extract_defines_from_statements(
                         std::iter::once(else_clause.statement),
                         defines,
+                        content,
                     );
                 }
             }
             IfBody::ColonDelimited(body) => {
-                Self::extract_defines_from_statements(body.statements.iter(), defines);
+                Self::extract_defines_from_statements(body.statements.iter(), defines, content);
                 for else_if in body.else_if_clauses.iter() {
-                    Self::extract_defines_from_statements(else_if.statements.iter(), defines);
+                    Self::extract_defines_from_statements(
+                        else_if.statements.iter(),
+                        defines,
+                        content,
+                    );
                 }
                 if let Some(else_clause) = &body.else_clause {
-                    Self::extract_defines_from_statements(else_clause.statements.iter(), defines);
+                    Self::extract_defines_from_statements(
+                        else_clause.statements.iter(),
+                        defines,
+                        content,
+                    );
                 }
             }
         }
     }
 
-    /// Try to extract the constant name and byte offset from a
-    /// `define('NAME', …)` call expression.  Returns
-    /// `Some((name, define_keyword_offset))` if the expression is a
-    /// function call to `define` whose first argument is a string literal.
-    fn try_extract_define_info(expr: &Expression<'_>) -> Option<(String, u32)> {
+    /// Try to extract the constant name, byte offset, and value from a
+    /// `define('NAME', value)` call expression.  Returns
+    /// `Some((name, define_keyword_offset, value_text))` if the expression
+    /// is a function call to `define` whose first argument is a string literal.
+    fn try_extract_define_info(
+        expr: &Expression<'_>,
+        content: &str,
+    ) -> Option<(String, u32, Option<String>)> {
         if let Expression::Call(Call::Function(func_call)) = expr {
             let ident = match func_call.function {
                 Expression::Identifier(ident) => ident,
@@ -413,11 +474,21 @@ impl Backend {
                 Argument::Named(named) => named.value,
             };
             if let Expression::Literal(Literal::String(lit_str)) = first_expr
-                && let Some(value) = lit_str.value
-                && !value.is_empty()
+                && let Some(name) = lit_str.value
+                && !name.is_empty()
             {
                 let offset = ident.span().start.offset;
-                return Some((value.to_string(), offset));
+                // Extract the value from the second argument if present.
+                let value_text = args.get(1).and_then(|arg| {
+                    let val_expr = match arg {
+                        Argument::Positional(pos) => pos.value,
+                        Argument::Named(named) => named.value,
+                    };
+                    let start = val_expr.span().start.offset as usize;
+                    let end = val_expr.span().end.offset as usize;
+                    content.get(start..end).map(|s| s.to_string())
+                });
+                return Some((name.to_string(), offset, value_text));
             }
         }
         None

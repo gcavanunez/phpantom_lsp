@@ -124,7 +124,7 @@ fn filter_current_file_constants(
         .ok()
         .map(|dmap| {
             dmap.iter()
-                .filter(|(_, (uri, _))| uri.as_str() == current_uri)
+                .filter(|(_, info)| info.file_uri.as_str() == current_uri)
                 .map(|(name, _)| name.clone())
                 .collect()
         })

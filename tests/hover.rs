@@ -3630,6 +3630,109 @@ const DEFAULT_HANDLER = Handler::class;
     );
 }
 
+#[test]
+fn hover_define_constant_shows_value() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+define('APP_VERSION', '1.0.0');
+echo APP_VERSION;
+"#;
+
+    backend.update_ast(uri, content);
+    let hover = hover_at(&backend, uri, content, 2, 7).expect("expected hover on APP_VERSION");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("'1.0.0'"),
+        "hover should show the constant value '1.0.0', got: {}",
+        text
+    );
+    assert!(
+        text.contains("APP_VERSION"),
+        "hover should show the constant name, got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_define_constant_integer_value() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+define('MAX_RETRIES', 5);
+echo MAX_RETRIES;
+"#;
+
+    backend.update_ast(uri, content);
+    let hover = hover_at(&backend, uri, content, 2, 7).expect("expected hover on MAX_RETRIES");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("= 5"),
+        "hover should show 'const MAX_RETRIES = 5;', got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_top_level_const_shows_value() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+const DB_HOST = 'localhost';
+echo DB_HOST;
+"#;
+
+    backend.update_ast(uri, content);
+    let hover = hover_at(&backend, uri, content, 2, 7).expect("expected hover on DB_HOST");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("'localhost'"),
+        "hover should show the constant value, got: {}",
+        text
+    );
+    assert!(
+        text.contains("DB_HOST"),
+        "hover should show the constant name, got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_define_constant_no_value_still_works() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    // Register a constant without a value (e.g. from autoload discovery).
+    if let Ok(mut dmap) = backend.global_defines().lock() {
+        dmap.insert(
+            "LEGACY_CONST".to_string(),
+            phpantom_lsp::DefineInfo {
+                file_uri: "file:///legacy.php".to_string(),
+                name_offset: 0,
+                value: None,
+            },
+        );
+    }
+
+    let content = r#"<?php
+echo LEGACY_CONST;
+"#;
+
+    backend.update_ast(uri, content);
+    let hover = hover_at(&backend, uri, content, 1, 7).expect("expected hover on LEGACY_CONST");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("LEGACY_CONST"),
+        "hover should show the constant name, got: {}",
+        text
+    );
+    // No value available, so it should show just `const LEGACY_CONST;`
+    assert!(
+        !text.contains('='),
+        "hover should not show '=' when value is unknown, got: {}",
+        text
+    );
+}
+
 // ── Language constructs ─────────────────────────────────────────────────────
 
 #[test]

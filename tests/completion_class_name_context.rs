@@ -2564,7 +2564,11 @@ async fn test_use_const_shows_only_constants() {
     if let Ok(mut dmap) = backend.global_defines().lock() {
         dmap.insert(
             "APP_VERSION".to_string(),
-            ("file:///config.php".to_string(), 0),
+            phpantom_lsp::DefineInfo {
+                file_uri: "file:///config.php".to_string(),
+                name_offset: 0,
+                value: Some("'1.0.0'".to_string()),
+            },
         );
     }
 

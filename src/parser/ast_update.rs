@@ -202,13 +202,21 @@ impl Backend {
         // completions.  This reuses the parse pass above rather than
         // doing a separate regex scan over the raw content.
         let mut define_entries = Vec::new();
-        Self::extract_defines_from_statements(program.statements.iter(), &mut define_entries);
+        Self::extract_defines_from_statements(
+            program.statements.iter(),
+            &mut define_entries,
+            content,
+        );
         if !define_entries.is_empty()
             && let Ok(mut dmap) = self.global_defines.lock()
         {
-            for (name, offset) in define_entries {
+            for (name, offset, value) in define_entries {
                 dmap.entry(name)
-                    .or_insert_with(|| (uri.to_string(), offset));
+                    .or_insert_with(|| crate::types::DefineInfo {
+                        file_uri: uri.to_string(),
+                        name_offset: offset,
+                        value,
+                    });
             }
         }
 

@@ -651,15 +651,17 @@ impl Backend {
         })
     }
 
-    /// Parse PHP source text and extract constant names from `define()` calls.
+    /// Parse PHP source text and extract constant names from `define()` calls
+    /// and top-level `const` statements.
     ///
-    /// Returns a list of `(name, define_keyword_offset)` pairs for every
-    /// `define('NAME', …)` call found at the top level, inside namespace
-    /// blocks, block statements, or `if` guards.
-    pub fn parse_defines(&self, content: &str) -> Vec<(String, u32)> {
-        with_parsed_program(content, "parse_defines", |program, _content| {
+    /// Returns a list of `(name, offset, value)` tuples for every
+    /// `define('NAME', value)` call or `const NAME = value;` statement
+    /// found at the top level, inside namespace blocks, block statements,
+    /// or `if` guards.
+    pub fn parse_defines(&self, content: &str) -> Vec<(String, u32, Option<String>)> {
+        with_parsed_program(content, "parse_defines", |program, content| {
             let mut defines = Vec::new();
-            Self::extract_defines_from_statements(program.statements.iter(), &mut defines);
+            Self::extract_defines_from_statements(program.statements.iter(), &mut defines, content);
             defines
         })
     }

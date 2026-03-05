@@ -417,8 +417,8 @@ impl Backend {
             let dmap = self.global_defines.lock().ok()?;
             let mut result = None;
             for candidate in candidates {
-                if let Some((uri, offset)) = dmap.get(candidate.as_str()) {
-                    result = Some((uri.clone(), *offset));
+                if let Some(info) = dmap.get(candidate.as_str()) {
+                    result = Some((info.file_uri.clone(), info.name_offset));
                     break;
                 }
             }

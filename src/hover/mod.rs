@@ -437,9 +437,18 @@ impl Backend {
             }
 
             SymbolKind::ConstantReference { name } => {
-                // Try to find the constant in global defines
-                let _defines = self.global_defines.lock().ok()?;
-                Some(make_hover(format!("```php\n<?php\nconst {};\n```", name)))
+                // Look up the constant value from global_defines or stubs.
+                let value_text =
+                    self.global_defines.lock().ok().and_then(|dmap| {
+                        dmap.get(name.as_str()).and_then(|info| info.value.clone())
+                    });
+
+                let code = if let Some(ref val) = value_text {
+                    format!("```php\n<?php\nconst {} = {};\n```", name, val)
+                } else {
+                    format!("```php\n<?php\nconst {};\n```", name)
+                };
+                Some(make_hover(code))
             }
         }
     }

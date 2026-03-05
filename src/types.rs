@@ -510,6 +510,25 @@ pub struct ConstantInfo {
     pub is_virtual: bool,
 }
 
+/// Stores extracted information about a global constant defined via
+/// `define('NAME', value)` or a top-level `const NAME = value;` statement.
+///
+/// Used by `global_defines` to provide hover content (showing the constant's
+/// value) and go-to-definition support.
+#[derive(Debug, Clone)]
+pub struct DefineInfo {
+    /// The `file://` URI of the file where the constant was defined.
+    pub file_uri: String,
+    /// Byte offset of the `define` keyword or `const` keyword in the source
+    /// file, used for go-to-definition.  A value of `0` means "not available"
+    /// (e.g. constants discovered from Composer autoload before parsing).
+    pub name_offset: u32,
+    /// The initializer expression source text (e.g. `"'1.0.0'"` for
+    /// `define('APP_VERSION', '1.0.0')`, or `"42"` for `const LIMIT = 42;`).
+    /// `None` when the value could not be extracted.
+    pub value: Option<String>,
+}
+
 /// Describes the access operator that triggered completion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessKind {

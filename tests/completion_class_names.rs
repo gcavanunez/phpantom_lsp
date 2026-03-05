@@ -2576,7 +2576,14 @@ async fn test_use_const_semicolon_termination() {
     let backend = create_test_backend_with_stubs();
 
     if let Ok(mut dmap) = backend.global_defines().lock() {
-        dmap.insert("MY_CONST".to_string(), ("file:///defs.php".to_string(), 0));
+        dmap.insert(
+            "MY_CONST".to_string(),
+            phpantom_lsp::DefineInfo {
+                file_uri: "file:///defs.php".to_string(),
+                name_offset: 0,
+                value: None,
+            },
+        );
     }
 
     let uri = Url::parse("file:///use_const_semi.php").unwrap();
