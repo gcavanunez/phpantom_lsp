@@ -313,6 +313,20 @@ fn type_hint_to_classes_depth(
                 );
             }
 
+            // ── stdClass fallback ──────────────────────────────────
+            // `stdClass` is a universal PHP built-in that accepts
+            // arbitrary properties.  When stubs are not installed the
+            // class loader won't find it, but we still need a
+            // `ClassInfo` so that downstream consumers (diagnostics,
+            // completion) can recognise the type and suppress
+            // unknown-member warnings.
+            if short == "stdClass" {
+                return vec![ClassInfo {
+                    name: "stdClass".to_string(),
+                    ..ClassInfo::default()
+                }];
+            }
+
             vec![]
         }
     }
