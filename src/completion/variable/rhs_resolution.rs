@@ -789,7 +789,6 @@ fn resolve_rhs_method_call<'b>(
         // Variable method name (`$obj->$method()`) — can't resolve statically.
         _ => return vec![],
     };
-
     // Resolve the object expression to candidate owner classes.
     let owner_classes: Vec<ClassInfo> = if let Expression::Variable(Variable::Direct(dv)) =
         method_call.object

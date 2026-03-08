@@ -1596,3 +1596,332 @@ async fn test_aliased_import_resolves_in_namespace() {
         _ => panic!("Expected CompletionResponse::Array"),
     }
 }
+
+/// Variable resolution inside a standalone function (not a class method)
+/// with a cross-file class loaded via `use` + PSR-4.
+#[tokio::test]
+async fn test_cross_file_variable_in_standalone_function() {
+    let (backend, _dir) = create_psr4_workspace(
+        r#"{
+            "autoload": {
+                "psr-4": {
+                    "Acme\\": "src/"
+                }
+            }
+        }"#,
+        &[(
+            "src/Widget.php",
+            concat!(
+                "<?php\n",
+                "namespace Acme;\n",
+                "class Widget {\n",
+                "    public function render(): string { return ''; }\n",
+                "    public string $title;\n",
+                "}\n",
+            ),
+        )],
+    );
+
+    // ── Test 1: inside a class method (known working baseline) ──
+    let uri_class = Url::parse("file:///test_class.php").unwrap();
+    let text_class = concat!(
+        "<?php\n",
+        "use Acme\\Widget;\n",
+        "class Page {\n",
+        "    function show() {\n",
+        "        $w = new Widget();\n",
+        "        $w->\n",
+        "    }\n",
+        "}\n",
+    );
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri_class.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text_class.to_string(),
+            },
+        })
+        .await;
+    let result_class = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri_class.clone(),
+                },
+                position: Position {
+                    line: 5,
+                    character: 12,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+    let class_methods: Vec<&str> = match result_class.as_ref() {
+        Some(CompletionResponse::Array(items)) => items
+            .iter()
+            .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+            .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+            .collect(),
+        _ => vec![],
+    };
+    assert!(
+        class_methods.contains(&"render"),
+        "Baseline: $w-> inside class method should resolve Widget, got {:?}",
+        class_methods
+    );
+
+    // ── Test 2: inside a standalone function ──
+    let uri_func = Url::parse("file:///test_func.php").unwrap();
+    let text_func = concat!(
+        "<?php\n",
+        "use Acme\\Widget;\n",
+        "function demo() {\n",
+        "    $w = new Widget();\n",
+        "    $w->\n",
+        "}\n",
+    );
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri_func.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text_func.to_string(),
+            },
+        })
+        .await;
+    let result_func = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri_func.clone(),
+                },
+                position: Position {
+                    line: 4,
+                    character: 8,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+    let func_methods: Vec<&str> = match result_func.as_ref() {
+        Some(CompletionResponse::Array(items)) => items
+            .iter()
+            .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+            .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+            .collect(),
+        _ => vec![],
+    };
+    assert!(
+        func_methods.contains(&"render"),
+        "$w-> inside standalone function should resolve Widget, got {:?}",
+        func_methods
+    );
+}
+
+/// Variable assignment from a static call chain in a standalone function:
+/// `$p = Acme\Processor::create()->build(); $p->`
+/// where `create()` returns `Acme\Builder` and `build()` returns `Acme\Product`.
+///
+/// This reproduces the same pattern as the Laravel factory chain test
+/// (`User::factory()->create()`) but in a minimal cross-file PSR-4 setup.
+#[tokio::test]
+async fn test_cross_file_static_chain_variable_in_standalone_function() {
+    let (backend, _dir) = create_psr4_workspace(
+        r#"{
+            "autoload": {
+                "psr-4": {
+                    "Acme\\": "src/"
+                }
+            }
+        }"#,
+        &[
+            (
+                "src/Product.php",
+                concat!(
+                    "<?php\n",
+                    "namespace Acme;\n",
+                    "class Product {\n",
+                    "    public function getName(): string { return ''; }\n",
+                    "}\n",
+                ),
+            ),
+            (
+                "src/Builder.php",
+                concat!(
+                    "<?php\n",
+                    "namespace Acme;\n",
+                    "class Builder {\n",
+                    "    public function build(): Product { return new Product(); }\n",
+                    "}\n",
+                ),
+            ),
+            (
+                "src/Factory.php",
+                concat!(
+                    "<?php\n",
+                    "namespace Acme;\n",
+                    "class Factory {\n",
+                    "    public static function create(): Builder { return new Builder(); }\n",
+                    "}\n",
+                ),
+            ),
+        ],
+    );
+
+    // ── Inline chain baseline (no variable) ──
+    let uri_inline = Url::parse("file:///test_inline.php").unwrap();
+    let text_inline = concat!(
+        "<?php\n",
+        "use Acme\\Factory;\n",
+        "function test_inline() {\n",
+        "    Factory::create()->build()->\n",
+        "}\n",
+    );
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri_inline.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text_inline.to_string(),
+            },
+        })
+        .await;
+    let result_inline = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri_inline.clone(),
+                },
+                position: Position {
+                    line: 3,
+                    character: 33,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+    let inline_methods: Vec<&str> = match result_inline.as_ref() {
+        Some(CompletionResponse::Array(items)) => items
+            .iter()
+            .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+            .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+            .collect(),
+        _ => vec![],
+    };
+    // ── Variable assignment from static chain in standalone function ──
+    let uri_func = Url::parse("file:///test_chain_func.php").unwrap();
+    let text_func = concat!(
+        "<?php\n",
+        "use Acme\\Factory;\n",
+        "function test_chain() {\n",
+        "    $p = Factory::create()->build();\n",
+        "    $p->\n",
+        "}\n",
+    );
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri_func.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text_func.to_string(),
+            },
+        })
+        .await;
+    let result_func = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri_func.clone(),
+                },
+                position: Position {
+                    line: 4,
+                    character: 8,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+    let func_methods: Vec<&str> = match result_func.as_ref() {
+        Some(CompletionResponse::Array(items)) => items
+            .iter()
+            .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+            .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+            .collect(),
+        _ => vec![],
+    };
+    // ── Top-level variable assignment (no enclosing function) ──
+    let uri_top = Url::parse("file:///test_chain_top.php").unwrap();
+    let text_top = concat!(
+        "<?php\n",
+        "use Acme\\Factory;\n",
+        "$p = Factory::create()->build();\n",
+        "$p->\n",
+    );
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri_top.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: text_top.to_string(),
+            },
+        })
+        .await;
+    let result_top = backend
+        .completion(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri_top.clone(),
+                },
+                position: Position {
+                    line: 3,
+                    character: 4,
+                },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap();
+    let top_methods: Vec<&str> = match result_top.as_ref() {
+        Some(CompletionResponse::Array(items)) => items
+            .iter()
+            .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+            .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+            .collect(),
+        _ => vec![],
+    };
+    // Assertions
+    assert!(
+        inline_methods.contains(&"getName"),
+        "Inline chain Factory::create()->build()-> should resolve to Product, got {:?}",
+        inline_methods
+    );
+    assert!(
+        func_methods.contains(&"getName"),
+        "$p = Factory::create()->build() in function should resolve to Product, got {:?}\n\
+         inline chain: {:?}\n\
+         top-level: {:?}",
+        func_methods,
+        inline_methods,
+        top_methods
+    );
+}

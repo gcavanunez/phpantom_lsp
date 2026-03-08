@@ -7609,14 +7609,9 @@ class SuperUserFactory extends Factory {
     );
 }
 
-/// Variable assignment from a factory chain does not fully resolve yet.
-/// This is the same limitation as todo-laravel.md item 1: variable
-/// resolution from static method chains (`$q = User::where(...)`) does
-/// not propagate the return type through the text-based fallback path
-/// in the variable resolver.  The inline chain (`User::factory()->create()->`)
-/// works; only the variable-assignment form is affected.
+/// Variable assignment from a factory chain: `$user = User::factory()->create(); $user->`
+/// should resolve `$user` to `User` via the static call chain.
 #[tokio::test]
-#[ignore = "known gap: variable assignment from static chain (todo-laravel.md #1)"]
 async fn test_factory_variable_assignment_then_create() {
     let user_php = "\
 <?php
@@ -7657,7 +7652,7 @@ class UserFactory extends Factory {
             "}\n",
         ),
         4,
-        10,
+        11,
     )
     .await;
 
