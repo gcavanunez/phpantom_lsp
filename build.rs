@@ -76,10 +76,20 @@ fn main() {
         if let Err(e) = fetch_stubs(&manifest_dir) {
             eprintln!("cargo:warning=Failed to fetch stubs from GitHub: {}", e);
             eprintln!("cargo:warning=Building without stubs (network may be unavailable).");
+            println!("cargo:rustc-env=PHPANTOM_STUBS_VERSION=none");
             write_empty_stubs();
             return;
         }
     }
+
+    // Emit the stubs version so the binary can log it at runtime.
+    // fetch_stubs writes a `.version` file next to the extracted stubs.
+    let version_file = Path::new(&manifest_dir).join("stubs/.version");
+    let stubs_version = fs::read_to_string(&version_file)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=PHPANTOM_STUBS_VERSION={}", stubs_version);
 
     let map_content = match fs::read_to_string(&map_path) {
         Ok(c) => c,
@@ -275,6 +285,11 @@ fn fetch_stubs(manifest_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
             std::io::copy(&mut entry, &mut file)?;
         }
     }
+
+    // Record which version was fetched so subsequent builds (that skip
+    // the download because stubs/ already exists) can still read it.
+    let version_file = Path::new(manifest_dir).join("stubs/.version");
+    let _ = fs::write(&version_file, &release.tag_name);
 
     eprintln!(
         "cargo:warning=Successfully downloaded phpstorm-stubs {}",

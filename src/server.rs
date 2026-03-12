@@ -548,7 +548,6 @@ impl Backend {
         }
 
         let (mappings, vendor_dir) = composer::parse_composer_json(root);
-        let mapping_count = mappings.len();
 
         // Parse the raw composer.json once so that build_self_scan_composer
         // can reuse it without redundant I/O.
@@ -572,15 +571,10 @@ impl Backend {
                 .await;
         }
 
-        let (classmap, classmap_source) = match strategy {
+        let (classmap, source_label) = match strategy {
             IndexingStrategy::None => {
                 let cm = composer::parse_autoload_classmap(root, &vendor_dir);
-                let source = if cm.is_empty() {
-                    "none"
-                } else {
-                    "composer classmap"
-                };
-                (cm, source)
+                (cm, "composer")
             }
             IndexingStrategy::SelfScan | IndexingStrategy::Full => {
                 let skip_paths = HashSet::new();
@@ -595,11 +589,6 @@ impl Backend {
             }
             IndexingStrategy::Composer => {
                 // ── Merged classmap + self-scan pipeline ─────────────
-                // Always load the Composer classmap (if it exists) and
-                // then self-scan with a skip set built from the classmap
-                // file paths.  Whatever the classmap already covers is a
-                // free performance win; whatever it's missing, we find
-                // ourselves.  No completeness heuristic needed.
                 let composer_cm = composer::parse_autoload_classmap(root, &vendor_dir);
                 let skip_paths: HashSet<PathBuf> = composer_cm.values().cloned().collect();
                 let scan = self.build_self_scan_composer(
@@ -613,16 +602,11 @@ impl Backend {
                 for (fqcn, path) in scan.classmap {
                     merged.entry(fqcn).or_insert(path);
                 }
-                let source = if skip_paths.is_empty() {
-                    "self-scan"
-                } else {
-                    "composer classmap + self-scan"
-                };
-                (merged, source)
+                (merged, "composer+scan")
             }
         };
 
-        let classmap_count = classmap.len();
+        let symbol_count = classmap.len();
         *self.classmap.write() = classmap;
 
         // ── Autoload files ──────────────────────────────────────────
@@ -631,25 +615,20 @@ impl Backend {
                 .await;
         }
 
-        let autoload_count = self.scan_autoload_files(root, &vendor_dir);
+        self.scan_autoload_files(root, &vendor_dir);
 
-        let func_index_count = self.autoload_function_index.read().len();
-        let const_index_count = self.autoload_constant_index.read().len();
-
-        let index_suffix = if func_index_count > 0 || const_index_count > 0 {
-            format!(
-                ", {} indexed function(s), {} indexed constant(s)",
-                func_index_count, const_index_count
-            )
-        } else {
-            String::new()
-        };
+        let symbol_count = symbol_count
+            + self.autoload_function_index.read().len()
+            + self.autoload_constant_index.read().len();
 
         self.log(
             MessageType::INFO,
             format!(
-                "PHPantom initialized! PHP {}, {} PSR-4 mapping(s), {} classmap entries ({}), {} autoload file(s){}",
-                php_version, mapping_count, classmap_count, classmap_source, autoload_count, index_suffix
+                "PHPantom: PHP {}, {} symbols from {}, stubs {}",
+                php_version,
+                symbol_count,
+                source_label,
+                crate::stubs::STUBS_VERSION
             ),
         )
         .await;
@@ -690,8 +669,6 @@ impl Backend {
 
         // Collect subproject root paths for the skip set.
         let mut skip_dirs: HashSet<PathBuf> = HashSet::new();
-        let mut total_mapping_count = 0usize;
-        let mut total_autoload_count = 0usize;
         let sub_count = subprojects.len();
 
         for (sub_idx, (sub_root, vendor_dir)) in subprojects.iter().enumerate() {
@@ -720,7 +697,6 @@ impl Backend {
 
             // ── PSR-4 mappings ──────────────────────────────────────
             let (mappings, _) = composer::parse_composer_json(sub_root);
-            total_mapping_count += mappings.len();
 
             // Resolve base_path values to absolute paths so that
             // resolve_class_path works regardless of workspace_root.
@@ -744,7 +720,7 @@ impl Backend {
             self.add_vendor_dir(&vendor_path);
 
             // ── Autoload files ──────────────────────────────────────
-            total_autoload_count += self.scan_autoload_files(sub_root, vendor_dir);
+            self.scan_autoload_files(sub_root, vendor_dir);
 
             // ── Merged classmap + self-scan ──────────────────────────
             // Load the subproject's Composer classmap as a skip set,
@@ -789,24 +765,18 @@ impl Backend {
             }
         }
 
-        let classmap_count = self.classmap.read().len();
-        let func_index_count = self.autoload_function_index.read().len();
-        let const_index_count = self.autoload_constant_index.read().len();
-
-        let index_suffix = if func_index_count > 0 || const_index_count > 0 {
-            format!(
-                ", {} indexed function(s), {} indexed constant(s)",
-                func_index_count, const_index_count
-            )
-        } else {
-            String::new()
-        };
+        let symbol_count = self.classmap.read().len()
+            + self.autoload_function_index.read().len()
+            + self.autoload_constant_index.read().len();
 
         self.log(
             MessageType::INFO,
             format!(
-                "PHPantom initialized! PHP {}, {} subproject(s), {} PSR-4 mapping(s), {} classmap entries, {} autoload file(s){}",
-                php_version, subprojects.len(), total_mapping_count, classmap_count, total_autoload_count, index_suffix
+                "PHPantom: PHP {}, {} symbols from {} subprojects, stubs {}",
+                php_version,
+                symbol_count,
+                subprojects.len(),
+                crate::stubs::STUBS_VERSION
             ),
         )
         .await;
@@ -839,26 +809,20 @@ impl Backend {
         let scan = classmap_scanner::scan_workspace_fallback_full(root, &skip_dirs);
         self.populate_autoload_indices(&scan);
 
-        let classmap_count = scan.classmap.len();
+        let symbol_count = scan.classmap.len();
         *self.classmap.write() = scan.classmap;
 
-        let func_index_count = self.autoload_function_index.read().len();
-        let const_index_count = self.autoload_constant_index.read().len();
-
-        let index_suffix = if func_index_count > 0 || const_index_count > 0 {
-            format!(
-                ", {} indexed function(s), {} indexed constant(s)",
-                func_index_count, const_index_count
-            )
-        } else {
-            String::new()
-        };
+        let symbol_count = symbol_count
+            + self.autoload_function_index.read().len()
+            + self.autoload_constant_index.read().len();
 
         self.log(
             MessageType::INFO,
             format!(
-                "PHPantom initialized! PHP {}, {} classmap entries (workspace scan){}",
-                php_version, classmap_count, index_suffix
+                "PHPantom: PHP {}, {} symbols from workspace scan, stubs {}",
+                php_version,
+                symbol_count,
+                crate::stubs::STUBS_VERSION
             ),
         )
         .await;

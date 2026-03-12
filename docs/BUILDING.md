@@ -36,9 +36,10 @@ cargo clippy -- -D warnings
 cargo clippy --tests -- -D warnings
 cargo fmt --check
 php -l example.php
+php -d zend.assertions=1 example.php
 ```
 
-All five must pass with zero warnings and zero failures.
+All six must pass with zero warnings and zero failures.
 
 ### Manual LSP Testing
 

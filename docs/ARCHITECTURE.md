@@ -346,14 +346,15 @@ PHPantom bundles the [JetBrains phpstorm-stubs](https://github.com/JetBrains/php
 
 The `build.rs` script:
 
-1. Reads `stubs/jetbrains/phpstorm-stubs/PhpStormStubsMap.php` — a generated index mapping symbol names to file paths.
-2. Emits `stub_map_generated.rs` containing:
+1. If `stubs/jetbrains/phpstorm-stubs/` does not exist, fetches the latest release tarball from the JetBrains/phpstorm-stubs GitHub repository and extracts it. This makes `cargo install` and `cargo build` work without any prior setup.
+2. Reads `stubs/jetbrains/phpstorm-stubs/PhpStormStubsMap.php` — a generated index mapping symbol names to file paths.
+3. Emits `stub_map_generated.rs` containing:
    - `STUB_FILES`: an array of `include_str!(...)` calls embedding every referenced PHP file (~502 files, ~8.5MB of source).
    - `STUB_CLASS_MAP`: maps class/interface/trait names → index into `STUB_FILES`.
    - `STUB_FUNCTION_MAP`: maps function names → index into `STUB_FILES`.
    - `STUB_CONSTANT_MAP`: maps constant names → index into `STUB_FILES`.
 
-The build script watches `composer.lock` for changes, so running `composer update` followed by `cargo build` automatically picks up new stub versions.
+The stubs are cached in the `stubs/` directory (gitignored). To update to the latest version, delete `stubs/` and rebuild.
 
 ### Runtime Lookup — Classes
 
@@ -464,7 +465,7 @@ User code is never filtered. The `php_version` field in `DocblockCtx` is `None` 
 
 ### Graceful Degradation
 
-If the stubs aren't installed (e.g. `composer install` hasn't been run), `build.rs` generates empty arrays and the build succeeds. The LSP just won't know about built-in PHP symbols.
+If the stubs can't be fetched (e.g. no network access during the build), `build.rs` generates empty arrays and the build succeeds. The LSP just won't know about built-in PHP symbols.
 
 ## Inheritance Resolution
 

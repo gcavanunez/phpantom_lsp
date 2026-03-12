@@ -554,9 +554,8 @@ but it is not a priority.
 ### Building without embedded stubs
 
 The `build.rs` script already handles a missing `stubs/` directory
-gracefully by generating empty arrays. An IDE extension that wants
-to distribute PHPantom without embedded stubs simply skips
-`composer install` in the PHPantom build directory. The binary
+gracefully by generating empty arrays. If the automatic GitHub
+fetch fails (e.g. no network access during the build), the binary
 compiles and runs normally; it just has no built-in fallback for
 PHP standard library symbols.
 

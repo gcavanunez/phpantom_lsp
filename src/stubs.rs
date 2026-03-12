@@ -36,6 +36,13 @@ use std::collections::HashMap;
 // Pull in the generated static arrays.
 include!(concat!(env!("OUT_DIR"), "/stub_map_generated.rs"));
 
+/// The phpstorm-stubs version that was embedded at build time.
+///
+/// Set by `build.rs` via `cargo:rustc-env`.  Contains the GitHub release
+/// tag (e.g. `"v2025.3"`), `"unknown"` when stubs were present but the
+/// version file was missing, or `"none"` when stubs could not be fetched.
+pub const STUBS_VERSION: &str = env!("PHPANTOM_STUBS_VERSION");
+
 /// Build a lookup table mapping class/interface/trait short names to their
 /// embedded PHP source code.
 ///

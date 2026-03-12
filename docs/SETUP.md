@@ -17,7 +17,6 @@ Download the latest binary for your platform from [GitHub Releases](https://gith
 See [BUILDING.md](BUILDING.md) for full instructions. Quick version:
 
 ```bash
-composer install
 cargo build --release
 # Binary is at target/release/phpantom_lsp
 ```
