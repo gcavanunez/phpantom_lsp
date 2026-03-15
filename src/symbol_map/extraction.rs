@@ -738,6 +738,7 @@ fn extract_from_trait_alias_adaptation<'a>(
                     member_name: method_name,
                     is_static: true,
                     is_method_call: true,
+                    is_docblock_reference: false,
                 },
             });
         }
@@ -754,6 +755,7 @@ fn extract_from_trait_alias_adaptation<'a>(
                     member_name: method_name,
                     is_static: true,
                     is_method_call: true,
+                    is_docblock_reference: false,
                 },
             });
         }
@@ -772,6 +774,7 @@ fn extract_from_trait_alias_adaptation<'a>(
                 member_name: alias_name,
                 is_static: true,
                 is_method_call: true,
+                is_docblock_reference: false,
             },
         });
     }
@@ -805,6 +808,7 @@ fn extract_from_trait_precedence_adaptation<'a>(
             member_name: method_name,
             is_static: true,
             is_method_call: true,
+            is_docblock_reference: false,
         },
     });
 
@@ -1411,6 +1415,7 @@ fn extract_from_expression<'a>(
                             member_name,
                             is_static: false,
                             is_method_call: true,
+                            is_docblock_reference: false,
                         },
                     });
                 }
@@ -1438,6 +1443,7 @@ fn extract_from_expression<'a>(
                             member_name,
                             is_static: false,
                             is_method_call: true,
+                            is_docblock_reference: false,
                         },
                     });
                 }
@@ -1463,6 +1469,7 @@ fn extract_from_expression<'a>(
                             member_name,
                             is_static: true,
                             is_method_call: true,
+                            is_docblock_reference: false,
                         },
                     });
                 }
@@ -1487,6 +1494,7 @@ fn extract_from_expression<'a>(
                                 member_name,
                                 is_static: false,
                                 is_method_call: false,
+                                is_docblock_reference: false,
                             },
                         });
                     }
@@ -1505,6 +1513,7 @@ fn extract_from_expression<'a>(
                                 member_name,
                                 is_static: false,
                                 is_method_call: false,
+                                is_docblock_reference: false,
                             },
                         });
                     }
@@ -1523,6 +1532,7 @@ fn extract_from_expression<'a>(
                                 member_name: prop_name,
                                 is_static: true,
                                 is_method_call: false,
+                                is_docblock_reference: false,
                             },
                         });
                     }
@@ -1544,6 +1554,7 @@ fn extract_from_expression<'a>(
                                     member_name: const_name,
                                     is_static: true,
                                     is_method_call: false,
+                                    is_docblock_reference: false,
                                 },
                             });
                         }
@@ -1979,6 +1990,7 @@ fn extract_from_expression<'a>(
                             member_name,
                             is_static: false,
                             is_method_call: true,
+                            is_docblock_reference: false,
                         },
                     });
                 }
@@ -1996,6 +2008,7 @@ fn extract_from_expression<'a>(
                             member_name,
                             is_static: true,
                             is_method_call: true,
+                            is_docblock_reference: false,
                         },
                     });
                 }

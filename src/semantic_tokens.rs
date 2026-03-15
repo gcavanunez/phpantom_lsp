@@ -180,6 +180,7 @@ impl Backend {
                     is_static,
                     is_method_call,
                     subject_text,
+                    ..
                 } => {
                     let tt = if *is_method_call {
                         TT_METHOD

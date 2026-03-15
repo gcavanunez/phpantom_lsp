@@ -78,8 +78,8 @@ struct ClassDocblockInfo {
     type_aliases: HashMap<String, String>,
     /// Mixin class names from `@mixin` tags.
     mixins: Vec<String>,
-    /// URL from the `@link` tag in the class-level docblock.
-    link: Option<String>,
+    /// URLs from `@link` and `@see` tags in the class-level docblock.
+    links: Vec<String>,
     /// Raw class-level docblock text, preserved for deferred `@method` /
     /// `@property` parsing by the `PHPDocProvider`.
     raw_docblock: Option<String>,
@@ -117,7 +117,7 @@ fn extract_class_docblock<'a>(
         use_generics: docblock::extract_generics_tag(doc_text, "@use"),
         type_aliases: docblock::extract_type_aliases(doc_text),
         mixins: docblock::extract_mixin_tags(doc_text),
-        link: docblock::extract_link_url(doc_text),
+        links: docblock::extract_link_urls(doc_text),
         raw_docblock: Some(doc_text.to_string()),
     }
 }
@@ -713,7 +713,7 @@ impl Backend {
                         is_abstract: class.modifiers.contains_abstract(),
                         deprecation_message: class_depr.message,
                         deprecated_replacement: class_depr.replacement,
-                        link: doc_info.link,
+                        links: doc_info.links,
                         template_params: doc_info.template_params,
                         template_param_bounds: doc_info.template_param_bounds,
                         extends_generics: doc_info.extends_generics,
@@ -799,7 +799,7 @@ impl Backend {
                         is_abstract: false,
                         deprecation_message: iface_depr.message,
                         deprecated_replacement: iface_depr.replacement,
-                        link: doc_info.link,
+                        links: doc_info.links,
                         template_params: doc_info.template_params,
                         template_param_bounds: doc_info.template_param_bounds,
                         extends_generics: doc_info.extends_generics,
@@ -866,7 +866,7 @@ impl Backend {
                         is_abstract: false,
                         deprecation_message: trait_depr.message,
                         deprecated_replacement: trait_depr.replacement,
-                        link: doc_info.link,
+                        links: doc_info.links,
                         template_params: doc_info.template_params,
                         template_param_bounds: doc_info.template_param_bounds,
                         extends_generics: vec![],
@@ -958,7 +958,7 @@ impl Backend {
                         is_abstract: false,
                         deprecation_message: enum_depr.message,
                         deprecated_replacement: enum_depr.replacement,
-                        link: doc_info.link,
+                        links: doc_info.links,
                         template_params: vec![],
                         template_param_bounds: HashMap::new(),
                         extends_generics: vec![],
@@ -1066,7 +1066,7 @@ impl Backend {
             type_aliases: HashMap::new(),
             trait_precedences,
             trait_aliases,
-            link: None,
+            links: Vec::new(),
             class_docblock: None,
             file_namespace: None,
             backed_type: None,
@@ -1786,7 +1786,9 @@ impl Backend {
                     let return_description =
                         method_docblock_text.and_then(docblock::extract_return_description);
 
-                    let link = method_docblock_text.and_then(docblock::extract_link_url);
+                    let links = method_docblock_text
+                        .map(docblock::extract_link_urls)
+                        .unwrap_or_default();
 
                     // Populate per-parameter descriptions from `@param` tags.
                     if let Some(doc_text) = method_docblock_text {
@@ -1812,7 +1814,7 @@ impl Backend {
                         return_type,
                         description: method_description,
                         return_description,
-                        link,
+                        links,
                         is_static,
                         visibility,
                         conditional_return,

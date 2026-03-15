@@ -91,6 +91,7 @@ pub mod config;
 mod definition;
 pub mod diagnostics;
 pub mod docblock;
+mod document_links;
 mod document_symbols;
 mod folding;
 mod formatting;

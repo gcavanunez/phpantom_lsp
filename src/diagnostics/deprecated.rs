@@ -101,6 +101,7 @@ impl Backend {
                     member_name,
                     is_static,
                     is_method_call,
+                    ..
                 } => {
                     // Resolve the subject type to a class.
                     let base_class = resolve_subject_to_class_name(

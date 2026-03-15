@@ -148,6 +148,11 @@ pub(super) fn extract_docblock_symbols(
     base_offset: u32,
     spans: &mut Vec<SymbolSpan>,
 ) -> Vec<(String, u32, Option<String>, TemplateVariance)> {
+    // ── @see symbol references ──────────────────────────────────────
+    // Extracted before the main per-line loop because @see also appears
+    // in inline form `{@see ...}` which the tag-position check skips.
+    extract_see_tag_symbols(docblock, base_offset, spans);
+
     // Tags whose immediate next token is a type.
     const TYPE_FIRST_TAGS: &[&str] = &[
         "@param",
@@ -192,6 +197,12 @@ pub(super) fn extract_docblock_symbols(
                 .unwrap_or(after_at.len());
             let tag = &after_at[..tag_end];
             let tag_lower = tag.to_ascii_lowercase();
+
+            if tag_lower == "@see" {
+                // Handled by extract_see_tag_symbols above.
+                line_start += line.len() + 1;
+                continue;
+            }
 
             if tag_lower == "@method" {
                 extract_method_tag_symbols(
@@ -1065,6 +1076,167 @@ fn extract_method_tag_symbols(
                 base_offset,
                 spans,
             );
+        }
+    }
+}
+
+// ─── @see tag symbol extraction ─────────────────────────────────────────────
+
+/// Extract symbol references from `@see` tags in a docblock.
+///
+/// Handles both block-level tags:
+///   `@see ClassName`
+///   `@see ClassName::method()`
+///   `@see ClassName::$property`
+///
+/// And inline tags:
+///   `{@see ClassName}`
+///   `Wraps {@see fixture()} with ...`
+///
+/// URLs (`http://`, `https://`) are skipped (handled by document links).
+fn extract_see_tag_symbols(docblock: &str, base_offset: u32, spans: &mut Vec<SymbolSpan>) {
+    // ── 1. Block-level `@see` tags ──────────────────────────────────
+    let mut line_start: usize = 0;
+    for line in docblock.split('\n') {
+        if let Some(at_pos) = line.find('@')
+            && is_tag_position(line, at_pos)
+        {
+            let after_at = &line[at_pos..];
+            let tag_end = after_at
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or(after_at.len());
+            let tag = &after_at[..tag_end];
+
+            if tag.eq_ignore_ascii_case("@see") {
+                let rest = after_at[tag_end..].trim_start();
+                if !rest.is_empty() {
+                    let rest_offset_in_line =
+                        at_pos + tag_end + (after_at[tag_end..].len() - rest.len());
+                    let rest_offset = line_start + rest_offset_in_line;
+                    // Take the first whitespace-delimited token.
+                    let reference = rest.split_whitespace().next().unwrap_or("");
+                    if !reference.is_empty() {
+                        emit_see_reference(reference, base_offset + rest_offset as u32, spans);
+                    }
+                }
+            }
+        }
+        line_start += line.len() + 1;
+    }
+
+    // ── 2. Inline `{@see ...}` tags ────────────────────────────────
+    let mut search_from = 0;
+    while let Some(open) = docblock[search_from..].find("{@see ") {
+        let abs_open = search_from + open;
+        let after_tag = abs_open + 6; // length of "{@see "
+        if let Some(close) = docblock[after_tag..].find('}') {
+            let reference = docblock[after_tag..after_tag + close].trim();
+            if !reference.is_empty() {
+                // The reference token starts after `{@see `.
+                let ref_start = after_tag
+                    + (docblock[after_tag..after_tag + close].len()
+                        - docblock[after_tag..after_tag + close].trim_start().len());
+                let first_token = reference.split_whitespace().next().unwrap_or("");
+                if !first_token.is_empty() {
+                    emit_see_reference(first_token, base_offset + ref_start as u32, spans);
+                }
+            }
+            search_from = after_tag + close + 1;
+        } else {
+            break;
+        }
+    }
+}
+
+/// Parse a single `@see` reference token and emit the appropriate symbol span.
+///
+/// Supported forms:
+/// - `ClassName` → `ClassReference`
+/// - `\Fully\Qualified\Name` → `ClassReference` (FQN)
+/// - `ClassName::method()` → `MemberAccess` (method call)
+/// - `ClassName::$property` → `MemberAccess` (static property)
+/// - `ClassName::CONSTANT` → `MemberAccess` (static constant)
+/// - `function()` → `FunctionCall` (standalone function, no `::`)
+/// - `http://...` / `https://...` → skipped (URLs)
+fn emit_see_reference(reference: &str, file_offset: u32, spans: &mut Vec<SymbolSpan>) {
+    // Skip URLs.
+    if reference.starts_with("http://") || reference.starts_with("https://") {
+        return;
+    }
+
+    // Strip trailing `()` if present (used on both methods and functions).
+    let reference = reference.strip_suffix("()").unwrap_or(reference);
+
+    // Check for `Class::member` form.
+    if let Some(sep_pos) = reference.find("::") {
+        let class_part = &reference[..sep_pos];
+        let member_part = &reference[sep_pos + 2..];
+
+        if class_part.is_empty() || member_part.is_empty() {
+            return;
+        }
+
+        // Skip non-navigable class names (scalars, etc.).
+        let clean_class = class_part.trim_start_matches('\\');
+        if !is_navigable_type(clean_class) {
+            return;
+        }
+
+        // Emit a ClassReference span for the class portion.
+        let class_start = file_offset;
+        let class_end = file_offset + class_part.len() as u32;
+        spans.push(class_ref_span(class_start, class_end, class_part));
+
+        // Emit a MemberAccess span for the member portion.
+        let member_start = file_offset + sep_pos as u32 + 2;
+        let is_property = member_part.starts_with('$');
+        let member_name = if is_property {
+            &member_part[1..] // strip $
+        } else {
+            member_part
+        };
+        if !member_name.is_empty() {
+            let member_end = member_start + member_part.len() as u32;
+            spans.push(SymbolSpan {
+                start: member_start,
+                end: member_end,
+                kind: SymbolKind::MemberAccess {
+                    subject_text: clean_class.to_string(),
+                    member_name: member_name.to_string(),
+                    is_static: true,
+                    is_method_call: false,
+                    is_docblock_reference: true,
+                },
+            });
+        }
+    } else {
+        // No `::` — either a class name or a standalone function.
+        // If it looks like a class (starts with uppercase or `\`),
+        // emit as ClassReference; otherwise skip.
+        let clean = reference.trim_start_matches('\\');
+        if clean.is_empty() || !is_navigable_type(clean) {
+            return;
+        }
+
+        // Class names start with uppercase; function names start with
+        // lowercase.  PHP convention, not enforced, but a good heuristic.
+        let first_char = clean.chars().next().unwrap_or('a');
+        if first_char.is_ascii_uppercase() {
+            let start = file_offset;
+            let end = file_offset + reference.len() as u32;
+            spans.push(class_ref_span(start, end, reference));
+        } else {
+            // Lowercase first char — treat as function reference.
+            let start = file_offset;
+            let end = file_offset + reference.len() as u32;
+            spans.push(SymbolSpan {
+                start,
+                end,
+                kind: SymbolKind::FunctionCall {
+                    name: clean.to_string(),
+                    is_definition: false,
+                },
+            });
         }
     }
 }

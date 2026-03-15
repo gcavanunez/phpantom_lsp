@@ -641,13 +641,15 @@ pub fn extract_return_description(docblock: &str) -> Option<String> {
 /// Example:
 ///   `@link https://php.net/manual/en/function.array-map.php`
 ///   → `Some("https://php.net/manual/en/function.array-map.php")`
-pub fn extract_link_url(docblock: &str) -> Option<String> {
+pub fn extract_link_urls(docblock: &str) -> Vec<String> {
     let inner = docblock
         .trim()
         .strip_prefix("/**")
         .unwrap_or(docblock)
         .strip_suffix("*/")
         .unwrap_or(docblock);
+
+    let mut urls = Vec::new();
 
     for line in inner.lines() {
         let trimmed = line.trim().trim_start_matches('*').trim();
@@ -658,12 +660,20 @@ pub fn extract_link_url(docblock: &str) -> Option<String> {
             if let Some(url) = rest.split_whitespace().next()
                 && !url.is_empty()
             {
-                return Some(url.to_string());
+                urls.push(url.to_string());
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("@see") {
+            let rest = rest.trim_start();
+            // Only treat @see values that look like URLs, not symbol references.
+            if let Some(url) = rest.split_whitespace().next()
+                && (url.starts_with("http://") || url.starts_with("https://"))
+            {
+                urls.push(url.to_string());
             }
         }
     }
 
-    None
+    urls
 }
 
 /// Strip common HTML tags from a docblock description string.

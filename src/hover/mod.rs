@@ -311,6 +311,7 @@ impl Backend {
                 member_name,
                 is_static,
                 is_method_call,
+                ..
             } => {
                 let rctx = ResolutionCtx {
                     current_class,
@@ -800,7 +801,7 @@ impl Backend {
             lines.push(format_deprecation_line(msg));
         }
 
-        if let Some(ref url) = method.link {
+        for url in &method.links {
             lines.push(format!("[{}]({})", url, url));
         }
 
@@ -1017,7 +1018,7 @@ impl Backend {
             lines.push(format_deprecation_line(msg));
         }
 
-        if let Some(ref url) = cls.link {
+        for url in &cls.links {
             lines.push(format!("[{}]({})", url, url));
         }
 

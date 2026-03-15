@@ -346,7 +346,7 @@ async fn test_user_function_takes_precedence_over_stub() {
         native_return_type: None,
         description: None,
         return_description: None,
-        link: None,
+        links: vec![],
         namespace: None,
         conditional_return: None,
         type_assertions: vec![],

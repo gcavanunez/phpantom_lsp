@@ -68,6 +68,7 @@ impl Backend {
                 member_name,
                 is_static,
                 is_method_call,
+                ..
             } => {
                 let access_kind = if *is_static {
                     AccessKind::DoubleColon

@@ -308,12 +308,11 @@ pub struct MethodInfo {
     /// `Some("The active users")`.  `None` when no description text
     /// follows the type in the `@return` tag.
     pub return_description: Option<String>,
-    /// URL from the `@link` tag in the docblock.
+    /// URLs from `@link` and `@see` tags in the docblock.
     ///
-    /// For `@link https://php.net/manual/en/function.array-map.php`,
-    /// this would be `Some("https://php.net/manual/en/function.array-map.php")`.
-    /// `None` when no `@link` tag is present.
-    pub link: Option<String>,
+    /// For `@link https://php.net/...` and `@see https://example.com/`,
+    /// this collects all URLs found. Empty when no link/see URL tags are present.
+    pub links: Vec<String>,
     /// Whether the method is static.
     pub is_static: bool,
     /// Visibility of the method (public, protected, or private).
@@ -453,7 +452,7 @@ impl MethodInfo {
             native_return_type: None,
             description: None,
             return_description: None,
-            link: None,
+            links: Vec::new(),
             is_static: false,
             visibility: Visibility::Public,
             conditional_return: None,
@@ -742,12 +741,11 @@ pub struct FunctionInfo {
     /// `Some("The active users")`.  `None` when no description text
     /// follows the type in the `@return` tag.
     pub return_description: Option<String>,
-    /// URL from the `@link` tag in the docblock.
+    /// URLs from `@link` and `@see` tags in the docblock.
     ///
-    /// For `@link https://php.net/manual/en/function.array-map.php`,
-    /// this would be `Some("https://php.net/manual/en/function.array-map.php")`.
-    /// `None` when no `@link` tag is present.
-    pub link: Option<String>,
+    /// For `@link https://php.net/...` and `@see https://example.com/`,
+    /// this collects all URLs found. Empty when no link/see URL tags are present.
+    pub links: Vec<String>,
     /// The namespace this function is declared in, if any.
     /// For example, `Amp\delay` would have namespace `Some("Amp")`.
     pub namespace: Option<String>,
@@ -1079,12 +1077,11 @@ pub struct ClassInfo {
     ///
     /// `None` when no replacement is specified.
     pub deprecated_replacement: Option<String>,
-    /// URL from the `@link` tag in the class-level docblock.
+    /// URLs from `@link` and `@see` tags in the class-level docblock.
     ///
-    /// For `@link https://php.net/manual/en/reserved.classes.php`,
-    /// this would be `Some("https://php.net/manual/en/reserved.classes.php")`.
-    /// `None` when no `@link` tag is present.
-    pub link: Option<String>,
+    /// For `@link https://php.net/...` and `@see https://example.com/`,
+    /// this collects all URLs found. Empty when no link/see URL tags are present.
+    pub links: Vec<String>,
     /// Template parameter names declared via `@template` / `@template-covariant`
     /// / `@template-contravariant` tags in the class-level docblock.
     ///
@@ -1593,7 +1590,7 @@ mod tests {
     #[test]
     fn method_signature_eq_ignores_link() {
         let mut a = method("foo");
-        a.link = Some("https://example.com".to_string());
+        a.links = vec!["https://example.com".to_string()];
         let b = method("foo");
         assert!(a.signature_eq(&b));
     }
@@ -1847,12 +1844,12 @@ mod tests {
     fn class_signature_eq_ignores_link() {
         let a = ClassInfo {
             name: "Foo".to_string(),
-            link: Some("https://example.com".to_string()),
+            links: vec!["https://example.com".to_string()],
             ..Default::default()
         };
         let b = ClassInfo {
             name: "Foo".to_string(),
-            link: None,
+            links: vec![],
             ..Default::default()
         };
         assert!(a.signature_eq(&b));
@@ -2110,7 +2107,7 @@ mod tests {
         m_a.name_offset = 100;
         m_a.description = Some("Old description".to_string());
         m_a.return_description = Some("Old return desc".to_string());
-        m_a.link = Some("https://old.example.com".to_string());
+        m_a.links = vec!["https://old.example.com".to_string()];
         let mut p_a = prop("name", "string");
         p_a.name_offset = 200;
         p_a.description = Some("Old prop desc".to_string());
@@ -2126,7 +2123,7 @@ mod tests {
             methods: vec![m_a],
             properties: vec![p_a],
             constants: vec![c_a],
-            link: Some("https://old.example.com".to_string()),
+            links: vec!["https://old.example.com".to_string()],
             ..Default::default()
         };
 
@@ -2134,7 +2131,7 @@ mod tests {
         m_b.name_offset = 150;
         m_b.description = Some("New description".to_string());
         m_b.return_description = Some("New return desc".to_string());
-        m_b.link = Some("https://new.example.com".to_string());
+        m_b.links = vec!["https://new.example.com".to_string()];
         let mut p_b = prop("name", "string");
         p_b.name_offset = 250;
         p_b.description = Some("New prop desc".to_string());
@@ -2150,7 +2147,7 @@ mod tests {
             methods: vec![m_b],
             properties: vec![p_b],
             constants: vec![c_b],
-            link: Some("https://new.example.com".to_string()),
+            links: vec!["https://new.example.com".to_string()],
             ..Default::default()
         };
 

@@ -24,7 +24,7 @@ PHPantom focuses on deep type intelligence. Here's how it compares:
 | Code lens                       | ✅       | 💰           | ✅         | ❌          | ✅          |
 | Inlay hints                     | ✅       | 💰           | ✅         | ❌          | ✅          |
 | Type hierarchy                  | ✅       | 💰           | ❌         | ❌          | ✅          |
-| Document links                  | ❌       | 💰           | ❌         | ❌          | ✅          |
+| Document links                  | ✅       | 💰           | ❌         | ❌          | ✅          |
 | **Type Intelligence**           |          |              |            |             |             |
 | Generics / `@template`          | ✅       | 🚧           | ✅         | 🚧          | ✅          |
 | `@mixin` completion             | ✅       | 💰           | ✅         | ✅          | 🚧          |

@@ -94,6 +94,7 @@ impl Backend {
                     member_name,
                     is_static,
                     is_method_call,
+                    ..
                 } => (subject_text, member_name, *is_static, *is_method_call),
                 _ => continue,
             };

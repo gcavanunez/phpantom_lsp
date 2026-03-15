@@ -73,6 +73,11 @@ pub(crate) enum SymbolKind {
         member_name: String,
         is_static: bool,
         is_method_call: bool,
+        /// `true` when this span was extracted from a docblock reference
+        /// (e.g. `@see Order::$channel_type`) rather than real PHP code.
+        /// Diagnostics skip these because the subject is a class name,
+        /// not a runtime expression.
+        is_docblock_reference: bool,
     },
 
     /// A `$variable` token (usage or definition site).

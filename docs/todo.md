@@ -43,17 +43,16 @@ The deferred performance items from Sprint 2.5 are included here
 because they are prerequisites for keeping everything fast as the
 feature surface grows.
 
-| #   | Item                                                                      | Effort | Domain       | Doc Link                                                                               |
-| --- | ------------------------------------------------------------------------- | ------ | ------------ | -------------------------------------------------------------------------------------- |
-| 87  | Reference-counted `ClassInfo` (`Arc<ClassInfo>`) — propagate through APIs | Medium | Performance  | [performance.md §2](todo/performance.md#2-reference-counted-classinfo-arcclassinfo)    |
-| 93  | Document Links (`textDocument/documentLink`)                              | Low    | LSP Features | [lsp-features.md §15](todo/lsp-features.md#15-document-links-textdocumentdocumentlink) |
-| 94  | Pull diagnostics (`textDocument/diagnostic`) — replace push model         | Medium | Performance  | [performance.md §15](todo/performance.md#15-pull-diagnostics-textdocumentdiagnostic)   |
+| #   | Item                                                                      | Effort | Domain      | Doc Link                                                                             |
+| --- | ------------------------------------------------------------------------- | ------ | ----------- | ------------------------------------------------------------------------------------ |
+| 87  | Reference-counted `ClassInfo` (`Arc<ClassInfo>`) — propagate through APIs | Medium | Performance | [performance.md §2](todo/performance.md#2-reference-counted-classinfo-arcclassinfo)  |
+| 94  | Pull diagnostics (`textDocument/diagnostic`) — replace push model         | Medium | Performance | [performance.md §15](todo/performance.md#15-pull-diagnostics-textdocumentdiagnostic) |
 
 **After Sprint 3:** PHPantom feels like a complete LSP to everyday
 users. Outline, breadcrumbs, workspace search, semantic highlighting,
-folding, formatting, inlay hints, type hierarchy, document links, and
-smart select all work. No one says "it's missing X" for basic editing
-workflows.
+folding, formatting, inlay hints, type hierarchy, document links,
+and smart select all work. No one says "it's missing X" for basic
+editing workflows.
 
 ---
 
@@ -138,13 +137,12 @@ engine advantage is unambiguous.
 Low-effort LSP features that didn't fit earlier sprints, plus
 code action polish.
 
-| #   | Item                                                             | Effort | Domain       | Doc Link                                                                               |
-| --- | ---------------------------------------------------------------- | ------ | ------------ | -------------------------------------------------------------------------------------- |
-| —   | Clear refactoring gate                                           | —      | Refactoring  | [refactor.md](todo/refactor.md)                                                        |
-| 34  | Document Links (`textDocument/documentLink`)                     | Low    | LSP Features | [lsp-features.md §15](todo/lsp-features.md#15-document-links-textdocumentdocumentlink) |
-| 39  | Simplify with null coalescing / null-safe operator (code action) | Medium | Code Actions | [actions.md §2](todo/actions.md#2-simplify-with-null-coalescing--null-safe-operator)   |
-| 110 | Update docblock to match signature                               | Medium | Code Actions | [actions.md §11](todo/actions.md#11-update-docblock-to-match-signature)                |
-| 111 | Change visibility                                                | Low    | Code Actions | [actions.md §12](todo/actions.md#12-change-visibility)                                 |
+| #   | Item                                                             | Effort | Domain       | Doc Link                                                                             |
+| --- | ---------------------------------------------------------------- | ------ | ------------ | ------------------------------------------------------------------------------------ |
+| —   | Clear refactoring gate                                           | —      | Refactoring  | [refactor.md](todo/refactor.md)                                                      |
+| 39  | Simplify with null coalescing / null-safe operator (code action) | Medium | Code Actions | [actions.md §2](todo/actions.md#2-simplify-with-null-coalescing--null-safe-operator) |
+| 110 | Update docblock to match signature                               | Medium | Code Actions | [actions.md §11](todo/actions.md#11-update-docblock-to-match-signature)              |
+| 111 | Change visibility                                                | Low    | Code Actions | [actions.md §12](todo/actions.md#12-change-visibility)                               |
 
 ---
 

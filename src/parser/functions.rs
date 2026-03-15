@@ -64,7 +64,7 @@ impl Backend {
                         deprecated_replacement,
                         description,
                         return_description,
-                        link,
+                        link_urls,
                         func_template_params,
                         func_template_bindings,
                     ) = if let Some(ctx) = doc_ctx {
@@ -132,7 +132,9 @@ impl Backend {
 
                         let ret_desc = docblock_text.and_then(docblock::extract_return_description);
 
-                        let link_url = docblock_text.and_then(docblock::extract_link_url);
+                        let link_urls = docblock_text
+                            .map(docblock::extract_link_urls)
+                            .unwrap_or_default();
 
                         (
                             effective,
@@ -142,7 +144,7 @@ impl Backend {
                             deprecated_replacement,
                             desc,
                             ret_desc,
-                            link_url,
+                            link_urls,
                             tpl_params,
                             tpl_bindings,
                         )
@@ -159,7 +161,7 @@ impl Backend {
                             None,
                             None,
                             None,
-                            None,
+                            Vec::new(),
                             Vec::new(),
                             Vec::new(),
                         )
@@ -210,7 +212,7 @@ impl Backend {
                         return_type,
                         description,
                         return_description,
-                        link,
+                        links: link_urls,
                         namespace: current_namespace.clone(),
                         conditional_return,
                         type_assertions,

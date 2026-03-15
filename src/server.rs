@@ -107,6 +107,12 @@ impl LanguageServer for Backend {
                 }),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                document_link_provider: Some(DocumentLinkOptions {
+                    resolve_provider: Some(false),
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                }),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -524,6 +530,13 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.to_string();
         self.handle_with_uri("code_lens", &uri, |content| {
             self.handle_code_lens(&uri, content)
+        })
+    }
+
+    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
+        let uri = params.text_document.uri.to_string();
+        self.handle_with_uri("document_link", &uri, |content| {
+            self.handle_document_link(&uri, content)
         })
     }
 

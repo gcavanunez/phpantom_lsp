@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Code Lens.** Clickable annotations above methods that override a parent class method or implement an interface method. Clicking navigates to the prototype declaration. Parent/trait overrides show "↑ ClassName::method", interface implementations show "◆ InterfaceName::method".
 - **Semantic Tokens.** Type-aware syntax highlighting that goes beyond what a TextMate grammar can achieve. Classes, interfaces, enums, traits, methods, properties, parameters, variables, functions, constants, and template parameters all get distinct token types. Modifiers convey declaration sites, static access, readonly, deprecated, and abstract status.
 - **Type Hierarchy.** "Show Type Hierarchy" on any class, interface, trait, or enum reveals its supertypes (parent class, implemented interfaces) and subtypes (extending/implementing classes). Supports full up-and-down navigation through the inheritance tree, including cross-file PSR-4 resolution and transitive relationships.
+- **Document Links.** `require`/`include` paths are now Ctrl+Clickable. Path resolution supports string literals, `__DIR__` concatenation, `dirname(__DIR__)`, `dirname(__FILE__)`, and nested `dirname` with levels. Only emits links for files that exist on disk.
+- **`@see` navigation.** `@see` references in docblocks now work with go-to-definition. Supported forms: `@see ClassName`, `@see ClassName::method()`, `@see ClassName::$property`, `@see ClassName::CONSTANT`, `@see functionName()`, and inline `{@see ...}`.
+- **`@link`/`@see` URLs in hover.** Hover popups now show all `@link` and `@see` URLs from the docblock as clickable links (previously only the first `@link` was shown).
 
 ### Changed
 

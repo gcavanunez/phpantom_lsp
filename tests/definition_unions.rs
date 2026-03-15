@@ -167,7 +167,7 @@ async fn test_goto_definition_union_return_type_standalone_function() {
                     native_return_type: None,
                     description: None,
                     return_description: None,
-                    link: None,
+                    links: vec![],
                     namespace: None,
                     conditional_return: None,
                     type_assertions: vec![],

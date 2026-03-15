@@ -133,6 +133,7 @@ impl Backend {
                     member_name,
                     is_static,
                     is_method_call,
+                    ..
                 } => {
                     if !is_method_call {
                         continue;

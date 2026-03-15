@@ -246,6 +246,7 @@ fn method_call_produces_member_access() {
         ref member_name,
         is_static,
         is_method_call,
+        ..
     } = hit.unwrap().kind
     {
         assert_eq!(member_name, "bar");
@@ -269,6 +270,7 @@ fn static_method_call_produces_member_access() {
         ref member_name,
         is_static,
         is_method_call,
+        ..
     } = hit.unwrap().kind
     {
         assert_eq!(member_name, "create");
@@ -2838,4 +2840,405 @@ fn arrow_fn_body_scope_suppresses_outer_call_site() {
         "Cursor at offset {} should be inside a nested body scope of each() call (args {}..{}), body_scopes: {:?}",
         arrow_body_marker, each_cs.args_start, each_cs.args_end, sm.body_scopes,
     );
+}
+
+// ── @see tag symbol extraction tests ────────────────────────────────────────
+
+#[test]
+fn see_tag_class_reference() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see UserService\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let offset = php.find("UserService").unwrap() as u32;
+    let hit = map.lookup(offset);
+    assert!(hit.is_some(), "Should find UserService from @see tag");
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "UserService");
+    } else {
+        panic!("Expected ClassReference for @see UserService");
+    }
+}
+
+#[test]
+fn see_tag_fqn_class_reference() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see \\App\\Models\\User\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let offset = php.find("\\App\\Models\\User").unwrap() as u32;
+    let hit = map.lookup(offset);
+    assert!(hit.is_some(), "Should find FQN class from @see tag");
+    if let SymbolKind::ClassReference {
+        ref name, is_fqn, ..
+    } = hit.unwrap().kind
+    {
+        assert_eq!(name, "App\\Models\\User");
+        assert!(is_fqn, "Leading backslash should set is_fqn");
+    } else {
+        panic!("Expected ClassReference for @see \\App\\Models\\User");
+    }
+}
+
+#[test]
+fn see_tag_member_method() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see Order::getTotal()\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    // The class part should produce a ClassReference.
+    let class_offset = php.find("Order").unwrap() as u32;
+    let hit = map.lookup(class_offset);
+    assert!(
+        hit.is_some(),
+        "Should find Order from @see Order::getTotal()"
+    );
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "Order");
+    } else {
+        panic!("Expected ClassReference for Order");
+    }
+
+    // The member part should produce a MemberAccess.
+    let member_offset = php.find("getTotal").unwrap() as u32;
+    let hit = map.lookup(member_offset);
+    assert!(
+        hit.is_some(),
+        "Should find getTotal from @see Order::getTotal()"
+    );
+    if let SymbolKind::MemberAccess {
+        ref subject_text,
+        ref member_name,
+        is_static,
+        ..
+    } = hit.unwrap().kind
+    {
+        assert_eq!(subject_text, "Order");
+        assert_eq!(member_name, "getTotal");
+        assert!(is_static, "@see members are treated as static access");
+    } else {
+        panic!("Expected MemberAccess for getTotal");
+    }
+}
+
+#[test]
+fn see_tag_member_property() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see Order::$channel_type\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    // The class part should produce a ClassReference.
+    let class_offset = php.find("Order").unwrap() as u32;
+    let hit = map.lookup(class_offset);
+    assert!(hit.is_some(), "Should find Order from @see tag");
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "Order");
+    } else {
+        panic!("Expected ClassReference for Order");
+    }
+
+    // The $channel_type part should produce a MemberAccess.
+    let prop_offset = php.find("$channel_type").unwrap() as u32;
+    let hit = map.lookup(prop_offset);
+    assert!(hit.is_some(), "Should find $channel_type from @see tag");
+    if let SymbolKind::MemberAccess {
+        ref subject_text,
+        ref member_name,
+        is_static,
+        ..
+    } = hit.unwrap().kind
+    {
+        assert_eq!(subject_text, "Order");
+        assert_eq!(member_name, "channel_type");
+        assert!(is_static);
+    } else {
+        panic!("Expected MemberAccess for $channel_type");
+    }
+}
+
+#[test]
+fn see_tag_member_constant() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see Order::STATUS_PENDING\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let const_offset = php.find("STATUS_PENDING").unwrap() as u32;
+    let hit = map.lookup(const_offset);
+    assert!(
+        hit.is_some(),
+        "Should find STATUS_PENDING from @see Order::STATUS_PENDING"
+    );
+    if let SymbolKind::MemberAccess {
+        ref subject_text,
+        ref member_name,
+        is_static,
+        ..
+    } = hit.unwrap().kind
+    {
+        assert_eq!(subject_text, "Order");
+        assert_eq!(member_name, "STATUS_PENDING");
+        assert!(is_static);
+    } else {
+        panic!("Expected MemberAccess for STATUS_PENDING");
+    }
+}
+
+#[test]
+fn see_tag_url_skipped() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see https://example.com/docs\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let offset = php.find("https://example.com").unwrap() as u32;
+    let hit = map.lookup(offset);
+    // URLs should NOT produce a symbol span.
+    assert!(
+        hit.is_none()
+            || !matches!(
+                hit.unwrap().kind,
+                SymbolKind::ClassReference { .. } | SymbolKind::FunctionCall { .. }
+            ),
+        "URL in @see should not produce a navigable symbol"
+    );
+}
+
+#[test]
+fn see_tag_function_reference() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see fixture()\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let offset = php.find("fixture").unwrap() as u32;
+    let hit = map.lookup(offset);
+    assert!(hit.is_some(), "Should find fixture from @see fixture()");
+    if let SymbolKind::FunctionCall { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "fixture");
+    } else {
+        panic!(
+            "Expected FunctionCall for fixture, got {:?}",
+            hit.unwrap().kind
+        );
+    }
+}
+
+#[test]
+fn see_tag_inline_form() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * Wraps {@see UserService} with caching.\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let offset = php.find("UserService").unwrap() as u32;
+    let hit = map.lookup(offset);
+    assert!(hit.is_some(), "Should find UserService from inline @see");
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "UserService");
+    } else {
+        panic!("Expected ClassReference for inline @see UserService");
+    }
+}
+
+#[test]
+fn see_tag_inline_function_reference() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * Wraps {@see fixture()} with extra logic.\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let offset = php.find("fixture").unwrap() as u32;
+    let hit = map.lookup(offset);
+    assert!(
+        hit.is_some(),
+        "Should find fixture from inline {{@see fixture()}}"
+    );
+    if let SymbolKind::FunctionCall { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "fixture");
+    } else {
+        panic!(
+            "Expected FunctionCall for inline @see fixture(), got {:?}",
+            hit.unwrap().kind
+        );
+    }
+}
+
+#[test]
+fn see_tag_inline_member_reference() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * Uses {@see Order::getTotal()} internally.\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let class_offset = php.find("Order").unwrap() as u32;
+    let hit = map.lookup(class_offset);
+    assert!(hit.is_some(), "Should find Order from inline @see");
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "Order");
+    } else {
+        panic!("Expected ClassReference for Order in inline @see");
+    }
+
+    let member_offset = php.find("getTotal").unwrap() as u32;
+    let hit = map.lookup(member_offset);
+    assert!(hit.is_some(), "Should find getTotal from inline @see");
+    if let SymbolKind::MemberAccess {
+        ref member_name, ..
+    } = hit.unwrap().kind
+    {
+        assert_eq!(member_name, "getTotal");
+    } else {
+        panic!("Expected MemberAccess for getTotal in inline @see");
+    }
+}
+
+#[test]
+fn see_tag_scalar_type_not_navigable() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see string\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    // Find the "string" that is part of the @see tag, not the one
+    // from the class keyword.
+    let see_line = php.find("@see string").unwrap();
+    let string_offset = (see_line + "@see ".len()) as u32;
+    let hit = map.lookup(string_offset);
+    assert!(
+        hit.is_none()
+            || !matches!(
+                hit.unwrap().kind,
+                SymbolKind::ClassReference { .. } | SymbolKind::FunctionCall { .. }
+            ),
+        "Scalar type 'string' in @see should not produce a navigable symbol"
+    );
+}
+
+#[test]
+fn see_tag_multiple_on_same_docblock() {
+    let php = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @see UserService\n",
+        " * @see OrderService\n",
+        " */\n",
+        "class Foo {}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let user_offset = php.find("UserService").unwrap() as u32;
+    let hit = map.lookup(user_offset);
+    assert!(hit.is_some(), "Should find UserService");
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "UserService");
+    } else {
+        panic!("Expected ClassReference for UserService");
+    }
+
+    let order_offset = php.find("OrderService").unwrap() as u32;
+    let hit = map.lookup(order_offset);
+    assert!(hit.is_some(), "Should find OrderService");
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "OrderService");
+    } else {
+        panic!("Expected ClassReference for OrderService");
+    }
+}
+
+#[test]
+fn see_tag_on_method_docblock() {
+    let php = concat!(
+        "<?php\n",
+        "class Foo {\n",
+        "    /**\n",
+        "     * @see BarService\n",
+        "     */\n",
+        "    public function test() {}\n",
+        "}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let offset = php.find("BarService").unwrap() as u32;
+    let hit = map.lookup(offset);
+    assert!(hit.is_some(), "Should find BarService on method docblock");
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "BarService");
+    } else {
+        panic!("Expected ClassReference for BarService");
+    }
+}
+
+#[test]
+fn see_tag_on_property_docblock() {
+    let php = concat!(
+        "<?php\n",
+        "class Foo {\n",
+        "    /**\n",
+        "     * @see CacheDriver\n",
+        "     */\n",
+        "    private $cache;\n",
+        "}\n",
+    );
+    let map = parse_and_extract(php);
+
+    let offset = php.find("CacheDriver").unwrap() as u32;
+    let hit = map.lookup(offset);
+    assert!(
+        hit.is_some(),
+        "Should find CacheDriver on property docblock"
+    );
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "CacheDriver");
+    } else {
+        panic!("Expected ClassReference for CacheDriver");
+    }
 }

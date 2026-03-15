@@ -89,15 +89,23 @@ impl Backend {
 
         // ── Walk every symbol span ──────────────────────────────────────
         for span in &symbol_map.spans {
-            let (subject_text, member_name, is_static, is_method_call) = match &span.kind {
-                SymbolKind::MemberAccess {
-                    subject_text,
-                    member_name,
-                    is_static,
-                    is_method_call,
-                } => (subject_text, member_name, *is_static, *is_method_call),
-                _ => continue,
-            };
+            let (subject_text, member_name, is_static, is_method_call, is_docblock_ref) =
+                match &span.kind {
+                    SymbolKind::MemberAccess {
+                        subject_text,
+                        member_name,
+                        is_static,
+                        is_method_call,
+                        is_docblock_reference,
+                    } => (
+                        subject_text,
+                        member_name,
+                        *is_static,
+                        *is_method_call,
+                        *is_docblock_reference,
+                    ),
+                    _ => continue,
+                };
 
             // ── Skip the magic `::class` constant ───────────────────────
             if member_name == "class" && is_static {
@@ -268,10 +276,10 @@ impl Backend {
             if base_classes.iter().any(|c| c.name == "stdClass") {
                 continue;
             }
-            if base_classes
-                .iter()
-                .any(|c| member_exists(c, member_name, is_static, is_method_call))
-            {
+            if base_classes.iter().any(|c| {
+                member_exists(c, member_name, is_static, is_method_call)
+                    || (is_docblock_ref && member_exists_relaxed(c, member_name, is_method_call))
+            }) {
                 continue;
             }
 
@@ -305,10 +313,10 @@ impl Backend {
             }
 
             // ── Check whether the member exists on ANY branch ───────────
-            if resolved_classes
-                .iter()
-                .any(|c| member_exists(c, member_name, is_static, is_method_call))
-            {
+            if resolved_classes.iter().any(|c| {
+                member_exists(c, member_name, is_static, is_method_call)
+                    || (is_docblock_ref && member_exists_relaxed(c, member_name, is_method_call))
+            }) {
                 continue;
             }
 
@@ -372,6 +380,29 @@ impl Backend {
 ///
 /// Method name matching is case-insensitive (PHP methods are
 /// case-insensitive).  Property and constant matching is case-sensitive.
+/// Relaxed member check for docblock references (`@see Class::member`).
+///
+/// PHPDoc `@see` uses `::` notation for all members (instance properties,
+/// instance methods, static properties, constants), so we check every
+/// member kind regardless of `is_static` or `is_method_call`.
+fn member_exists_relaxed(class: &ClassInfo, member_name: &str, _is_method_call: bool) -> bool {
+    // Check methods (case-insensitive, like PHP).
+    let lower = member_name.to_ascii_lowercase();
+    if class
+        .methods
+        .iter()
+        .any(|m| m.name.to_ascii_lowercase() == lower)
+    {
+        return true;
+    }
+    // Check instance and static properties.
+    if class.properties.iter().any(|p| p.name == member_name) {
+        return true;
+    }
+    // Check constants.
+    class.constants.iter().any(|c| c.name == member_name)
+}
+
 fn member_exists(
     class: &ClassInfo,
     member_name: &str,
@@ -2811,6 +2842,82 @@ class Demo {
         assert!(
             diags.is_empty(),
             "No diagnostics expected when member exists on resolved class, got: {:?}",
+            diags,
+        );
+    }
+
+    /// `@see ClassName::method()` in a docblock should not produce an
+    /// unknown-member diagnostic.  The symbol map emits these with
+    /// `is_method_call: false` and `is_static: true`, but the relaxed
+    /// check must still find the instance method.
+    #[test]
+    fn no_diagnostic_for_see_tag_method_reference() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class User {
+    public function name(): string { return 'Alice'; }
+}
+
+/**
+ * @see User::name()
+ */
+class Helper {
+    public function greet(): string { return 'hi'; }
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "Expected no diagnostics for @see User::name(), got: {:?}",
+            diags,
+        );
+    }
+
+    /// `@see ClassName::CONSTANT` should not produce a false positive either.
+    #[test]
+    fn no_diagnostic_for_see_tag_constant_reference() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class Config {
+    public const VERSION = '1.0';
+}
+
+/**
+ * @see Config::VERSION
+ */
+class App {}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "Expected no diagnostics for @see Config::VERSION, got: {:?}",
+            diags,
+        );
+    }
+
+    /// Inline `{@see ClassName::method()}` should also be clean.
+    #[test]
+    fn no_diagnostic_for_inline_see_tag_method_reference() {
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = r#"<?php
+class User {
+    public function name(): string { return 'Alice'; }
+}
+
+class Helper {
+    /**
+     * Wraps {@see User::name()} output.
+     */
+    public function greet(): string { return 'hi'; }
+}
+"#;
+        let diags = collect(&backend, uri, content);
+        assert!(
+            diags.is_empty(),
+            "Expected no diagnostics for inline {{@see User::name()}}, got: {:?}",
             diags,
         );
     }

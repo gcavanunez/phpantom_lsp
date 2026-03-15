@@ -45,7 +45,7 @@ pub fn make_class(name: &str) -> ClassInfo {
         is_abstract: false,
         deprecation_message: None,
         deprecated_replacement: None,
-        link: None,
+        links: Vec::new(),
         template_params: Vec::new(),
         template_param_bounds: HashMap::new(),
         extends_generics: Vec::new(),

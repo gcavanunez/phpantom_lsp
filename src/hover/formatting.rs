@@ -348,7 +348,7 @@ pub(super) fn hover_for_function(func: &FunctionInfo) -> Hover {
         lines.push(format_deprecation_line(msg));
     }
 
-    if let Some(ref url) = func.link {
+    for url in &func.links {
         lines.push(format!("[{}]({})", url, url));
     }
 
