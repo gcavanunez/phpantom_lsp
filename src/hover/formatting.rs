@@ -234,7 +234,7 @@ pub(super) fn build_param_return_section(
     if entries.is_empty() {
         None
     } else {
-        Some(entries.join("  \n"))
+        Some(entries.join("\n\n"))
     }
 }
 
