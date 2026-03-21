@@ -89,6 +89,7 @@ pub(crate) type ParseErrorEntry = (String, u32, u32);
 
 // ─── Module declarations ────────────────────────────────────────────────────
 
+pub mod analyse;
 pub mod classmap_scanner;
 mod code_actions;
 mod code_lens;

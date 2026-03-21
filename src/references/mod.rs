@@ -1182,7 +1182,7 @@ impl Backend {
     /// via the classmap and class_index.  The vendor directory (read from
     /// `composer.json` `config.vendor-dir`, defaulting to `vendor`) is
     /// skipped during the filesystem walk.
-    fn ensure_workspace_indexed(&self) {
+    pub(crate) fn ensure_workspace_indexed(&self) {
         // Collect URIs that already have symbol maps.
         let existing_uris: HashSet<String> = self.symbol_maps.read().keys().cloned().collect();
 
@@ -1322,7 +1322,7 @@ impl Backend {
     /// Each entry is `(uri, path)`.  The file is read from disk and
     /// parsed in a worker thread.  Uses [`std::thread::scope`] for
     /// structured concurrency.
-    fn parse_paths_parallel(&self, files: &[(String, PathBuf)]) {
+    pub(crate) fn parse_paths_parallel(&self, files: &[(String, PathBuf)]) {
         if files.is_empty() {
             return;
         }

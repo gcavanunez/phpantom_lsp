@@ -131,7 +131,12 @@ impl Backend {
 
     /// Collect Phase 1 (fast) diagnostics: syntax errors, unused
     /// imports.  These are cheap — no type resolution.
-    fn collect_fast_diagnostics(&self, uri_str: &str, content: &str, out: &mut Vec<Diagnostic>) {
+    pub(crate) fn collect_fast_diagnostics(
+        &self,
+        uri_str: &str,
+        content: &str,
+        out: &mut Vec<Diagnostic>,
+    ) {
         self.collect_syntax_error_diagnostics(uri_str, content, out);
         self.collect_unused_import_diagnostics(uri_str, content, out);
     }
@@ -139,7 +144,12 @@ impl Backend {
     /// Collect Phase 2 (slow) diagnostics: unknown class/member/function,
     /// argument count, implementation errors, deprecated usage.  These
     /// require type resolution and are expensive.
-    fn collect_slow_diagnostics(&self, uri_str: &str, content: &str, out: &mut Vec<Diagnostic>) {
+    pub(crate) fn collect_slow_diagnostics(
+        &self,
+        uri_str: &str,
+        content: &str,
+        out: &mut Vec<Diagnostic>,
+    ) {
         self.collect_unknown_class_diagnostics(uri_str, content, out);
         self.collect_unknown_member_diagnostics(uri_str, content, out);
         self.collect_unknown_function_diagnostics(uri_str, content, out);

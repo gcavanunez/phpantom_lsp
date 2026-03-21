@@ -997,7 +997,7 @@ impl Backend {
     /// This is the standard fast path: read PSR-4 mappings, build the
     /// classmap, scan autoload files.  Unchanged from the pre-monorepo
     /// behaviour except that vendor fields are now collections.
-    async fn init_single_project(
+    pub(crate) async fn init_single_project(
         &self,
         root: &std::path::Path,
         php_version: crate::types::PhpVersion,
@@ -1291,7 +1291,7 @@ impl Backend {
 
     /// Register a vendor directory path and its URI prefix for
     /// vendor-file detection.
-    fn add_vendor_dir(&self, vendor_path: &std::path::Path) {
+    pub(crate) fn add_vendor_dir(&self, vendor_path: &std::path::Path) {
         // Store the absolute path for filesystem-level skip logic.
         {
             let mut paths = self.vendor_dir_paths.lock();
@@ -1313,7 +1313,11 @@ impl Backend {
     /// Scan autoload files for a single project root and populate the
     /// autoload indices.  Returns the number of autoload file entries
     /// found.
-    fn scan_autoload_files(&self, project_root: &std::path::Path, vendor_dir: &str) -> usize {
+    pub(crate) fn scan_autoload_files(
+        &self,
+        project_root: &std::path::Path,
+        vendor_dir: &str,
+    ) -> usize {
         let autoload_files = composer::parse_autoload_files(project_root, vendor_dir);
         let autoload_count = autoload_files.len();
 
@@ -1398,7 +1402,7 @@ impl Backend {
     /// excluded from scanning (typically the file paths already
     /// present in the Composer classmap).  Pass an empty set to
     /// scan everything.
-    fn build_self_scan_composer(
+    pub(crate) fn build_self_scan_composer(
         &self,
         project_root: &std::path::Path,
         vendor_dir: &str,
@@ -1496,7 +1500,7 @@ impl Backend {
     /// result's function and constant indices are empty because those
     /// symbols are discovered via the `autoload_files.php` scan loop
     /// in `initialized()` instead.
-    fn populate_autoload_indices(&self, scan: &WorkspaceScanResult) {
+    pub(crate) fn populate_autoload_indices(&self, scan: &WorkspaceScanResult) {
         if !scan.function_index.is_empty() {
             let mut idx = self.autoload_function_index.write();
             for (fqn, path) in &scan.function_index {
