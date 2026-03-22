@@ -514,6 +514,122 @@ and eliminates the blocking fallback during interactive use.
 
 ---
 
+## P13. Tiered storage: drop per-file maps for non-open files
+
+**Impact: Medium-High · Effort: Medium-High**
+
+> **Note.** This item needs refinement when we work on it. The
+> codebase and feature set may change significantly before then.
+
+Not every file needs the same data at runtime. Storage should be
+split into three tiers based on how the file is used:
+
+| Data              | Open files | Closed user files   | Vendor files        |
+| ----------------- | ---------- | ------------------- | ------------------- |
+| ClassInfo (full)  | keep       | keep (via fqn_index)| keep (via fqn_index)|
+| SymbolMap         | keep       | drop (on-demand for find-refs) | never     |
+| use_map           | keep       | drop after index    | drop after index    |
+| namespace_map     | keep       | drop after index    | drop after index    |
+| parse_errors      | keep       | never               | never               |
+| ast_map entry     | keep       | drop (redundant with fqn_index) | drop     |
+| fqn_index         | keep       | keep                | keep                |
+| class_index       | keep       | keep                | keep                |
+| GTI index (new)   | keep       | keep                | keep                |
+
+**Key observations:**
+
+- **SymbolMap is the biggest win.** Each SymbolMap stores a
+  SymbolSpan for every symbol reference in the file, plus
+  VarDefSite, CallSite, and scope data. A typical file with
+  100-500 symbols is several KB. Across thousands of files this
+  adds up to tens or hundreds of MB.
+
+- **ast_map entries are redundant with fqn_index** once indexing
+  is complete. The slow linear fallback in `find_class_in_ast_map`
+  should not fire when fqn_index is fully populated. Go-to-definition
+  can re-parse on demand using the file path from class_index.
+
+- **Vendor files are never edited, never diagnosed.** They only
+  need ClassInfo for type resolution and class_index for
+  go-to-definition file lookup.
+
+- **Go-to-implementation currently scans all ast_map entries.**
+  A dedicated GTI index (parent FQN to list of child FQNs, built
+  during indexing) would decouple it from ast_map and allow
+  ast_map entries for non-open files to be dropped without
+  breaking implementation search. GTI needs vendor data (to find
+  chains through vendor classes) but only the parent/child
+  relationship, not the full per-file maps.
+
+- **Find-references only needs SymbolMaps for user code.** These
+  could be built on demand (parse, scan, drop) rather than kept
+  resident.
+
+- **Analyse mode benefits from laziness.** It never loads vendor
+  files that are not referenced by any user chain. LSP mode with
+  full vendor indexing would load everything since it cannot
+  predict what the user will type next. This makes the tiered
+  cleanup more important for LSP than for analyse.
+
+### Implementation sketch
+
+1. Track which URIs are "open" (already done via `open_files`).
+2. On `did_close`, drop the SymbolMap, use_map, namespace_map,
+   parse_errors, and ast_map entries for that URI. The fqn_index
+   entry (Arc\<ClassInfo\>) stays.
+3. For vendor files, use `parse_and_cache_content` (not
+   `update_ast`) so SymbolMaps are never created. After indexing,
+   sweep vendor URIs out of ast_map/use_map/namespace_map.
+4. Build a dedicated GTI index during indexing so that
+   `find_implementors` does not need ast_map.
+5. For find-references, build SymbolMaps on demand by re-parsing
+   from disk.
+
+---
+
+## P14. Eager docblock parsing into structured fields
+
+**Impact: Medium · Effort: Medium**
+
+> **Note.** This item needs refinement when we work on it. The
+> codebase and feature set may change significantly before then.
+
+Currently `ClassInfo::class_docblock` stores the raw docblock
+string. Every consumer that needs virtual members (`@method`,
+`@property`, `@property-read`, `@property-write`) re-parses the
+raw text via `PHPDocProvider`. Hover, completion, and diagnostics
+all trigger this independently.
+
+Parse the class-level docblock once during extraction and store the
+structured results directly on ClassInfo:
+
+- A list of parsed `@method` signatures (name, parameters, return
+  type, static flag, description).
+- A list of parsed `@property` / `@property-read` /
+  `@property-write` entries (name, type, access mode, description).
+
+This has three benefits:
+
+1. **Drop the raw string.** For heavily-annotated classes (Eloquent
+   models, facades) the raw docblock can be hundreds of bytes.
+   The structured representation may be comparable in size but is
+   directly usable without re-parsing.
+
+2. **Eliminate repeated parsing.** Virtual member resolution
+   currently re-parses the same docblock text on every completion,
+   hover, and diagnostic pass. Parsing once during extraction
+   removes this redundant work.
+
+3. **Simpler consumer code.** Consumers iterate structured fields
+   instead of calling into the docblock parser. This removes the
+   lazy-parse indirection and makes the data flow easier to follow.
+
+The same principle applies to other docblock data that is currently
+extracted from raw text at multiple read sites (descriptions, link
+URLs, see references), though those are smaller wins.
+
+---
+
 ## Appendix: Profiling
 
 ### Commands
