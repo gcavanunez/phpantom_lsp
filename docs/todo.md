@@ -98,9 +98,18 @@ server with Blade intelligence.
 Items not yet assigned to a sprint. Worth doing eventually but
 unlikely to move the needle for most users.
 
-| #   | Item                                                                                                                                                         | Impact     | Effort      |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ----------- |
-|     | **[Completion](todo/completion.md)**                                                                                                                         |            |             |
+| #   | Item                                                                                                                                                         | Impact      | Effort      |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ----------- |
+|     | **[Bugs](todo/bugs.md)**                                                                                                                                     |             |             |
+| B1  | [Nullable type prefix not stripped during diagnostic class lookup](todo/bugs.md#b1-nullable-type-prefix-not-stripped-during-diagnostic-class-lookup)           | Medium-High | Low         |
+| B2  | [Generic type parameters not stripped during diagnostic class lookup](todo/bugs.md#b2-generic-type-parameters-not-stripped-during-diagnostic-class-lookup)     | Medium      | Low         |
+| B3  | [Trait static/self suppression not applied inside closures](todo/bugs.md#b3-trait-staticself-suppression-not-applied-inside-closures)                         | Medium      | Low         |
+| B4  | [Variable reassignment loses type when parameter name is reused](todo/bugs.md#b4-variable-reassignment-loses-type-when-parameter-name-is-reused)             | Medium      | Medium      |
+| B5  | [Docblock `@see` reference prepends file namespace](todo/bugs.md#b5-docblock-see-reference-prepends-file-namespace)                                          | Low         | Low         |
+| B6  | [Empty subject string in diagnostic messages](todo/bugs.md#b6-empty-subject-string-in-diagnostic-messages)                                                   | Low         | Low         |
+| B7  | [Overloaded built-in function signatures in stubs](todo/bugs.md#b7-overloaded-built-in-function-signatures-in-stubs)                                         | Low         | Low         |
+| B8  | [`getCode`/`getMessage` not found through deep inheritance chains](todo/bugs.md#b8-getcodemessage-not-found-through-deep-inheritance-chains)                 | Low         | Low         |
+|     | **[Completion](todo/completion.md)**                                                                                                                         |             |             |
 | C1  | Array functions needing new code paths                                                                                                                       | Medium     | High        |
 | C10 | [Lazy documentation via `completionItem/resolve`](todo/completion.md#c10-lazy-documentation-via-completionitemresolve)                                        | Medium     | Medium      |
 | C12 | [Smarter member ordering after `->` / `::`](todo/completion.md#c12-smarter-member-ordering-after----)                                                        | Medium     | Medium      |
@@ -180,6 +189,8 @@ unlikely to move the needle for most users.
 | L9  | Higher-order collection proxies                                                                                                                              | Low-Medium | Medium-High |
 | L10 | `View::withX()` / `RedirectResponse::withX()` dynamic methods                                                                                                | Low        | Low         |
 | L11 | `$appends` array                                                                                                                                             | Low        | Low         |
+| L12 | [`auth()` helper return type](todo/laravel.md#l12-auth-helper-return-type)                                                                                   | Low-Medium | Low         |
+| L13 | [`app()->make()` container return type](todo/laravel.md#l13-appmake-container-return-type)                                                                   | Low        | Medium      |
 |     | **[External Stubs](todo/external-stubs.md)**                                                                                                                 |            |             |
 | E2  | Project-level stubs as type resolution source                                                                                                                | Medium     | Medium      |
 | E3  | IDE-provided and `.phpantom.toml` stub paths                                                                                                                 | Low-Medium | Low         |
@@ -208,6 +219,7 @@ unlikely to move the needle for most users.
 | X2  | Parallel file processing — remaining work                                                                                                                    | Low-Medium | Medium      |
 | X5  | Granular progress reporting for indexing, GTI, and Find References                                                                                           | Low-Medium | Medium      |
 | X4  | Full background indexing (`strategy = "full"`)                                                                                                               | Medium     | High        |
+| X8  | [Phar archive class resolution](todo/indexing.md#x8-phar-archive-class-resolution)                                                                           | Medium     | Medium      |
 | X6  | Disk cache (evaluate later)                                                                                                                                  | Medium     | High        |
 |     | **[Inline Completion](todo/inline-completion.md)**                                                                                                           |            |             |
 | N1  | Template engine (type-aware snippets)                                                                                                                        | Medium     | High        |
