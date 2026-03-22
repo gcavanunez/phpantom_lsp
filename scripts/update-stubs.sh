@@ -2,40 +2,57 @@
 #
 # Update the pinned phpstorm-stubs version in stubs.lock.
 #
-# Run this before preparing a new release to pick up the latest stubs:
-#
-#   ./scripts/update-stubs.sh
+# Usage:
+#   ./scripts/update-stubs.sh                        # update current repo to latest
+#   ./scripts/update-stubs.sh AJenbo/phpstorm-stubs  # switch to a fork
+#   ./scripts/update-stubs.sh AJenbo/phpstorm-stubs 0ea6b443...  # pin a specific commit
 #
 # The script will:
-#   1. Query the GitHub API for the latest commit on master.
-#   2. Download the tarball for that commit.
-#   3. Compute its SHA-256 hash.
-#   4. Write the new stubs.lock file.
-#   5. Delete the local stubs/ cache so the next build fetches fresh.
+#   1. Read the current repo from stubs.lock (or use the argument).
+#   2. Query the GitHub API for the latest commit on master (or use the argument).
+#   3. Download the tarball for that commit.
+#   4. Compute its SHA-256 hash.
+#   5. Write the new stubs.lock file.
+#   6. Delete the local stubs/ cache so the next build fetches fresh.
 
 set -euo pipefail
 
-REPO="JetBrains/phpstorm-stubs"
 LOCK_FILE="stubs.lock"
 
 cd "$(dirname "$0")/.."
 
-echo "Fetching latest commit SHA for ${REPO} master..."
-COMMIT=$(curl -sf \
-    -H "Accept: application/vnd.github.v3+json" \
-    -H "User-Agent: phpantom-lsp-update" \
-    "https://api.github.com/repos/${REPO}/commits/master" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")
+# ── Determine repo ──────────────────────────────────────────────────
+# First argument overrides; otherwise read from existing stubs.lock.
+if [[ ${1:-} ]]; then
+    REPO="$1"
+elif [[ -f "$LOCK_FILE" ]]; then
+    REPO=$(grep '^repo' "$LOCK_FILE" | sed 's/.*= *"\(.*\)"/\1/' || true)
+fi
+REPO="${REPO:-JetBrains/phpstorm-stubs}"
+
+# ── Determine commit ────────────────────────────────────────────────
+# Second argument pins a specific commit; otherwise fetch latest master.
+if [[ ${2:-} ]]; then
+    COMMIT="$2"
+    echo "Using provided commit ${COMMIT:0:10} on ${REPO}..."
+else
+    echo "Fetching latest commit SHA for ${REPO} master..."
+    COMMIT=$(curl -sf \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "User-Agent: phpantom-lsp-update" \
+        "https://api.github.com/repos/${REPO}/commits/master" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")
+fi
 
 if [[ -z "$COMMIT" ]]; then
-    echo "Error: failed to fetch commit SHA" >&2
+    echo "Error: failed to determine commit SHA" >&2
     exit 1
 fi
 
 SHORT="${COMMIT:0:10}"
 TARBALL_URL="https://github.com/${REPO}/archive/${COMMIT}.tar.gz"
 
-echo "Downloading tarball for ${SHORT}..."
+echo "Downloading tarball for ${REPO} @ ${SHORT}..."
 TARBALL=$(mktemp)
 trap 'rm -f "$TARBALL"' EXIT
 
@@ -57,7 +74,12 @@ cat > "$LOCK_FILE" <<EOF
 #
 # To update, run:  scripts/update-stubs.sh
 
-# The pinned commit SHA on JetBrains/phpstorm-stubs master.
+# The GitHub repository to fetch stubs from.
+# Use "JetBrains/phpstorm-stubs" for upstream, or a fork like
+# "AJenbo/phpstorm-stubs" for fixes not yet merged upstream.
+repo = "${REPO}"
+
+# The pinned commit SHA.
 commit = "${COMMIT}"
 
 # SHA-256 hash of the GitHub-generated tarball for the commit above.
@@ -68,5 +90,5 @@ echo "Removing stubs/ cache so next build fetches fresh..."
 rm -rf stubs/
 
 echo ""
-echo "Done! Pinned to ${SHORT} (${HASH})"
+echo "Done! Pinned to ${REPO} @ ${SHORT} (${HASH})"
 echo "Run 'cargo build' to fetch and verify the new stubs."

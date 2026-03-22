@@ -60,6 +60,8 @@ const STUBS_DIR: &str = "stubs/jetbrains/phpstorm-stubs";
 
 /// Contents of `stubs.lock`.
 struct StubsLock {
+    /// GitHub repository in `owner/repo` format (e.g. `JetBrains/phpstorm-stubs`).
+    repo: String,
     commit: String,
     sha256: String,
 }
@@ -243,6 +245,7 @@ fn read_stubs_lock(manifest_dir: &str) -> StubsLock {
     let content = fs::read_to_string(&lock_path)
         .unwrap_or_else(|e| panic!("Failed to read stubs.lock: {}\nThis file is required and should be checked into version control.", e));
 
+    let mut repo: Option<String> = None;
     let mut commit: Option<String> = None;
     let mut sha256: Option<String> = None;
 
@@ -255,6 +258,7 @@ fn read_stubs_lock(manifest_dir: &str) -> StubsLock {
             let key = key.trim();
             let value = value.trim().trim_matches('"');
             match key {
+                "repo" => repo = Some(value.to_string()),
                 "commit" => commit = Some(value.to_string()),
                 "sha256" => sha256 = Some(value.to_string()),
                 _ => {}
@@ -263,6 +267,7 @@ fn read_stubs_lock(manifest_dir: &str) -> StubsLock {
     }
 
     StubsLock {
+        repo: repo.unwrap_or_else(|| "JetBrains/phpstorm-stubs".to_string()),
         commit: commit.expect("stubs.lock is missing 'commit' field"),
         sha256: sha256.expect("stubs.lock is missing 'sha256' field"),
     }
@@ -381,13 +386,13 @@ fn sha256_hex(data: &[u8]) -> String {
 fn fetch_stubs(manifest_dir: &str, lock: &StubsLock) -> Result<(), Box<dyn std::error::Error>> {
     let short = &lock.commit[..lock.commit.len().min(10)];
     let tarball_url = format!(
-        "https://github.com/JetBrains/phpstorm-stubs/archive/{}.tar.gz",
-        lock.commit
+        "https://github.com/{}/archive/{}.tar.gz",
+        lock.repo, lock.commit
     );
 
     eprintln!(
-        "cargo:warning=Downloading phpstorm-stubs pinned at {}",
-        short
+        "cargo:warning=Downloading phpstorm-stubs from {} pinned at {}",
+        lock.repo, short
     );
 
     let mut tarball_response = ureq::get(&tarball_url)
@@ -473,8 +478,8 @@ fn fetch_stubs(manifest_dir: &str, lock: &StubsLock) -> Result<(), Box<dyn std::
     }
 
     eprintln!(
-        "cargo:warning=Successfully downloaded phpstorm-stubs master@{}",
-        short
+        "cargo:warning=Successfully downloaded phpstorm-stubs from {} @ {}",
+        lock.repo, short
     );
     Ok(())
 }

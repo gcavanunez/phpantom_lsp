@@ -5,8 +5,13 @@
 #
 # To update, run:  scripts/update-stubs.sh
 
-# The pinned commit SHA on JetBrains/phpstorm-stubs master.
-commit = "d103a6847320ffc118435f86df8bfb9c8912d7ac"
+# The GitHub repository to fetch stubs from.
+# Use "JetBrains/phpstorm-stubs" for upstream, or a fork like
+# "AJenbo/phpstorm-stubs" for fixes not yet merged upstream.
+repo = "AJenbo/phpstorm-stubs"
+
+# The pinned commit SHA.
+commit = "0ea6b443d24260c23d1266e73d2db9b0b265bc6c"
 
 # SHA-256 hash of the GitHub-generated tarball for the commit above.
-sha256 = "84db18432c31b90ccc08d6e75338c690db0d8954cc941b6148479247cbe035c3"
+sha256 = "3b97df3d79c9631adc3c415b145a6a11b0aa90696ebf1f791c865d84e4f40782"
