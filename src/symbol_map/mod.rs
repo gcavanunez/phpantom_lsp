@@ -363,6 +363,21 @@ impl SymbolMap {
         })
     }
 
+    /// Return the `effective_from` offset of the most recent definition
+    /// of `$var_name` that is visible at `cursor_offset`, or `0` if no
+    /// definition is found.
+    ///
+    /// This is used as a cache-key discriminator: two accesses to the
+    /// same variable that fall under the same definition share a cache
+    /// entry, but accesses before vs. after a reassignment get different
+    /// entries.
+    pub fn active_var_def_offset(&self, var_name: &str, cursor_offset: u32) -> u32 {
+        let scope_start = self.find_enclosing_scope(cursor_offset);
+        self.find_var_definition(var_name, cursor_offset, scope_start)
+            .map(|d| d.effective_from)
+            .unwrap_or(0)
+    }
+
     /// Check whether `cursor_offset` is physically sitting on a variable
     /// definition token (the `$var` token of an assignment LHS, parameter,
     /// foreach binding, etc.).

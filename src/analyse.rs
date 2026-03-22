@@ -233,6 +233,7 @@ pub async fn run(options: AnalyseOptions) -> i32 {
                         if let Some(sm) = backend.symbol_maps.read().get(uri.as_str()) {
                             crate::completion::resolver::set_diagnostic_subject_cache_scopes(
                                 sm.scopes.clone(),
+                                sm.var_defs.clone(),
                             );
                         }
 

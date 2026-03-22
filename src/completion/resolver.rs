@@ -155,21 +155,32 @@ impl<'a> VarResolutionCtx<'a> {
 /// (unknown_member, argument_count) share results instead of
 /// re-resolving the same subjects independently.
 ///
-/// The cache key is `(subject_text, access_kind, scope_start)` where
-/// `scope_start` is the byte offset of the innermost enclosing
-/// function/method/closure body.  This ensures that two methods in
-/// the same class that both use `$order->` get independent cache
-/// entries when `$order` has a different type in each method.
+/// The cache key is `(subject_text, access_kind, scope_start,
+/// var_def_offset)` where `scope_start` is the byte offset of the
+/// innermost enclosing function/method/closure body and
+/// `var_def_offset` is the `effective_from` of the active variable
+/// definition (or `0` for non-variable subjects).  This ensures that
+/// two methods in the same class that both use `$order->` get
+/// independent cache entries, and that accesses before vs. after a
+/// variable reassignment within the same method also get independent
+/// entries.
 ///
-/// Scope boundaries are stored alongside the cache and set by
-/// [`set_diagnostic_subject_cache_scopes`].
-type DiagSubjectCache = HashMap<(String, AccessKind, u32), Vec<Arc<ClassInfo>>>;
+/// Scope boundaries and variable definitions are stored alongside the
+/// cache and set by [`set_diagnostic_subject_cache_scopes`].
+type DiagSubjectCache = HashMap<(String, AccessKind, u32, u32), Vec<Arc<ClassInfo>>>;
 
-/// Scope boundaries `(start_offset, end_offset)` for the current file,
-/// stored alongside the diagnostic subject cache so that
-/// [`resolve_target_classes`] can compute the enclosing scope from the
-/// `cursor_offset` without needing a reference to the [`SymbolMap`].
-type DiagSubjectCacheState = (DiagSubjectCache, Vec<(u32, u32)>);
+/// File-level data stored alongside the diagnostic subject cache so
+/// that [`resolve_target_classes`] can compute the enclosing scope and
+/// active variable definition from the `cursor_offset` without needing
+/// a reference to the [`SymbolMap`].
+struct DiagSubjectCacheFileData {
+    /// Scope boundaries `(start_offset, end_offset)`.
+    scopes: Vec<(u32, u32)>,
+    /// Variable definition sites, cloned from the [`SymbolMap`].
+    var_defs: Vec<crate::symbol_map::VarDefSite>,
+}
+
+type DiagSubjectCacheState = (DiagSubjectCache, DiagSubjectCacheFileData);
 
 thread_local! {
     static DIAG_SUBJECT_CACHE: RefCell<Option<DiagSubjectCacheState>> = const { RefCell::new(None) };
@@ -205,12 +216,19 @@ pub(crate) fn with_diagnostic_subject_cache() -> DiagSubjectCacheGuard {
         return DiagSubjectCacheGuard { owns_cache: false };
     }
     DIAG_SUBJECT_CACHE.with(|cell| {
-        *cell.borrow_mut() = Some((HashMap::new(), Vec::new()));
+        *cell.borrow_mut() = Some((
+            HashMap::new(),
+            DiagSubjectCacheFileData {
+                scopes: Vec::new(),
+                var_defs: Vec::new(),
+            },
+        ));
     });
     DiagSubjectCacheGuard { owns_cache: true }
 }
 
-/// Provide scope boundaries for the active diagnostic subject cache.
+/// Provide scope boundaries and variable definitions for the active
+/// diagnostic subject cache.
 ///
 /// Must be called while a [`DiagSubjectCacheGuard`] is alive.  The
 /// scopes are `(start_offset, end_offset)` pairs for every
@@ -218,11 +236,20 @@ pub(crate) fn with_diagnostic_subject_cache() -> DiagSubjectCacheGuard {
 /// They are used to compute the enclosing scope for each
 /// `cursor_offset`, ensuring that same-named variables in different
 /// methods resolve independently.
-pub(crate) fn set_diagnostic_subject_cache_scopes(scopes: Vec<(u32, u32)>) {
+///
+/// The `var_defs` are cloned from the [`SymbolMap`] and used to
+/// compute the active variable definition at each cursor offset,
+/// ensuring that accesses before and after a variable reassignment
+/// within the same method get independent cache entries.
+pub(crate) fn set_diagnostic_subject_cache_scopes(
+    scopes: Vec<(u32, u32)>,
+    var_defs: Vec<crate::symbol_map::VarDefSite>,
+) {
     DIAG_SUBJECT_CACHE.with(|cell| {
         let mut borrow = cell.borrow_mut();
-        if let Some((_map, stored_scopes)) = borrow.as_mut() {
-            *stored_scopes = scopes;
+        if let Some((_map, file_data)) = borrow.as_mut() {
+            file_data.scopes = scopes;
+            file_data.var_defs = var_defs;
         }
     });
 }
@@ -236,14 +263,66 @@ fn diag_cache_enclosing_scope(cursor_offset: u32) -> u32 {
     DIAG_SUBJECT_CACHE.with(|cell| {
         let borrow = cell.borrow();
         match borrow.as_ref() {
-            Some((_map, scopes)) => {
+            Some((_map, file_data)) => {
                 let mut best: u32 = 0;
-                for &(start, end) in scopes {
+                for &(start, end) in &file_data.scopes {
                     if start <= cursor_offset && cursor_offset <= end && start > best {
                         best = start;
                     }
                 }
                 best
+            }
+            None => 0,
+        }
+    })
+}
+
+/// Compute the `var_def_offset` discriminator for a subject at a given
+/// cursor offset.
+///
+/// For variable-based subjects (starting with `$`, excluding `$this`),
+/// returns the `effective_from` offset of the most recent variable
+/// definition visible at `cursor_offset`.  For non-variable subjects,
+/// returns `0`.
+///
+/// This ensures that the diagnostic subject cache distinguishes
+/// accesses to the same variable before and after a reassignment.
+fn diag_cache_var_def_offset(subject: &str, cursor_offset: u32) -> u32 {
+    if !subject.starts_with('$') || subject.starts_with("$this") {
+        return 0;
+    }
+    // Extract the bare variable name without '$' (e.g. "file" from
+    // "$file" or "$file->foo()").
+    let after_dollar = &subject[1..];
+    let var_name = after_dollar
+        .find("->")
+        .map(|i| &after_dollar[..i])
+        .unwrap_or(after_dollar);
+
+    DIAG_SUBJECT_CACHE.with(|cell| {
+        let borrow = cell.borrow();
+        match borrow.as_ref() {
+            Some((_map, file_data)) => {
+                let scope_start = {
+                    let mut best: u32 = 0;
+                    for &(start, end) in &file_data.scopes {
+                        if start <= cursor_offset && cursor_offset <= end && start > best {
+                            best = start;
+                        }
+                    }
+                    best
+                };
+                file_data
+                    .var_defs
+                    .iter()
+                    .rev()
+                    .find(|d| {
+                        d.name == var_name
+                            && d.scope_start == scope_start
+                            && d.effective_from <= cursor_offset
+                    })
+                    .map(|d| d.effective_from)
+                    .unwrap_or(0)
             }
             None => 0,
         }
@@ -271,7 +350,13 @@ pub(crate) fn resolve_target_classes(
 ) -> Vec<Arc<ClassInfo>> {
     // ── Fast path: check the thread-local diagnostic cache ──────
     let scope_start = diag_cache_enclosing_scope(ctx.cursor_offset);
-    let cache_key = (subject.to_string(), access_kind, scope_start);
+    let var_def_offset = diag_cache_var_def_offset(subject, ctx.cursor_offset);
+    let cache_key = (
+        subject.to_string(),
+        access_kind,
+        scope_start,
+        var_def_offset,
+    );
     let cached = DIAG_SUBJECT_CACHE.with(|cell| {
         let borrow = cell.borrow();
         borrow

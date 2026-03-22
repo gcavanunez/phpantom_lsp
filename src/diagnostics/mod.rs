@@ -575,7 +575,10 @@ impl Backend {
             // can distinguish variables in different methods of the same
             // class (prevents cross-method cache pollution).
             if let Some(sm) = self.symbol_maps.read().get(uri_str) {
-                crate::completion::resolver::set_diagnostic_subject_cache_scopes(sm.scopes.clone());
+                crate::completion::resolver::set_diagnostic_subject_cache_scopes(
+                    sm.scopes.clone(),
+                    sm.var_defs.clone(),
+                );
             }
 
             self.collect_slow_diagnostics(uri_str, content, &mut slow_diagnostics);

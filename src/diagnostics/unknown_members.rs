@@ -108,11 +108,21 @@ enum ScopeKey {
 }
 
 /// Cache key combining the subject text, access kind, and scope.
+///
+/// For variable-based subjects (starting with `$`, excluding `$this`),
+/// `var_def_offset` distinguishes accesses that fall under different
+/// definitions of the same variable.  Without this, the cache would
+/// return the parameter type for accesses after a reassignment.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct SubjectCacheKey {
     subject_text: String,
     access_kind: AccessKind,
     scope: ScopeKey,
+    /// The `effective_from` offset of the active variable definition at
+    /// the point of access, or `0` for non-variable subjects.  This
+    /// ensures that accesses before and after a reassignment get
+    /// separate cache entries.
+    var_def_offset: u32,
 }
 
 /// The outcome of resolving a subject for diagnostic purposes.
@@ -292,7 +302,10 @@ impl Backend {
         // distinguish variables in different methods of the same class.
         // In production this is already set by the outer caller; for
         // standalone calls (tests, benchmarks) set it here.
-        crate::completion::resolver::set_diagnostic_subject_cache_scopes(symbol_map.scopes.clone());
+        crate::completion::resolver::set_diagnostic_subject_cache_scopes(
+            symbol_map.scopes.clone(),
+            symbol_map.var_defs.clone(),
+        );
 
         // ── Subject resolution cache for this diagnostic pass ───────────
         let mut subject_cache: SubjectCache = HashMap::new();
@@ -352,10 +365,30 @@ impl Backend {
             let fn_scope_start = symbol_map.find_enclosing_scope(span.start);
 
             // ── Look up or populate the subject cache ───────────────────
+            // For variable subjects (excluding $this), compute the
+            // active definition offset so that accesses before and
+            // after a reassignment get separate cache entries (B4).
+            let var_def_offset =
+                if subject_text.starts_with('$') && !subject_text.starts_with("$this") {
+                    // Extract the bare variable name (e.g. "$file" from
+                    // "$file" or from a chain like "$file->foo()").
+                    let var_name = subject_text
+                        .find("->")
+                        .map(|i| &subject_text[..i])
+                        .unwrap_or(subject_text);
+                    symbol_map.active_var_def_offset(
+                        &var_name[1..], // strip leading '$'
+                        span.start,
+                    )
+                } else {
+                    0
+                };
+
             let cache_key = SubjectCacheKey {
                 subject_text: subject_text.clone(),
                 access_kind,
                 scope: scope_key_for(current_class, fn_scope_start),
+                var_def_offset,
             };
 
             let outcome = subject_cache
@@ -3509,6 +3542,85 @@ class Service {
             foo_diags.len(),
             1,
             "expected exactly one 'foo' diagnostic (in method b), got: {foo_diags:?}"
+        );
+    }
+
+    #[test]
+    fn no_false_positive_when_parameter_is_reassigned() {
+        // Regression test for B4: when a method parameter is reassigned
+        // mid-body, PHPantom should resolve subsequent accesses against
+        // the new type, not the original parameter type.
+        //
+        // Before the fix, the subject cache keyed by (subject_text,
+        // access_kind, scope) would cache the parameter type on the
+        // first `$file->` encounter and reuse it for accesses after
+        // the reassignment, producing false-positive "unknown member"
+        // diagnostics.
+        let php = r#"<?php
+class UploadedFile {
+    public string $originalName;
+}
+class FileModel {
+    public int $id;
+    public string $name;
+}
+class Result {
+    public function getFile(): FileModel { return new FileModel(); }
+}
+class FileUploadService {
+    public function uploadFile(UploadedFile $file): void {
+        $file->originalName;
+        $result = new Result();
+        $file = $result->getFile();
+        $file->id;
+        $file->name;
+    }
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(
+            diags.is_empty(),
+            "expected no false positives when parameter is reassigned mid-body, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn flags_unknown_member_after_reassignment() {
+        // The flip side of B4: after reassignment, members from the
+        // NEW type that don't exist should still be flagged.
+        let php = r#"<?php
+class TypeA {
+    public function onlyOnA(): void {}
+}
+class TypeB {
+    public function onlyOnB(): void {}
+}
+class Service {
+    public function process(TypeA $var): void {
+        $var->onlyOnA();
+        $var = new TypeB();
+        $var->onlyOnA();
+    }
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("onlyOnA") && d.message.contains("TypeB")),
+            "expected diagnostic for onlyOnA() on TypeB after reassignment, got: {diags:?}"
+        );
+        // Exactly one diagnostic — the post-reassignment access.
+        let relevant: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("onlyOnA"))
+            .collect();
+        assert_eq!(
+            relevant.len(),
+            1,
+            "expected exactly one 'onlyOnA' diagnostic (after reassignment), got: {relevant:?}"
         );
     }
 }
