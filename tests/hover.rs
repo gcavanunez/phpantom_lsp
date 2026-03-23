@@ -8181,3 +8181,153 @@ class Svc {
         text
     );
 }
+
+/// Verify that hover agrees with completion for `??` when the LHS is a
+/// method call.  `getWidget()` returns non-nullable `Widget`, so the RHS
+/// is dead code and hover should show `Widget` only.
+#[test]
+fn hover_null_coalesce_method_call_lhs_not_lost() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Widget {
+    public function render(): void {}
+}
+class DefaultWidget {
+    public function render(): void {}
+}
+class Service {
+    public function getWidget(): Widget { return new Widget(); }
+}
+class App {
+    public function test(): void {
+        $svc = new Service();
+        $w = $svc->getWidget() ?? new DefaultWidget();
+        $w->render();
+    }
+}
+"#;
+
+    let hover = hover_at(&backend, uri, content, 14, 9).expect("expected hover on $w");
+    let text = hover_text(&hover);
+    // getWidget() returns Widget (non-nullable), so $w should be Widget only
+    assert!(
+        text.contains("Widget"),
+        "hover should show Widget, got: {}",
+        text
+    );
+}
+
+/// The `??` null-coalesce divergence: when the raw-type engine cannot resolve
+/// the LHS (returns `None`), it falls through to RHS-only.  The ClassInfo
+/// engine checks whether the LHS AST node is *syntactically* non-nullable
+/// (e.g. `clone`, `new`, literal) and skips the RHS.  This test uses `clone`
+/// on a variable whose type comes from a *method call return* — the raw-type
+/// engine's simple `resolve_rhs_raw_type(clone_expr.object)` recurse may not
+/// resolve the inner method call, causing the `None` path in `??` to fire and
+/// show only the RHS type.
+#[test]
+fn hover_null_coalesce_clone_of_method_call_shows_lhs() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Config {
+    public function get(): string { return ''; }
+}
+class Fallback {
+    public function get(): string { return ''; }
+}
+class Factory {
+    public function makeConfig(): Config { return new Config(); }
+}
+class App {
+    public function test(): void {
+        $factory = new Factory();
+        $cfg = clone $factory->makeConfig() ?? new Fallback();
+        $cfg->get();
+    }
+}
+"#;
+
+    // Hover on `$cfg` at line 14 (`$cfg->get()`)
+    let hover = hover_at(&backend, uri, content, 14, 9).expect("expected hover on $cfg");
+    let text = hover_text(&hover);
+    // `clone` is syntactically non-nullable, so the result should be Config,
+    // not Fallback.  If hover shows Fallback (or Fallback only), the raw-type
+    // engine's `??` handler is incorrectly falling through to the RHS.
+    assert!(
+        text.contains("Config"),
+        "hover should show Config (clone is non-nullable LHS of ??), got: {}",
+        text
+    );
+    assert!(
+        !text.contains("Fallback"),
+        "hover should NOT show Fallback (RHS is dead code after clone), got: {}",
+        text
+    );
+}
+
+/// When the LHS of `??` is an immediately-invoked closure (which produces a
+/// non-nullable result), the raw-type engine may not resolve it and fall
+/// through to RHS-only.  The ClassInfo engine does not have this problem
+/// because closures/arrow-fns are explicitly matched as non-nullable.
+/// This test verifies hover shows the correct type.
+#[test]
+fn hover_null_coalesce_closure_invocation_lhs() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Alpha {
+    public function run(): void {}
+}
+class Beta {
+    public function run(): void {}
+}
+class Svc {
+    public function test(): void {
+        $x = (function(): Alpha { return new Alpha(); })() ?? new Beta();
+        $x->run();
+    }
+}
+"#;
+
+    // Hover on `$x` at line 10 (`$x->run()`)
+    let hover = hover_at(&backend, uri, content, 10, 9).expect("expected hover on $x");
+    let text = hover_text(&hover);
+    // The invoked closure returns Alpha (non-nullable).
+    // At minimum, hover should include Alpha.
+    assert!(
+        text.contains("Alpha"),
+        "hover should include Alpha from the closure return type, got: {}",
+        text
+    );
+}
+
+/// Verify that hover and completion agree for a variable assigned from a
+/// `clone` of another variable typed by a parameter hint.  This is the
+/// simplest clone divergence scenario.
+#[test]
+fn hover_clone_of_typed_variable() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Document {
+    public function save(): void {}
+}
+class Editor {
+    public function test(Document $doc): void {
+        $copy = clone $doc;
+        $copy->save();
+    }
+}
+"#;
+
+    // Hover on `$copy` at line 7 (`$copy->save()`)
+    let hover = hover_at(&backend, uri, content, 7, 9).expect("expected hover on $copy");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("Document"),
+        "hover on clone of typed param should show Document, got: {}",
+        text
+    );
+}

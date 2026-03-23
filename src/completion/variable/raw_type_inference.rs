@@ -794,6 +794,26 @@ fn accumulate_if_branch_at_cursor(
     accumulate_if_assignment_raw_types(if_stmt, ctx)
 }
 
+/// Fallback that delegates to the ClassInfo engine and converts the result
+/// to a type string.  This is used when the raw-type engine cannot resolve
+/// an expression on its own — calling `resolve_rhs_expression` (which does
+/// full call resolution, template substitution, etc.) and joining the class
+/// names with `|`.  The result loses generic parameters but is strictly
+/// better than returning `None`.
+///
+/// This does **not** create a circular dependency: `resolve_rhs_expression`
+/// operates on a single expression node and does not call back into
+/// `resolve_rhs_raw_type` for the same node.  Cross-engine calls only
+/// happen at the *variable-assignment* level (a higher layer).
+fn classinfo_fallback(expr: &Expression<'_>, ctx: &VarResolutionCtx<'_>) -> Option<String> {
+    let classes = super::rhs_resolution::resolve_rhs_expression(expr, ctx);
+    if classes.is_empty() {
+        return None;
+    }
+    let names: Vec<&str> = classes.iter().map(|c| c.name.as_str()).collect();
+    Some(names.join("|"))
+}
+
 /// Extract a raw type string from an expression.
 ///
 /// Handles array literals (producing `list<Type>`), instantiations,
@@ -826,7 +846,12 @@ fn resolve_rhs_raw_type<'b>(rhs: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
         // access → generic value type).
         Expression::ArrayAccess(_) => resolve_rhs_array_access_raw_type(rhs, ctx),
         // ── Clone: `clone $expr` → same type as the inner expression ──
-        Expression::Clone(clone_expr) => resolve_rhs_raw_type(clone_expr.object, ctx),
+        // Try raw-type recursive resolution first (preserves generics),
+        // then fall back to the ClassInfo engine which has a two-tier
+        // approach (structural + text-based) that handles more cases.
+        Expression::Clone(clone_expr) => {
+            resolve_rhs_raw_type(clone_expr.object, ctx).or_else(|| classinfo_fallback(rhs, ctx))
+        }
         // ── Parenthesized: unwrap ──
         Expression::Parenthesized(p) => resolve_rhs_raw_type(p.expression, ctx),
         // ── Ternary / elvis: `$a ? $b : $c` or `$a ?: $c` ──
@@ -837,7 +862,7 @@ fn resolve_rhs_raw_type<'b>(rhs: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
             let then_expr = cond_expr.then.unwrap_or(cond_expr.condition);
             let then_type = resolve_rhs_raw_type(then_expr, ctx);
             let else_type = resolve_rhs_raw_type(cond_expr.r#else, ctx);
-            union_raw_types(then_type, else_type)
+            union_raw_types(then_type, else_type).or_else(|| classinfo_fallback(rhs, ctx))
         }
         // ── Null coalesce: `$a ?? $b` ──
         // When the LHS is provably non-nullable (e.g. `new Foo()`, a
@@ -846,10 +871,28 @@ fn resolve_rhs_raw_type<'b>(rhs: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
         // nullable (`?Foo`, `Foo|null`), strip `null` from the LHS
         // and union with the RHS.
         Expression::Binary(binary) if binary.operator.is_null_coalesce() => {
+            // Syntactic non-nullable check — matches the ClassInfo engine
+            // in `rhs_resolution.rs`.  These expression forms can never
+            // produce `null` at runtime, so the RHS is dead code regardless
+            // of whether we can resolve the LHS type string.
+            let lhs_syntactically_non_nullable = matches!(
+                binary.lhs,
+                Expression::Instantiation(_)
+                    | Expression::Literal(_)
+                    | Expression::Array(_)
+                    | Expression::LegacyArray(_)
+                    | Expression::Clone(_)
+            );
             let lhs_type = resolve_rhs_raw_type(binary.lhs, ctx);
             match &lhs_type {
                 Some(lhs) if !docblock::type_strings::raw_type_is_nullable(lhs) => {
-                    // LHS is non-nullable → RHS is unreachable
+                    // LHS resolved to a non-nullable type → RHS is unreachable
+                    lhs_type
+                }
+                Some(_) if lhs_syntactically_non_nullable => {
+                    // LHS resolved but `raw_type_is_nullable` said it's
+                    // nullable — trust the syntax over the type string
+                    // (the type string may be incomplete).
                     lhs_type
                 }
                 Some(lhs) => {
@@ -858,9 +901,27 @@ fn resolve_rhs_raw_type<'b>(rhs: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
                     let rhs_type = resolve_rhs_raw_type(binary.rhs, ctx);
                     union_raw_types(stripped, rhs_type)
                 }
+                None if lhs_syntactically_non_nullable => {
+                    // LHS is syntactically non-nullable but the raw-type
+                    // engine couldn't resolve it.  Try the ClassInfo engine
+                    // as a fallback before giving up and using the RHS.
+                    classinfo_fallback(binary.lhs, ctx)
+                        .or_else(|| resolve_rhs_raw_type(binary.rhs, ctx))
+                }
                 None => {
-                    // LHS type unknown → fall back to RHS
-                    resolve_rhs_raw_type(binary.rhs, ctx)
+                    // LHS type unknown.  Before falling through to the RHS,
+                    // try the ClassInfo engine — it handles more expression
+                    // types (IIFEs, complex call chains, etc.).  If it
+                    // resolves the LHS, union both sides (matching the
+                    // ClassInfo engine's behaviour for non-syntactically-
+                    // non-nullable expressions).
+                    let rhs_type = resolve_rhs_raw_type(binary.rhs, ctx);
+                    match classinfo_fallback(binary.lhs, ctx) {
+                        Some(lhs_from_classinfo) => {
+                            union_raw_types(Some(lhs_from_classinfo), rhs_type)
+                        }
+                        None => rhs_type,
+                    }
                 }
             }
         }
@@ -871,7 +932,7 @@ fn resolve_rhs_raw_type<'b>(rhs: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
                 let arm_type = resolve_rhs_raw_type(arm.expression(), ctx);
                 combined = union_raw_types(combined, arm_type);
             }
-            combined
+            combined.or_else(|| classinfo_fallback(rhs, ctx))
         }
         // ── Bare variable: `$a = $b` ────────────────────────────────
         // Resolve the RHS variable's raw type so that hover shows the
@@ -947,22 +1008,41 @@ fn resolve_rhs_raw_type<'b>(rhs: &'b Expression<'b>, ctx: &VarResolutionCtx<'_>)
         // ── Call / property access — delegate to iterable extractor,
         //    with a source-scan fallback for standalone function calls
         //    when no `function_loader` is available. ──
-        _ => super::foreach_resolution::extract_rhs_iterable_raw_type(rhs, ctx).or_else(|| {
-            // When function_loader is None, standalone function calls
-            // like `$user = getUser()` won't resolve through the
-            // iterable extractor.  Fall back to scanning the source
-            // for the function's @return docblock.
-            if ctx.function_loader.is_none()
-                && let Expression::Call(Call::Function(func_call)) = rhs
-                && let Expression::Identifier(ident) = func_call.function
-            {
-                return crate::completion::source::helpers::extract_function_return_from_source(
-                    ident.value(),
-                    ctx.content,
-                );
+        _ => {
+            let iterable_result = super::foreach_resolution::extract_rhs_iterable_raw_type(
+                rhs, ctx,
+            )
+            .or_else(|| {
+                // When function_loader is None, standalone function calls
+                // like `$user = getUser()` won't resolve through the
+                // iterable extractor.  Fall back to scanning the source
+                // for the function's @return docblock.
+                if ctx.function_loader.is_none()
+                    && let Expression::Call(Call::Function(func_call)) = rhs
+                    && let Expression::Identifier(ident) = func_call.function
+                {
+                    return crate::completion::source::helpers::extract_function_return_from_source(
+                        ident.value(),
+                        ctx.content,
+                    );
+                }
+                None
+            });
+            // When the iterable extractor returned a non-informative type
+            // like `mixed` or `void`, try the ClassInfo engine which
+            // handles more expression types (e.g. invoked closures,
+            // complex call chains with template substitution).  Also
+            // try it when the iterable extractor returned nothing.
+            let is_non_informative = matches!(
+                iterable_result.as_deref(),
+                None | Some("mixed") | Some("void")
+            );
+            if is_non_informative {
+                classinfo_fallback(rhs, ctx).or(iterable_result)
+            } else {
+                iterable_result
             }
-            None
-        }),
+        }
     }
 }
 
