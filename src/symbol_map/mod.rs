@@ -287,6 +287,17 @@ pub(crate) struct SymbolMap {
     /// variable resolution needs the full `fn`..`end` range for arrow
     /// function parameter lookups.
     pub body_scopes: Vec<(u32, u32)>,
+    /// Narrowing block boundaries `(start_offset, end_offset)` for
+    /// if-body, elseif-body, else-body, match-arm, and switch-case
+    /// blocks.  Sorted by start offset.
+    ///
+    /// Used by the diagnostic subject cache to determine whether two
+    /// variable accesses are in the same narrowing context.  Accesses
+    /// in the same block get the same instanceof narrowing applied and
+    /// can share a cache entry, while accesses in different blocks
+    /// (e.g. different if/else branches) may resolve to different types
+    /// and need independent entries.
+    pub narrowing_blocks: Vec<(u32, u32)>,
     /// Template parameter definition sites from `@template` docblock tags,
     /// sorted by `name_offset`.  Used to resolve template parameter names
     /// (e.g. `TKey`, `TModel`) that appear in docblock types but are not
@@ -325,6 +336,23 @@ impl SymbolMap {
     pub fn find_enclosing_scope(&self, offset: u32) -> u32 {
         let mut best: u32 = 0;
         for &(start, end) in &self.scopes {
+            if start <= offset && offset <= end && start > best {
+                best = start;
+            }
+        }
+        best
+    }
+
+    /// Find the innermost narrowing block (if/elseif/else body, match
+    /// arm, switch case) that contains `offset`.
+    ///
+    /// Returns the block's start offset, or `0` when the offset is not
+    /// inside any narrowing block.  Two variable accesses that return
+    /// the same value from this method will have identical instanceof
+    /// narrowing applied and can safely share a diagnostic cache entry.
+    pub fn find_narrowing_block(&self, offset: u32) -> u32 {
+        let mut best: u32 = 0;
+        for &(start, end) in &self.narrowing_blocks {
             if start <= offset && offset <= end && start > best {
                 best = start;
             }

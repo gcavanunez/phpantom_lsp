@@ -37,6 +37,12 @@ struct ExtractionCtx<'a> {
     /// For closures the body start is the `{` offset; for arrow functions
     /// it is the `=>` token offset.  Used by signature help suppression.
     body_scopes: Vec<(u32, u32)>,
+    /// Narrowing block boundaries `(start, end)` for if-body, elseif-body,
+    /// else-body, match-arm, and switch-case blocks.  Used by the
+    /// diagnostic subject cache to determine whether two variable accesses
+    /// are in the same narrowing context.  Accesses in the same block get
+    /// the same instanceof narrowing applied and can share a cache entry.
+    narrowing_blocks: Vec<(u32, u32)>,
     /// `@template` parameter definitions with their scoping ranges.
     template_defs: Vec<TemplateParamDef>,
     /// Call-site records for signature help and conditional return types.
@@ -59,6 +65,7 @@ pub(crate) fn extract_symbol_map(program: &Program<'_>, content: &str) -> Symbol
         var_defs: Vec::new(),
         scopes: Vec::new(),
         body_scopes: Vec::new(),
+        narrowing_blocks: Vec::new(),
         template_defs: Vec::new(),
         call_sites: Vec::new(),
         trivias: program.trivia.as_slice(),
@@ -86,6 +93,9 @@ pub(crate) fn extract_symbol_map(program: &Program<'_>, content: &str) -> Symbol
     // Sort scopes by start offset.
     ctx.scopes.sort_by_key(|s| s.0);
 
+    // Sort narrowing blocks by start offset.
+    ctx.narrowing_blocks.sort_by_key(|s| s.0);
+
     // Sort template_defs by name_offset for binary search / reverse scan.
     ctx.template_defs.sort_by_key(|d| d.name_offset);
 
@@ -97,6 +107,7 @@ pub(crate) fn extract_symbol_map(program: &Program<'_>, content: &str) -> Symbol
         var_defs: ctx.var_defs,
         scopes: ctx.scopes,
         body_scopes: ctx.body_scopes,
+        narrowing_blocks: ctx.narrowing_blocks,
         template_defs: ctx.template_defs,
         call_sites: ctx.call_sites,
     }
@@ -337,26 +348,58 @@ fn extract_from_statement<'a>(
 fn extract_from_if_body<'a>(body: &'a IfBody<'a>, ctx: &mut ExtractionCtx<'a>, scope_start: u32) {
     match body {
         IfBody::Statement(stmt_body) => {
+            // Record then-body as a narrowing block.
+            let then_span = stmt_body.statement.span();
+            ctx.narrowing_blocks
+                .push((then_span.start.offset, then_span.end.offset));
             extract_from_statement(stmt_body.statement, ctx, scope_start);
             for else_if in stmt_body.else_if_clauses.iter() {
                 extract_from_expression(else_if.condition, ctx, scope_start);
+                // Record elseif-body as a narrowing block.
+                let ei_span = else_if.statement.span();
+                ctx.narrowing_blocks
+                    .push((ei_span.start.offset, ei_span.end.offset));
                 extract_from_statement(else_if.statement, ctx, scope_start);
             }
             if let Some(ref else_clause) = stmt_body.else_clause {
+                // Record else-body as a narrowing block.
+                let el_span = else_clause.statement.span();
+                ctx.narrowing_blocks
+                    .push((el_span.start.offset, el_span.end.offset));
                 extract_from_statement(else_clause.statement, ctx, scope_start);
             }
         }
         IfBody::ColonDelimited(colon_body) => {
+            // Record the then-body span (first statement to last).
+            if let (Some(first), Some(last)) =
+                (colon_body.statements.first(), colon_body.statements.last())
+            {
+                ctx.narrowing_blocks
+                    .push((first.span().start.offset, last.span().end.offset));
+            }
             for inner in colon_body.statements.iter() {
                 extract_from_statement(inner, ctx, scope_start);
             }
             for else_if in colon_body.else_if_clauses.iter() {
                 extract_from_expression(else_if.condition, ctx, scope_start);
+                if let (Some(first), Some(last)) =
+                    (else_if.statements.first(), else_if.statements.last())
+                {
+                    ctx.narrowing_blocks
+                        .push((first.span().start.offset, last.span().end.offset));
+                }
                 for inner in else_if.statements.iter() {
                     extract_from_statement(inner, ctx, scope_start);
                 }
             }
             if let Some(ref else_clause) = colon_body.else_clause {
+                if let (Some(first), Some(last)) = (
+                    else_clause.statements.first(),
+                    else_clause.statements.last(),
+                ) {
+                    ctx.narrowing_blocks
+                        .push((first.span().start.offset, last.span().end.offset));
+                }
                 for inner in else_clause.statements.iter() {
                     extract_from_statement(inner, ctx, scope_start);
                 }

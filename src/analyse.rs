@@ -234,6 +234,7 @@ pub async fn run(options: AnalyseOptions) -> i32 {
                             crate::completion::resolver::set_diagnostic_subject_cache_scopes(
                                 sm.scopes.clone(),
                                 sm.var_defs.clone(),
+                                sm.narrowing_blocks.clone(),
                             );
                         }
 

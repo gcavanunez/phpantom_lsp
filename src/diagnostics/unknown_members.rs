@@ -312,6 +312,7 @@ impl Backend {
         crate::completion::resolver::set_diagnostic_subject_cache_scopes(
             symbol_map.scopes.clone(),
             symbol_map.var_defs.clone(),
+            symbol_map.narrowing_blocks.clone(),
         );
 
         // ── Subject resolution cache for this diagnostic pass ───────────
@@ -391,12 +392,15 @@ impl Backend {
                     0
                 };
 
-            // For variable subjects (excluding $this), include the
-            // span start offset so that accesses inside different
+            // For variable subjects (excluding $this), use the
+            // innermost narrowing block (if/elseif/else body) as a
+            // cache discriminator so that accesses in different
             // instanceof-narrowing contexts get independent entries.
+            // Accesses in the same block share a cache entry because
+            // they receive identical narrowing.
             let narrowing_offset =
                 if subject_text.starts_with('$') && !subject_text.starts_with("$this") {
-                    span.start
+                    symbol_map.find_narrowing_block(span.start)
                 } else {
                     0
                 };

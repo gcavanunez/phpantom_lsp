@@ -187,6 +187,12 @@ struct DiagSubjectCacheFileData {
     scopes: Vec<(u32, u32)>,
     /// Variable definition sites, cloned from the [`SymbolMap`].
     var_defs: Vec<crate::symbol_map::VarDefSite>,
+    /// Narrowing block boundaries `(start_offset, end_offset)` for
+    /// if-body, elseif-body, else-body, match-arm, and switch-case
+    /// blocks.  Used to compute the innermost narrowing context for
+    /// a given cursor offset so that accesses in the same block share
+    /// a cache entry while accesses in different branches do not.
+    narrowing_blocks: Vec<(u32, u32)>,
 }
 
 type DiagSubjectCacheState = (DiagSubjectCache, DiagSubjectCacheFileData);
@@ -230,6 +236,7 @@ pub(crate) fn with_diagnostic_subject_cache() -> DiagSubjectCacheGuard {
             DiagSubjectCacheFileData {
                 scopes: Vec::new(),
                 var_defs: Vec::new(),
+                narrowing_blocks: Vec::new(),
             },
         ));
     });
@@ -250,15 +257,24 @@ pub(crate) fn with_diagnostic_subject_cache() -> DiagSubjectCacheGuard {
 /// compute the active variable definition at each cursor offset,
 /// ensuring that accesses before and after a variable reassignment
 /// within the same method get independent cache entries.
+///
+/// The `narrowing_blocks` are `(start, end)` pairs for every
+/// if-body, elseif-body, else-body, match-arm, and switch-case block
+/// in the file.  They determine the innermost narrowing context for
+/// each cursor offset so that accesses in the same block share a
+/// cache entry while accesses in different instanceof-narrowing
+/// branches get independent entries.
 pub(crate) fn set_diagnostic_subject_cache_scopes(
     scopes: Vec<(u32, u32)>,
     var_defs: Vec<crate::symbol_map::VarDefSite>,
+    narrowing_blocks: Vec<(u32, u32)>,
 ) {
     DIAG_SUBJECT_CACHE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         if let Some((_map, file_data)) = borrow.as_mut() {
             file_data.scopes = scopes;
             file_data.var_defs = var_defs;
+            file_data.narrowing_blocks = narrowing_blocks;
         }
     });
 }
@@ -275,6 +291,32 @@ fn diag_cache_enclosing_scope(cursor_offset: u32) -> u32 {
             Some((_map, file_data)) => {
                 let mut best: u32 = 0;
                 for &(start, end) in &file_data.scopes {
+                    if start <= cursor_offset && cursor_offset <= end && start > best {
+                        best = start;
+                    }
+                }
+                best
+            }
+            None => 0,
+        }
+    })
+}
+
+/// Find the innermost narrowing block (if/elseif/else body, match arm,
+/// switch case) that contains the cursor offset, using the narrowing
+/// block boundaries stored in the diagnostic subject cache.
+///
+/// Returns the block's start offset, or `0` when the offset is not
+/// inside any narrowing block or when the cache is not active.  Two
+/// variable accesses that return the same value will have identical
+/// instanceof narrowing applied and can safely share a cache entry.
+fn diag_cache_narrowing_block(cursor_offset: u32) -> u32 {
+    DIAG_SUBJECT_CACHE.with(|cell| {
+        let borrow = cell.borrow();
+        match borrow.as_ref() {
+            Some((_map, file_data)) => {
+                let mut best: u32 = 0;
+                for &(start, end) in &file_data.narrowing_blocks {
                     if start <= cursor_offset && cursor_offset <= end && start > best {
                         best = start;
                     }
@@ -360,14 +402,13 @@ pub(crate) fn resolve_target_classes(
     // ── Fast path: check the thread-local diagnostic cache ──────
     let scope_start = diag_cache_enclosing_scope(ctx.cursor_offset);
     let var_def_offset = diag_cache_var_def_offset(subject, ctx.cursor_offset);
-    // For variable subjects (excluding $this), include the cursor
-    // offset in the cache key so that accesses inside different
-    // instanceof-narrowing contexts (e.g. different if-bodies) get
-    // independent cache entries.  Without this, the first access
-    // caches a narrowed type and subsequent accesses in a different
-    // narrowing context reuse the wrong result.
+    // For variable subjects (excluding $this), use the innermost
+    // narrowing block (if/elseif/else body) as a cache discriminator
+    // so that accesses inside different instanceof-narrowing contexts
+    // get independent cache entries.  Accesses in the same block
+    // share a cache entry because they receive identical narrowing.
     let narrowing_offset = if subject.starts_with('$') && !subject.starts_with("$this") {
-        ctx.cursor_offset
+        diag_cache_narrowing_block(ctx.cursor_offset)
     } else {
         0
     };
