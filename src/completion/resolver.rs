@@ -667,9 +667,22 @@ pub(crate) fn resolve_target_classes_expr(
             // property has no type hint, `results` is empty but
             // an `instanceof` check or `assert()` can still
             // provide a type via `apply_instanceof_inclusion`.
-            if let Some(cc) = current_class {
+            //
+            // Use a dummy class when outside a class body so that
+            // property narrowing works in standalone functions and
+            // top-level code (e.g. `$arg->value instanceof Foo`
+            // inside a foreach).
+            {
+                let dummy_class;
+                let effective_class = match current_class {
+                    Some(cc) => cc,
+                    None => {
+                        dummy_class = ClassInfo::default();
+                        &dummy_class
+                    }
+                };
                 let full_path = format!("{}->{}", base.to_subject_text(), property);
-                apply_property_narrowing(&full_path, cc, ctx, &mut results);
+                apply_property_narrowing(&full_path, effective_class, ctx, &mut results);
             }
 
             results
@@ -994,6 +1007,41 @@ fn walk_property_narrowing_in_statements<'b>(
                     return;
                 }
             }
+            Statement::Function(func) => {
+                let body_start = func.body.left_brace.start.offset;
+                let body_end = func.body.right_brace.end.offset;
+                if ctx.cursor_offset >= body_start && ctx.cursor_offset <= body_end {
+                    walk_property_narrowing_stmts(func.body.statements.iter(), ctx, results);
+                    return;
+                }
+            }
+            // ── Functions inside if-guards / blocks ──
+            // The common PHP pattern `if (! function_exists('foo'))
+            // { function foo(…) { … } }` nests the function
+            // declaration inside an if body.  Recurse into blocks
+            // and if-bodies so property narrowing still works.
+            Statement::If(if_stmt) => {
+                let if_span = stmt.span();
+                if ctx.cursor_offset >= if_span.start.offset
+                    && ctx.cursor_offset <= if_span.end.offset
+                {
+                    for inner in if_stmt.body.statements().iter() {
+                        walk_property_narrowing_in_statements(std::iter::once(inner), ctx, results);
+                    }
+                }
+            }
+            Statement::Block(block) => {
+                let blk_span = stmt.span();
+                if ctx.cursor_offset >= blk_span.start.offset
+                    && ctx.cursor_offset <= blk_span.end.offset
+                {
+                    walk_property_narrowing_in_statements(
+                        block.statements.iter(),
+                        ctx,
+                        results,
+                    );
+                }
+            }
             _ => {}
         }
     }
@@ -1058,6 +1106,59 @@ fn walk_property_narrowing_stmts<'b>(
                     ctx,
                     results,
                 );
+            }
+            Statement::Foreach(foreach) => match &foreach.body {
+                ForeachBody::Statement(inner) => {
+                    walk_property_narrowing_stmt(inner, ctx, results);
+                }
+                ForeachBody::ColonDelimited(body) => {
+                    walk_property_narrowing_stmts(body.statements.iter(), ctx, results);
+                }
+            },
+            Statement::While(while_stmt) => match &while_stmt.body {
+                WhileBody::Statement(inner) => {
+                    walk_property_narrowing_stmt(inner, ctx, results);
+                }
+                WhileBody::ColonDelimited(body) => {
+                    walk_property_narrowing_stmts(body.statements.iter(), ctx, results);
+                }
+            },
+            Statement::For(for_stmt) => match &for_stmt.body {
+                ForBody::Statement(inner) => {
+                    walk_property_narrowing_stmt(inner, ctx, results);
+                }
+                ForBody::ColonDelimited(body) => {
+                    walk_property_narrowing_stmts(body.statements.iter(), ctx, results);
+                }
+            },
+            Statement::DoWhile(dw) => {
+                walk_property_narrowing_stmt(dw.statement, ctx, results);
+            }
+            Statement::Try(try_stmt) => {
+                walk_property_narrowing_stmts(
+                    try_stmt.block.statements.iter(),
+                    ctx,
+                    results,
+                );
+                for catch in try_stmt.catch_clauses.iter() {
+                    walk_property_narrowing_stmts(
+                        catch.block.statements.iter(),
+                        ctx,
+                        results,
+                    );
+                }
+                if let Some(finally) = &try_stmt.finally_clause {
+                    walk_property_narrowing_stmts(
+                        finally.block.statements.iter(),
+                        ctx,
+                        results,
+                    );
+                }
+            }
+            Statement::Switch(switch) => {
+                for case in switch.body.cases().iter() {
+                    walk_property_narrowing_stmts(case.statements().iter(), ctx, results);
+                }
             }
             _ => {}
         }
