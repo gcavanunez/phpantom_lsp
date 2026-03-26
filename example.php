@@ -2753,6 +2753,26 @@ class ConstantTypeDemo
 }
 
 
+// ── Promote Constructor Parameter ───────────────────────────────────────────
+// Place cursor on a constructor parameter (e.g. `string $name`) and trigger
+// code actions to see "Promote to constructor property".  The action removes
+// the property declaration, removes the `$this->name = $name;` assignment,
+// and adds the visibility modifier directly on the parameter.
+
+class PromoteConstructorParamDemo
+{
+    private string $name;
+    protected int $age;
+    private readonly string $email;
+
+    public function __construct(string $name, int $age, string $email) {
+        $this->name = $name;
+        $this->age = $age;
+        $this->email = $email;
+    }
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 // ┃  SCAFFOLDING — Supporting definitions below this line.              ┃

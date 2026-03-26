@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Promote constructor parameter.** Code action on a constructor parameter that has a matching property declaration and `$this->name = $name;` assignment offers to convert it into a constructor-promoted property. The property declaration and assignment are removed, and the parameter gains the original property's visibility modifier. Readonly properties, default values, and union/nullable types are preserved.
+
 ## [0.6.0] - 2026-03-26
 
 ### Added

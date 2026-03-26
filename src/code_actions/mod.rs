@@ -25,12 +25,17 @@
 //!   signature, offer to patch the docblock (add missing params, remove
 //!   stale ones, reorder, fix contradicted types, remove redundant
 //!   `@return void`).
+//! - **Promote constructor parameter** — when the cursor is on a
+//!   constructor parameter that has a matching property declaration and
+//!   `$this->name = $name;` assignment, offer to convert it into a
+//!   constructor-promoted property.
 
 mod change_visibility;
 pub(crate) mod cursor_context;
 pub(crate) mod implement_methods;
 mod import_class;
 mod phpstan;
+mod promote_constructor_param;
 mod remove_unused_import;
 mod replace_deprecated;
 mod update_docblock;
@@ -71,6 +76,9 @@ impl Backend {
 
         // ── Update docblock to match signature ──────────────────────────
         self.collect_update_docblock_actions(uri, content, params, &mut actions);
+
+        // ── Promote constructor parameter ───────────────────────────────
+        self.collect_promote_constructor_param_actions(uri, content, params, &mut actions);
 
         actions
     }
