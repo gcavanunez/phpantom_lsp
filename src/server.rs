@@ -1043,13 +1043,26 @@ impl Backend {
                 (cm, "composer")
             }
             IndexingStrategy::SelfScan | IndexingStrategy::Full => {
-                let skip_paths = HashSet::new();
-                let scan = self.build_self_scan_composer(
-                    root,
-                    &vendor_dir,
-                    composer_json.as_ref(),
-                    &skip_paths,
-                );
+                // "self" strategy: scan every PHP file under the
+                // workspace root (ignoring .gitignore, hidden dirs,
+                // etc.) to discover all classes, functions, and
+                // constants — regardless of whether they appear in
+                // composer.json's autoload sections.
+                //
+                // The vendor directory is typically gitignored, so the
+                // workspace-wide walk skips it.  Scan vendor packages
+                // separately via installed.json so that third-party
+                // classes are still indexed.
+                let skip_dirs = HashSet::new();
+                let mut scan = classmap_scanner::scan_workspace_fallback_full(root, &skip_dirs);
+
+                // Merge vendor packages (gitignored, so not covered
+                // by the workspace walk above).
+                let vendor_cm = classmap_scanner::scan_vendor_packages(root, &vendor_dir);
+                for (fqcn, path) in vendor_cm {
+                    scan.classmap.entry(fqcn).or_insert(path);
+                }
+
                 self.populate_autoload_indices(&scan);
                 (scan.classmap, "self-scan")
             }

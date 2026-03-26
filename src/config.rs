@@ -181,8 +181,9 @@ pub struct IndexingConfig {
     ///
     /// - `"composer"` (default) — use Composer's classmap when available,
     ///   fall back to self-scan when it is missing or incomplete.
-    /// - `"self"` — always build the classmap ourselves, ignoring
-    ///   Composer's generated classmap entirely.
+    /// - `"self"` — scan every PHP file under the workspace root,
+    ///   ignoring Composer's generated classmap and PSR-4 mappings.
+    ///   Vendor packages are still scanned via `installed.json`.
     /// - `"full"` — background-parse every PHP file for rich intelligence
     ///   (not yet implemented, treated as `"self"` for now).
     /// - `"none"` — no proactive scanning. Still uses Composer's classmap
@@ -209,9 +210,10 @@ pub enum IndexingStrategy {
     /// missing, we find ourselves.  No completeness heuristic needed.
     #[default]
     Composer,
-    /// Always build the classmap ourselves, ignoring Composer's generated
-    /// classmap entirely.  Equivalent to the merged approach with an
-    /// empty skip set.
+    /// Scan every PHP file under the workspace root, ignoring
+    /// Composer's generated classmap and PSR-4 mappings entirely.
+    /// The vendor directory is scanned separately (via
+    /// `installed.json`) since it is typically gitignored.
     SelfScan,
     /// Background-parse every PHP file for rich intelligence.
     Full,
