@@ -94,13 +94,17 @@ Requires restructuring how we store per-file name resolution data.
    - `get(offset) -> Option<&str>` — FQN lookup by byte offset
    - `is_imported(offset) -> bool` — was the name from a `use` stmt
    - `iter()` — iterate all `(offset, fqn, imported)` triples
-   - `to_use_map()` — transitional helper building `HashMap<String, String>`
+
+   `to_use_map()` was originally planned but dropped: it cannot
+   reproduce aliases (e.g. `use App\Models\User as U` → the
+   resolved FQN is `App\Models\User` but the import key is `U`,
+   and `resolved_names` does not store the original short text).
 
    Also added `FileContext::resolve_name_at(name, offset)` as a
    convenience method that tries `resolved_names` first and falls
    back to the legacy `resolve_to_fqn` logic.
 
-5. 🔶 **Replace `use_map` reads incrementally.** *(in progress)*
+5. ✅ **Replace `use_map` reads incrementally.**
 
    **Migrated to byte-offset lookups (`resolved_names`):**
    - `src/diagnostics/unknown_classes.rs` — `ClassReference` FQN
@@ -111,10 +115,15 @@ Requires restructuring how we store per-file name resolution data.
    - `src/definition/implementation.rs` — `resolve_class_implementation`
    - `src/highlight/mod.rs` — `ClassReference` FQN resolution
    - `src/references/mod.rs` — `ClassReference` and `FunctionCall`
-     resolution
+     resolution (same-file via `ctx.resolve_name_at()`)
    - `src/rename/mod.rs` — `ClassReference` FQN resolution
    - `src/type_hierarchy.rs` — `ClassReference`, `ClassDeclaration`,
      and `SelfStaticParent` resolution
+   - Cross-file reference scanning in `src/references/mod.rs`
+     (`find_class_references`, `find_function_references`) — primary
+     resolution via `resolved_names.get(span.start)`, lazy `use_map`
+     fallback only for offsets not tracked by mago-names (docblock-
+     sourced spans whose byte offsets point into comment text).
 
    **Switched to `self.file_use_map(uri)` helper** (still reads the
    legacy `use_map`, but funnelled through a single method for future
@@ -129,28 +138,48 @@ Requires restructuring how we store per-file name resolution data.
    - `src/code_actions/phpstan/add_throws.rs`
    - `src/code_actions/replace_deprecated.rs`
 
-   **Not yet migrated** (still reading `use_map` through `FileContext`
-   or `file_use_map`):
+   **Permanently `use_map`-dependent** (cannot migrate to
+   `resolved_names` — see rationale below each group):
+
+   *No byte offset available:*
    - `src/resolution.rs` — `resolve_class_name`, `resolve_function_name`
-     (used by loader closures that resolve names without byte offsets)
-   - `src/completion/` (various modules, via `FileContext`)
-   - Cross-file reference scanning in `src/references/mod.rs`
-     (`find_class_references`, `find_function_references`)
+     are called by loader closures with a bare name string (e.g. a
+     parent class name extracted from `ClassInfo`, a type string from
+     a docblock).  No source position exists for these lookups.
+   - `src/completion/` — loader closures (`class_loader`,
+     `function_loader`) thread through `FileContext.use_map` for the
+     same reason.  Additionally, class-name completion, auto-import,
+     and docblock generation need the full declared-import table to
+     avoid inserting duplicate `use` statements.
 
-   **Key finding:** The legacy `use_map` cannot be fully replaced by
-   `to_use_map()` because `resolved_names` only contains names that
-   are actually *referenced* in the code, not all *declared* imports.
-   The unused-imports diagnostic and import-class code action need
-   the full set of declared imports.  The `use_map` must remain until
-   a proper declared-imports structure (possibly from `mago-names`
-   scope data) is introduced.
+   *Needs full declared-import table:*
+   - `src/diagnostics/unused_imports.rs` — must see imports that are
+     declared but *not* referenced; `resolved_names` only contains
+     names that *are* referenced.
+   - `src/code_actions/import_class.rs` — must check whether a `use`
+     statement already exists for a class before inserting one.
+   - `src/rename/mod.rs` (`build_class_rename_edit`) — needs the
+     full import table to detect aliases and collisions when
+     rewriting `use` statements.
 
-6. **Deprecate and remove `use_map`.** *(blocked on step 5)*
-   Once all consumers use `OwnedResolvedNames`, remove the
-   `use_map: DashMap<String, HashMap<String, String>>` from
-   `Backend`. Also remove `extract_use_items` and
-   `extract_use_statements_from_statements` from
-   `src/parser/use_statements.rs`.
+   **Key finding:** The legacy `use_map` cannot be fully removed
+   because (a) many consumers resolve names without byte offsets
+   (loader closures, docblock type strings), and (b) several features
+   require the full set of *declared* imports, not just *referenced*
+   ones.  The `use_map` must remain until a proper declared-imports
+   structure (possibly from `mago-names` scope data or a dedicated
+   AST walk) is introduced.
+
+6. **Deprecate and remove `use_map`.** *(blocked — see step 5)*
+   Full removal requires a declared-imports data structure that
+   captures all `use` statements (including unused ones and aliases)
+   independently of `resolved_names`.  Until then, `use_map` stays
+   as the canonical import table.  Potential approaches:
+   - Extract declared imports from `mago-names` scope data (if
+     exposed in a future version).
+   - Build a lightweight `DeclaredImports` struct from the AST
+     `Statement::Use` nodes during `update_ast_inner`, replacing
+     the current `extract_use_items` call.
 
 7. ✅ **Keep `namespace_map` for now.**
    The per-file namespace is still needed for PSR-4 resolution and

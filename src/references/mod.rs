@@ -434,14 +434,13 @@ impl Backend {
         let snapshot = self.user_file_symbol_maps();
 
         for (file_uri, symbol_map) in &snapshot {
-            // Get the file's use_map and namespace for FQN resolution.
-            let file_use_map = self
-                .use_map
-                .read()
-                .get(file_uri)
-                .cloned()
-                .unwrap_or_default();
+            // Prefer mago-names resolved_names for FQN resolution (byte-offset
+            // based, applies PHP's full name resolution rules).  Falls back to
+            // the legacy use_map lazily for identifiers not tracked by
+            // mago-names (e.g. docblock-sourced references).
+            let resolved_names = self.resolved_names.read().get(file_uri).cloned();
             let file_namespace = self.namespace_map.read().get(file_uri).cloned().flatten();
+            let file_use_map = std::cell::OnceCell::new();
 
             let parsed_uri = match Url::parse(file_uri) {
                 Ok(u) => u,
@@ -458,8 +457,21 @@ impl Backend {
                     SymbolKind::ClassReference { name, is_fqn } => {
                         let resolved = if *is_fqn {
                             name.clone()
+                        } else if let Some(fqn) =
+                            resolved_names.as_ref().and_then(|rn| rn.get(span.start))
+                        {
+                            fqn.to_string()
                         } else {
-                            Self::resolve_to_fqn(name, &file_use_map, &file_namespace)
+                            // Fallback for offsets not tracked by mago-names
+                            // (e.g. docblock-sourced ClassReference spans).
+                            let use_map = file_use_map.get_or_init(|| {
+                                self.use_map
+                                    .read()
+                                    .get(file_uri)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            });
+                            Self::resolve_to_fqn(name, use_map, &file_namespace)
                         };
                         // Input boundary: resolve_to_fqn may return a leading `\`.
                         let resolved_normalized = resolved.strip_prefix('\\').unwrap_or(&resolved);
@@ -694,13 +706,11 @@ impl Backend {
         let snapshot = self.user_file_symbol_maps();
 
         for (file_uri, symbol_map) in &snapshot {
-            let file_use_map = self
-                .use_map
-                .read()
-                .get(file_uri)
-                .cloned()
-                .unwrap_or_default();
+            // Prefer mago-names resolved_names; lazy-load use_map only
+            // when an offset is not tracked (e.g. docblock references).
+            let resolved_names = self.resolved_names.read().get(file_uri).cloned();
             let file_namespace = self.namespace_map.read().get(file_uri).cloned().flatten();
+            let file_use_map = std::cell::OnceCell::new();
 
             let parsed_uri = match Url::parse(file_uri) {
                 Ok(u) => u,
@@ -721,7 +731,21 @@ impl Backend {
                     if *is_definition && !include_declaration {
                         continue;
                     }
-                    let resolved = Self::resolve_to_fqn(name, &file_use_map, &file_namespace);
+                    let resolved =
+                        if let Some(fqn) =
+                            resolved_names.as_ref().and_then(|rn| rn.get(span.start))
+                        {
+                            fqn.to_string()
+                        } else {
+                            let use_map = file_use_map.get_or_init(|| {
+                                self.use_map
+                                    .read()
+                                    .get(file_uri)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            });
+                            Self::resolve_to_fqn(name, use_map, &file_namespace)
+                        };
                     // Input boundary: resolve_to_fqn may return a leading `\`.
                     let resolved_normalized = resolved.strip_prefix('\\').unwrap_or(&resolved);
                     if resolved_normalized != target

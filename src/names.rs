@@ -52,4 +52,14 @@ impl OwnedResolvedNames {
             .get(&offset)
             .is_some_and(|(_, imported)| *imported)
     }
+
+    /// Iterate all resolved name entries as `(offset, fqn, imported)` triples.
+    ///
+    /// Useful for cross-referencing resolved names with other data structures
+    /// (e.g. checking which declared imports are actually used).
+    pub fn iter(&self) -> impl Iterator<Item = (u32, &str, bool)> {
+        self.names
+            .iter()
+            .map(|(&offset, (fqn, imported))| (offset, fqn.as_str(), *imported))
+    }
 }
