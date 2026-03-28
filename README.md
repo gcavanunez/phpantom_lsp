@@ -92,7 +92,7 @@ PHPantom understands Composer projects out of the box, but works without setup o
 PHPantom stands on the shoulders of:
 
 - **[Mago](https://github.com/carthage-software/mago):** the PHP parser that powers all of PHPantom's AST analysis.
-- **[PHPStan](https://phpstan.org/)** and **[Psalm](https://psalm.dev/):** whose combined work on static analysis for PHP transformed the language's type ecosystem. Generics, array shapes, conditional return types, assertion annotations: these tools pushed each other forward and pushed the community toward rigorous PHPDoc annotations that make a language server like this possible. PHPantom's author cut his teeth on PHPStan, which is why `@phpstan-*` annotations are a first-class citizen here.
+-  **[PHPStan](https://phpstan.org/) and [Psalm](https://psalm.dev/):** for their pioneering work in PHP static analysis and shaping the type ecosystem. PHPantom builds on PHPStan-informed type experience, with full support for `@phpstan-*` annotations.
 - **[JetBrains phpstorm-stubs](https://github.com/JetBrains/phpstorm-stubs):** type information for the entire PHP standard library, embedded directly into the binary.
 - **[Phpactor](https://github.com/phpactor/phpactor):** the PHP language server whose comprehensive test suite and benchmark fixtures informed PHPantom's own test coverage. Many of PHPantom's type inference fixtures were adapted from Phpactor's reflection tests.
 
