@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use mago_docblock::document::TagKind;
 
 use super::parser::{DocblockInfo, collapse_newlines, parse_docblock_for_tags};
-use super::types::{split_generic_args, split_type_token};
+use super::types::split_type_token;
 use crate::php_type::PhpType;
 use crate::types::TemplateVariance;
 
@@ -370,35 +370,25 @@ fn parse_generics_from_description(desc: &str) -> Option<(String, Vec<String>)> 
     // respecting `<…>` nesting.
     let (type_token, _remainder) = split_type_token(&normalised);
 
-    // Split into base class name and generic arguments.
-    let angle_pos = type_token.find('<')?;
-    let base_name = type_token[..angle_pos].trim();
-    let base_name = base_name.strip_prefix('\\').unwrap_or(base_name);
-    if base_name.is_empty() {
-        return None;
+    // Parse the type token and extract base name + generic arguments.
+    let parsed = PhpType::parse(type_token);
+    match parsed {
+        PhpType::Generic(name, args) if !args.is_empty() => {
+            let base_name = name.strip_prefix('\\').unwrap_or(&name).to_string();
+            if base_name.is_empty() {
+                return None;
+            }
+            let arg_strings: Vec<String> = args
+                .iter()
+                .map(|a| {
+                    let s = a.to_string();
+                    s.strip_prefix('\\').unwrap_or(&s).to_string()
+                })
+                .collect();
+            Some((base_name, arg_strings))
+        }
+        _ => None,
     }
-
-    // Extract the inner generic arguments (between `<` and `>`).
-    let inner_generics = &type_token[angle_pos + 1..];
-    let inner_generics = inner_generics
-        .strip_suffix('>')
-        .unwrap_or(inner_generics)
-        .trim();
-
-    if inner_generics.is_empty() {
-        return None;
-    }
-
-    // Split on commas respecting nesting.
-    let args: Vec<String> = split_generic_args(inner_generics)
-        .into_iter()
-        .map(|a| a.strip_prefix('\\').unwrap_or(a).to_string())
-        .collect();
-    if args.is_empty() {
-        return None;
-    }
-
-    Some((base_name.to_string(), args))
 }
 
 // ─── Type Aliases ───────────────────────────────────────────────────────────

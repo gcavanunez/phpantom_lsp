@@ -1282,13 +1282,18 @@ fn is_bare_primitive_name(name: &str) -> bool {
 /// is used by both `should_override_type` and the update-docblock
 /// contradiction checker.
 pub(crate) fn is_compatible_refinement(docblock_type: &str, native_lower: &str) -> bool {
-    // Extract the base type from the docblock (before `<` or `{`).
-    let doc_base = {
-        let idx_angle = docblock_type.find('<').unwrap_or(docblock_type.len());
-        let idx_brace = docblock_type.find('{').unwrap_or(docblock_type.len());
-        docblock_type[..idx_angle.min(idx_brace)]
-            .trim()
-            .to_ascii_lowercase()
+    // Extract the outermost type name from the docblock via `PhpType::parse()`,
+    // stripping generic parameters, shape braces, and callable signatures.
+    // Unlike `base_name()` this includes scalar names (`array`, `int`, …)
+    // which are needed for the refinement checks below.
+    let doc_base = match PhpType::parse(docblock_type) {
+        PhpType::Named(name) => name.to_ascii_lowercase(),
+        PhpType::Generic(name, _) => name.to_ascii_lowercase(),
+        PhpType::Nullable(inner) => match inner.as_ref() {
+            PhpType::Named(name) | PhpType::Generic(name, _) => name.to_ascii_lowercase(),
+            _ => docblock_type.to_ascii_lowercase(),
+        },
+        _ => docblock_type.to_ascii_lowercase(),
     };
 
     match native_lower {

@@ -965,30 +965,35 @@ pub(crate) fn enrichment_snippet(
     }
 
     // Union types — enrich individual callable / array parts.
-    if th.contains('|') {
-        let parts: Vec<&str> = th.split('|').collect();
-        let needs = parts.iter().any(|part| {
-            let p = part.trim().trim_start_matches('\\');
+    // Use PhpType::parse + union_members to correctly handle generic nesting
+    // (e.g. `Collection<int|string, User>|null` must not be split on the inner `|`).
+    let parsed = PhpType::parse(th);
+    let members = parsed.union_members();
+    if members.len() > 1 {
+        let needs = members.iter().any(|member| {
+            let s = member.to_string();
+            let p = s.trim_start_matches('\\');
             p.eq_ignore_ascii_case("array")
                 || CALLABLE_TYPES.iter().any(|c| c.eq_ignore_ascii_case(p))
         });
         if needs {
-            let enriched_parts: Vec<String> = parts
+            let enriched_parts: Vec<String> = members
                 .iter()
-                .map(|part| {
-                    let p = part.trim().trim_start_matches('\\');
+                .map(|member| {
+                    let s = member.to_string();
+                    let p = s.trim_start_matches('\\');
                     if CALLABLE_TYPES.iter().any(|c| c.eq_ignore_ascii_case(p)) {
                         format!("({}(): ${{{}:mixed}})", p, {
-                            let s = *tab_stop;
+                            let t = *tab_stop;
                             *tab_stop += 1;
-                            s
+                            t
                         })
                     } else if p.eq_ignore_ascii_case("array") {
                         let s = format!("array<${{{}:mixed}}>", *tab_stop);
                         *tab_stop += 1;
                         s
                     } else {
-                        part.trim().to_string()
+                        s.to_string()
                     }
                 })
                 .collect();

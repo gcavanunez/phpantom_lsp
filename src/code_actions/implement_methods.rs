@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tower_lsp::lsp_types::*;
 
 use crate::Backend;
+use crate::php_type::PhpType;
 use crate::types::{ClassInfo, ClassLikeKind, MethodInfo, Visibility};
 use crate::util::offset_to_position;
 
@@ -497,36 +498,125 @@ fn shorten_type(
     use_map: &HashMap<String, String>,
     file_namespace: &Option<String>,
 ) -> String {
-    // Handle union and intersection types by processing each component.
-    if type_str.contains('|') {
-        return type_str
-            .split('|')
-            .map(|part| shorten_single_type(part.trim(), use_map, file_namespace))
-            .collect::<Vec<_>>()
-            .join("|");
-    }
-    if type_str.contains('&') {
-        return type_str
-            .split('&')
-            .map(|part| shorten_single_type(part.trim(), use_map, file_namespace))
-            .collect::<Vec<_>>()
-            .join("&");
-    }
-
-    shorten_single_type(type_str, use_map, file_namespace)
+    let parsed = PhpType::parse(type_str);
+    let shortened = shorten_php_type(&parsed, use_map, file_namespace);
+    shortened.to_string()
 }
 
-/// Shorten a single (non-union, non-intersection) type name.
+/// Recursively walk a [`PhpType`] tree and shorten every named type.
+fn shorten_php_type(
+    ty: &PhpType,
+    use_map: &HashMap<String, String>,
+    file_namespace: &Option<String>,
+) -> PhpType {
+    match ty {
+        PhpType::Named(name) => PhpType::Named(shorten_single_type(name, use_map, file_namespace)),
+        PhpType::Nullable(inner) => {
+            PhpType::Nullable(Box::new(shorten_php_type(inner, use_map, file_namespace)))
+        }
+        PhpType::Union(types) => PhpType::Union(
+            types
+                .iter()
+                .map(|t| shorten_php_type(t, use_map, file_namespace))
+                .collect(),
+        ),
+        PhpType::Intersection(types) => PhpType::Intersection(
+            types
+                .iter()
+                .map(|t| shorten_php_type(t, use_map, file_namespace))
+                .collect(),
+        ),
+        PhpType::Generic(name, args) => PhpType::Generic(
+            shorten_single_type(name, use_map, file_namespace),
+            args.iter()
+                .map(|t| shorten_php_type(t, use_map, file_namespace))
+                .collect(),
+        ),
+        PhpType::Array(inner) => {
+            PhpType::Array(Box::new(shorten_php_type(inner, use_map, file_namespace)))
+        }
+        PhpType::ClassString(inner) => PhpType::ClassString(
+            inner
+                .as_ref()
+                .map(|t| Box::new(shorten_php_type(t, use_map, file_namespace))),
+        ),
+        PhpType::InterfaceString(inner) => PhpType::InterfaceString(
+            inner
+                .as_ref()
+                .map(|t| Box::new(shorten_php_type(t, use_map, file_namespace))),
+        ),
+        PhpType::KeyOf(inner) => {
+            PhpType::KeyOf(Box::new(shorten_php_type(inner, use_map, file_namespace)))
+        }
+        PhpType::ValueOf(inner) => {
+            PhpType::ValueOf(Box::new(shorten_php_type(inner, use_map, file_namespace)))
+        }
+        PhpType::IndexAccess(target, index) => PhpType::IndexAccess(
+            Box::new(shorten_php_type(target, use_map, file_namespace)),
+            Box::new(shorten_php_type(index, use_map, file_namespace)),
+        ),
+        PhpType::Callable {
+            kind,
+            params,
+            return_type,
+        } => PhpType::Callable {
+            kind: kind.clone(),
+            params: params
+                .iter()
+                .map(|p| crate::php_type::CallableParam {
+                    type_hint: shorten_php_type(&p.type_hint, use_map, file_namespace),
+                    variadic: p.variadic,
+                    optional: p.optional,
+                })
+                .collect(),
+            return_type: return_type
+                .as_ref()
+                .map(|t| Box::new(shorten_php_type(t, use_map, file_namespace))),
+        },
+        PhpType::Conditional {
+            param,
+            negated,
+            condition,
+            then_type,
+            else_type,
+        } => PhpType::Conditional {
+            param: param.clone(),
+            negated: *negated,
+            condition: Box::new(shorten_php_type(condition, use_map, file_namespace)),
+            then_type: Box::new(shorten_php_type(then_type, use_map, file_namespace)),
+            else_type: Box::new(shorten_php_type(else_type, use_map, file_namespace)),
+        },
+        PhpType::ArrayShape(entries) => PhpType::ArrayShape(
+            entries
+                .iter()
+                .map(|e| crate::php_type::ShapeEntry {
+                    key: e.key.clone(),
+                    optional: e.optional,
+                    value_type: shorten_php_type(&e.value_type, use_map, file_namespace),
+                })
+                .collect(),
+        ),
+        PhpType::ObjectShape(entries) => PhpType::ObjectShape(
+            entries
+                .iter()
+                .map(|e| crate::php_type::ShapeEntry {
+                    key: e.key.clone(),
+                    optional: e.optional,
+                    value_type: shorten_php_type(&e.value_type, use_map, file_namespace),
+                })
+                .collect(),
+        ),
+        // Leaf types that contain no nested type names.
+        PhpType::IntRange(..) | PhpType::Literal(..) | PhpType::Raw(..) => ty.clone(),
+    }
+}
+
+/// Shorten a single named type string.
 fn shorten_single_type(
     type_str: &str,
     use_map: &HashMap<String, String>,
     file_namespace: &Option<String>,
 ) -> String {
-    // Handle nullable prefix.
-    if let Some(inner) = type_str.strip_prefix('?') {
-        return format!("?{}", shorten_single_type(inner, use_map, file_namespace));
-    }
-
     // Check the use map: if any imported short name maps to this FQN,
     // use the short name.
     for (short, fqn) in use_map {
@@ -985,6 +1075,19 @@ mod tests {
 
         let result = build_method_stubs(&methods, &HashMap::new(), &None, content, &class);
         assert!(result.contains("public static function init(): void"));
+    }
+
+    #[test]
+    fn shorten_type_generic_with_nested_union() {
+        let mut use_map = HashMap::new();
+        use_map.insert("User".to_string(), "App\\Models\\User".to_string());
+        let ns = None;
+
+        // The `|` inside `<…>` must NOT be treated as a union separator.
+        assert_eq!(
+            shorten_type("Collection<App\\Models\\User|null>", &use_map, &ns),
+            "Collection<User|null>"
+        );
     }
 
     #[test]

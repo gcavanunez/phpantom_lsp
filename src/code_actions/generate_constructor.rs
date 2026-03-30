@@ -305,21 +305,13 @@ fn collect_qualifying_properties<'a>(
 /// Returns `false` for union types (`int|string`), intersection types,
 /// array shapes, generic syntax, etc.
 fn is_simple_type(type_str: &str) -> bool {
-    // Reject union and intersection types.
-    if type_str.contains('|') || type_str.contains('&') {
-        return false;
+    use crate::php_type::PhpType;
+
+    match PhpType::parse(type_str) {
+        PhpType::Named(_) => true,
+        PhpType::Nullable(inner) => matches!(*inner, PhpType::Named(_)),
+        _ => false,
     }
-    // Reject array shapes and generic syntax.
-    if type_str.contains('{') || type_str.contains('<') {
-        return false;
-    }
-    // Allow nullable types like `?string`.
-    let inner = type_str.strip_prefix('?').unwrap_or(type_str);
-    // Must be a simple identifier (possibly with namespace separators).
-    !inner.is_empty()
-        && inner
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '\\')
 }
 
 /// Find the byte offset where the constructor should be inserted.

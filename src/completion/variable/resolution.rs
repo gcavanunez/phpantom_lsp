@@ -2492,24 +2492,27 @@ fn merge_shape_key(base: &str, key: &str, value_type: &str) -> String {
 /// - `merge_push_type("list<User>", "Admin")` → `"list<User|Admin>"`
 /// - `merge_push_type("list<User>", "User")` → `"list<User>"` (no duplicate)
 fn merge_push_type(base: &str, value_type: &str) -> String {
+    use crate::php_type::PhpType;
+
     let mut elem_types: Vec<String> = Vec::new();
 
     // Extract existing element types from the base.
-    if let Some(existing_elem) = crate::php_type::PhpType::parse(base).extract_element_type() {
-        let existing_str = existing_elem.to_string();
-        for part in existing_str.split('|') {
-            let trimmed = part.trim();
-            if !trimmed.is_empty() {
-                elem_types.push(trimmed.to_string());
+    if let Some(existing_elem) = PhpType::parse(base).extract_element_type() {
+        for member in existing_elem.union_members() {
+            let s = member.to_string();
+            if !s.is_empty() {
+                elem_types.push(s);
             }
         }
     }
 
-    // Add the new value type (split on `|` in case it's already a union).
-    for part in value_type.split('|') {
-        let trimmed = part.trim();
-        if !trimmed.is_empty() && !elem_types.contains(&trimmed.to_string()) {
-            elem_types.push(trimmed.to_string());
+    // Add the new value type (use union_members to correctly handle
+    // nesting — `split('|')` would break on `Collection<A|B>`).
+    let new_parsed = PhpType::parse(value_type);
+    for member in new_parsed.union_members() {
+        let s = member.to_string();
+        if !s.is_empty() && !elem_types.contains(&s) {
+            elem_types.push(s);
         }
     }
 

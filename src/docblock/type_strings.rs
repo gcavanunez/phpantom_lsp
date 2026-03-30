@@ -347,38 +347,3 @@ pub fn clean_type(raw: &str) -> String {
 
     s.to_string()
 }
-
-/// Split generic arguments on commas at depth 0, respecting `<…>`,
-/// `(…)`, and `{…}` nesting.
-///
-/// Returns trimmed, non-empty segments. This is the single shared
-/// implementation used by `parse_generic_args`, `extract_generics_tag`,
-/// `apply_substitution`, and the generic-key/value extraction helpers.
-pub(crate) fn split_generic_args(s: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth_angle = 0i32;
-    let mut depth_paren = 0i32;
-    let mut depth_brace = 0i32;
-    let mut start = 0;
-
-    for (i, ch) in s.char_indices() {
-        match ch {
-            '<' => depth_angle += 1,
-            '>' => depth_angle -= 1,
-            '(' => depth_paren += 1,
-            ')' => depth_paren -= 1,
-            '{' => depth_brace += 1,
-            '}' => depth_brace -= 1,
-            ',' if depth_angle == 0 && depth_paren == 0 && depth_brace == 0 => {
-                parts.push(s[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    let last = s[start..].trim();
-    if !last.is_empty() {
-        parts.push(last);
-    }
-    parts
-}
