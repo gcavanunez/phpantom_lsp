@@ -129,9 +129,9 @@ impl Backend {
                         && let Some(override_type) =
                             super::extract_language_level_type(&func.attribute_lists, ctx, ver)
                     {
-                        Some(override_type)
+                        Some(PhpType::parse(&override_type))
                     } else {
-                        raw_native_return_type
+                        raw_native_return_type.map(|s| PhpType::parse(&s))
                     };
 
                     // Apply PHPDoc `@return` override for the function.
@@ -164,8 +164,10 @@ impl Backend {
                             .as_ref()
                             .and_then(docblock::extract_return_type_from_info);
 
+                        let native_return_type_str =
+                            native_return_type.as_ref().map(|t| t.to_string());
                         let effective = docblock::resolve_effective_type(
-                            native_return_type.as_deref(),
+                            native_return_type_str.as_deref(),
                             doc_type.as_deref(),
                         );
 
@@ -201,11 +203,12 @@ impl Backend {
                         //   @return T
                         // becomes a conditional that resolves T from the
                         // call-site argument (e.g. resolve(User::class) → User).
+                        let effective_str = effective.as_ref().map(|t| t.to_string());
                         let conditional = conditional.or_else(|| {
                             docblock::synthesize_template_conditional_from_info(
                                 info.as_ref()?,
                                 &tpl_params,
-                                effective.as_deref(),
+                                effective_str.as_deref(),
                                 false,
                             )
                         });
@@ -294,7 +297,7 @@ impl Backend {
                                     Some(doc_type),
                                 );
                                 if effective.is_some() {
-                                    param.type_hint = effective.map(|s| PhpType::parse(&s));
+                                    param.type_hint = effective;
                                 }
                             }
                             param.description =
@@ -345,7 +348,7 @@ impl Backend {
                         name_offset,
                         parameters,
                         native_return_type,
-                        return_type: return_type.map(|s| PhpType::parse(&s)),
+                        return_type,
                         description,
                         return_description,
                         links: link_urls,

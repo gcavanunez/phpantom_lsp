@@ -21,6 +21,7 @@ use crate::code_actions::cursor_context::{CursorContext, MemberContext, find_cur
 use crate::code_actions::{CodeActionData, make_code_action_data};
 use crate::completion::phpdoc::generation::enrichment_plain;
 use crate::completion::resolver::Loaders;
+use crate::php_type::PhpType;
 use crate::scope_collector::{
     FrameKind, ScopeMap, collect_function_scope, collect_function_scope_with_kind, collect_scope,
 };
@@ -546,10 +547,10 @@ fn derive_base_name(ctx: &NamingContext) -> String {
             if !enc.is_empty() {
                 // If there's a return type, use it for a more descriptive name
                 if !ctx.trailing_return_type.is_empty() {
-                    let clean = strip_generics_for_hint(ctx.trailing_return_type);
+                    let parsed = PhpType::parse(ctx.trailing_return_type);
                     // Only use the return type if it's a class name (starts uppercase)
-                    if clean.starts_with(|c: char| c.is_ascii_uppercase()) {
-                        return format!("get{}", clean);
+                    if let Some(name) = parsed.base_name() {
+                        return format!("get{}", name);
                     }
                 }
                 return format!("get{}Result", capitalise(enc));
@@ -2555,89 +2556,125 @@ fn clean_type_for_signature(type_str: &str) -> String {
         return String::new();
     }
 
-    // Parenthesized callable signatures like `(Closure(int): string)`
-    // or `(callable(Foo): Bar)` — extract the base callable name for
-    // the native PHP hint.
-    let trimmed = type_str.trim();
-    if let Some(inner) = trimmed.strip_prefix('(') {
-        for callable in &["Closure", "callable"] {
-            if inner.starts_with(callable) {
-                return callable.to_string();
+    let parsed = PhpType::parse(type_str);
+    php_type_to_native_hint(&parsed)
+}
+
+/// Convert a parsed [`PhpType`] into a native PHP type-hint string.
+///
+/// Returns an empty string when the type cannot be expressed as a
+/// native PHP type hint (e.g. array shapes, literal types, conditional
+/// types, class-string, key-of, etc.).
+fn php_type_to_native_hint(ty: &PhpType) -> String {
+    match ty {
+        // Callable / Closure — just emit the kind keyword.
+        PhpType::Callable { kind, .. } => kind.clone(),
+
+        // Generic types like `array<string>`, `Collection<int, User>` —
+        // strip the generic parameters and keep the base name if it is
+        // a valid native hint.
+        PhpType::Generic(name, _) => {
+            if is_native_type_name(name) || is_class_name(name) {
+                name.clone()
+            } else {
+                String::new()
             }
         }
+
+        // Named types — scalars, keywords, and class names.
+        PhpType::Named(s) => {
+            if is_native_type_name(s) || is_class_name(s) {
+                s.clone()
+            } else {
+                String::new()
+            }
+        }
+
+        // Nullable — recurse on the inner type and prepend `?`.
+        PhpType::Nullable(inner) => {
+            let hint = php_type_to_native_hint(inner);
+            if hint.is_empty() {
+                String::new()
+            } else {
+                format!("?{}", hint)
+            }
+        }
+
+        // Union types — each member must be expressible natively.
+        PhpType::Union(members) => {
+            let parts: Vec<String> = members.iter().map(php_type_to_native_hint).collect();
+            if parts.iter().all(|p| !p.is_empty()) {
+                parts.join("|")
+            } else {
+                String::new()
+            }
+        }
+
+        // Intersection types — each member must be expressible natively.
+        PhpType::Intersection(members) => {
+            let parts: Vec<String> = members.iter().map(php_type_to_native_hint).collect();
+            if parts.iter().all(|p| !p.is_empty()) {
+                parts.join("&")
+            } else {
+                String::new()
+            }
+        }
+
+        // T[] slice syntax → `array`
+        PhpType::Array(_) => "array".to_string(),
+
+        // Array/object shapes → `array` / `object`
+        PhpType::ArrayShape(_) => "array".to_string(),
+        PhpType::ObjectShape(_) => "object".to_string(),
+
+        // Everything else (Raw, Literal, Conditional, ClassString,
+        // InterfaceString, KeyOf, ValueOf, IntRange, IndexAccess)
+        // cannot be expressed as native PHP type hints.
+        _ => String::new(),
     }
-
-    // If it contains generic params like `array<string, int>`, strip them
-    // for the native type hint.
-    let cleaned = strip_generics_for_hint(type_str);
-
-    // If it's a simple scalar or class name, use it directly.
-    if is_valid_php_type_hint(&cleaned) {
-        return cleaned;
-    }
-
-    // For complex types (unions with more than PHP supports), return empty.
-    String::new()
 }
 
-/// Strip generic parameters from a type string.
-///
-/// `Collection<int, string>` → `Collection`
-/// `array<string>` → `array`
-fn strip_generics_for_hint(type_str: &str) -> String {
-    if let Some(pos) = type_str.find('<') {
-        type_str[..pos].to_string()
-    } else {
-        type_str.to_string()
-    }
+/// Whether `name` is a PHP native type keyword that can appear in a
+/// type hint.
+fn is_native_type_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "int"
+            | "float"
+            | "string"
+            | "bool"
+            | "array"
+            | "callable"
+            | "void"
+            | "null"
+            | "false"
+            | "true"
+            | "never"
+            | "object"
+            | "mixed"
+            | "iterable"
+            | "self"
+            | "static"
+            | "parent"
+    )
 }
 
-/// Check whether a type string is valid as a PHP native type hint.
-fn is_valid_php_type_hint(type_str: &str) -> bool {
-    if type_str.is_empty() {
+/// Whether `name` looks like a PHP class name (starts with an
+/// uppercase letter or backslash, contains only valid identifier
+/// characters separated by backslashes).
+fn is_class_name(name: &str) -> bool {
+    if name.is_empty() {
         return false;
     }
-
-    // Handle nullable types.
-    let inner = type_str.strip_prefix('?').unwrap_or(type_str);
-
-    // Simple scalar types.
-    let scalars = [
-        "int", "float", "string", "bool", "array", "callable", "void", "null", "false", "true",
-        "never", "object", "mixed", "iterable", "self", "static", "parent",
-    ];
-    if scalars.contains(&inner) {
-        return true;
+    if !(name.starts_with('\\') || name.chars().next().is_some_and(|c| c.is_ascii_uppercase())) {
+        return false;
     }
-
-    // Union types: `Type1|Type2`
-    if inner.contains('|') {
-        return inner.split('|').all(|part| {
-            let p = part.trim();
-            !p.is_empty() && is_valid_php_type_hint(p)
-        });
-    }
-
-    // Intersection types: `Type1&Type2`
-    if inner.contains('&') {
-        return inner.split('&').all(|part| {
-            let p = part.trim();
-            !p.is_empty() && is_valid_php_type_hint(p)
-        });
-    }
-
-    // Class names: starts with uppercase letter or backslash.
-    if inner.starts_with('\\') || inner.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
-        // Must be a valid identifier sequence.
-        return inner.split('\\').filter(|s| !s.is_empty()).all(|s| {
-            s.chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        });
-    }
-
-    false
+    name.split('\\').filter(|s| !s.is_empty()).all(|s| {
+        s.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -2917,49 +2954,63 @@ mod tests {
     // ── Type hint validation ────────────────────────────────────────
 
     #[test]
-    fn valid_scalar_hints() {
-        assert!(is_valid_php_type_hint("int"));
-        assert!(is_valid_php_type_hint("string"));
-        assert!(is_valid_php_type_hint("bool"));
-        assert!(is_valid_php_type_hint("float"));
-        assert!(is_valid_php_type_hint("array"));
-        assert!(is_valid_php_type_hint("void"));
-        assert!(is_valid_php_type_hint("mixed"));
+    fn clean_scalar_types() {
+        assert_eq!(clean_type_for_signature("int"), "int");
+        assert_eq!(clean_type_for_signature("string"), "string");
+        assert_eq!(clean_type_for_signature("bool"), "bool");
+        assert_eq!(clean_type_for_signature("float"), "float");
+        assert_eq!(clean_type_for_signature("array"), "array");
+        assert_eq!(clean_type_for_signature("void"), "void");
+        assert_eq!(clean_type_for_signature("mixed"), "mixed");
     }
 
     #[test]
-    fn valid_nullable_hints() {
-        assert!(is_valid_php_type_hint("?int"));
-        assert!(is_valid_php_type_hint("?string"));
+    fn clean_nullable_types() {
+        assert_eq!(clean_type_for_signature("?int"), "?int");
+        assert_eq!(clean_type_for_signature("?string"), "?string");
     }
 
     #[test]
-    fn valid_class_hints() {
-        assert!(is_valid_php_type_hint("Foo"));
-        assert!(is_valid_php_type_hint("\\App\\Models\\User"));
-    }
-
-    #[test]
-    fn valid_union_hints() {
-        assert!(is_valid_php_type_hint("int|string"));
-        assert!(is_valid_php_type_hint("Foo|null"));
-    }
-
-    #[test]
-    fn invalid_hints() {
-        assert!(!is_valid_php_type_hint(""));
-        assert!(!is_valid_php_type_hint("array<int>"));
-        assert!(!is_valid_php_type_hint("123"));
-    }
-
-    #[test]
-    fn strip_generics() {
-        assert_eq!(strip_generics_for_hint("array<string>"), "array");
+    fn clean_class_types() {
+        assert_eq!(clean_type_for_signature("Foo"), "Foo");
         assert_eq!(
-            strip_generics_for_hint("Collection<int, string>"),
+            clean_type_for_signature("\\App\\Models\\User"),
+            "\\App\\Models\\User"
+        );
+    }
+
+    #[test]
+    fn clean_union_types() {
+        assert_eq!(clean_type_for_signature("int|string"), "int|string");
+        assert_eq!(clean_type_for_signature("Foo|null"), "Foo|null");
+    }
+
+    #[test]
+    fn clean_empty_and_unparseable() {
+        assert_eq!(clean_type_for_signature(""), "");
+    }
+
+    #[test]
+    fn clean_generic_stripped() {
+        assert_eq!(clean_type_for_signature("array<string>"), "array");
+        assert_eq!(
+            clean_type_for_signature("Collection<int, string>"),
             "Collection"
         );
-        assert_eq!(strip_generics_for_hint("int"), "int");
+    }
+
+    #[test]
+    fn clean_callable_types() {
+        assert_eq!(
+            clean_type_for_signature("callable(int): string"),
+            "callable"
+        );
+        assert_eq!(clean_type_for_signature("Closure(int): void"), "Closure");
+    }
+
+    #[test]
+    fn clean_array_slice_syntax() {
+        assert_eq!(clean_type_for_signature("int[]"), "array");
     }
 
     // ── Build param list ────────────────────────────────────────────

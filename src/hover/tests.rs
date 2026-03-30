@@ -54,7 +54,7 @@ fn format_params_with_types() {
         ParameterInfo {
             name: "$name".to_string(),
             type_hint: Some(PhpType::parse("string")),
-            native_type_hint: Some("string".to_string()),
+            native_type_hint: Some(PhpType::parse("string")),
             description: None,
             default_value: None,
             is_required: true,
@@ -65,7 +65,7 @@ fn format_params_with_types() {
         ParameterInfo {
             name: "$age".to_string(),
             type_hint: Some(PhpType::parse("int")),
-            native_type_hint: Some("int".to_string()),
+            native_type_hint: Some(PhpType::parse("int")),
             description: None,
             default_value: None,
             is_required: false,
@@ -85,7 +85,7 @@ fn format_params_variadic() {
     let params = vec![ParameterInfo {
         name: "$items".to_string(),
         type_hint: Some(PhpType::parse("string")),
-        native_type_hint: Some("string".to_string()),
+        native_type_hint: Some(PhpType::parse("string")),
         description: None,
         default_value: None,
         is_required: false,
@@ -101,7 +101,7 @@ fn format_params_reference() {
     let params = vec![ParameterInfo {
         name: "$arr".to_string(),
         type_hint: Some(PhpType::parse("array")),
-        native_type_hint: Some("array".to_string()),
+        native_type_hint: Some(PhpType::parse("array")),
         description: None,
         default_value: None,
         is_required: true,

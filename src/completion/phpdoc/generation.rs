@@ -50,6 +50,7 @@ use crate::completion::resolver::FunctionLoaderFn;
 use crate::completion::source::comment_position::position_to_byte_offset;
 use crate::completion::source::throws_analysis::{self, ThrowsContext};
 use crate::completion::use_edit::{analyze_use_block, build_use_edit};
+use crate::php_type::PhpType;
 use crate::types::{ClassInfo, FunctionLoader};
 
 /// Detect whether the cursor is immediately after a `/**` trigger and,
@@ -1105,24 +1106,29 @@ pub(crate) fn enrichment_plain(
     }
 
     // Union types — enrich individual callable / array parts.
-    if th.contains('|') {
-        let parts: Vec<&str> = th.split('|').collect();
-        let needs = parts.iter().any(|part| {
-            let p = part.trim().trim_start_matches('\\');
+    // Use PhpType::parse + union_members to correctly handle generic nesting
+    // (e.g. `Collection<int|string, User>|null` must not be split on the inner `|`).
+    let parsed = PhpType::parse(th);
+    let members = parsed.union_members();
+    if members.len() > 1 {
+        let needs = members.iter().any(|member| {
+            let s = member.to_string();
+            let p = s.trim_start_matches('\\');
             p.eq_ignore_ascii_case("array")
                 || CALLABLE_TYPES.iter().any(|c| c.eq_ignore_ascii_case(p))
         });
         if needs {
-            let enriched_parts: Vec<String> = parts
+            let enriched_parts: Vec<String> = members
                 .iter()
-                .map(|part| {
-                    let p = part.trim().trim_start_matches('\\');
+                .map(|member| {
+                    let s = member.to_string();
+                    let p = s.trim_start_matches('\\');
                     if CALLABLE_TYPES.iter().any(|c| c.eq_ignore_ascii_case(p)) {
                         format!("({}(): mixed)", p)
                     } else if p.eq_ignore_ascii_case("array") {
                         "array<mixed>".to_string()
                     } else {
-                        part.trim().to_string()
+                        s.to_string()
                     }
                 })
                 .collect();

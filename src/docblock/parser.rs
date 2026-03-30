@@ -15,12 +15,7 @@
 //! It creates a short-lived bumpalo arena, parses the docblock, and
 //! returns an owned [`DocblockInfo`] that captures the tag data we need
 //! without borrowing from the arena.  This keeps the arena lifetime
-//! contained within each call, which is fine for the incremental migration
-//! (see the performance note in `docs/todo/mago.md`).
-//!
-//! When M4 (mago-type-syntax) introduces structured types, the arena
-//! lifetime may be extended so that type representations can borrow from
-//! the arena directly.
+//! contained within each call.
 
 use bumpalo::Bump;
 use mago_docblock::document::{Element, TagKind, TextSegment};

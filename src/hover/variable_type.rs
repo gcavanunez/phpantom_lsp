@@ -387,7 +387,8 @@ fn find_type_in_params(
                 });
 
         let effective =
-            docblock::resolve_effective_type(native_type.as_deref(), docblock_type.as_deref());
+            docblock::resolve_effective_type(native_type.as_deref(), docblock_type.as_deref())
+                .map(|t| t.to_string());
 
         if effective.is_some() {
             return effective;
@@ -990,9 +991,9 @@ fn extract_iterable_type_from_merged(
         let s = short_name(name);
         if ITERABLE_IFACE_NAMES.contains(&s) {
             if is_key && args.len() >= 2 {
-                return Some(args[0].clone());
+                return Some(args[0].to_string());
             } else if !is_key && !args.is_empty() {
-                return Some(args.last().unwrap().clone());
+                return Some(args.last().unwrap().to_string());
             }
         }
     }
@@ -1007,9 +1008,9 @@ fn extract_iterable_type_from_merged(
             && !args.is_empty()
         {
             if is_key && args.len() >= 2 {
-                return Some(args[0].clone());
+                return Some(args[0].to_string());
             } else if !is_key {
-                return Some(args.last().unwrap().clone());
+                return Some(args.last().unwrap().to_string());
             }
         }
     }
@@ -1027,9 +1028,9 @@ fn extract_iterable_type_from_merged(
                 .unwrap_or(false);
         if parent_is_iterable {
             if is_key && args.len() >= 2 {
-                return Some(args[0].clone());
+                return Some(args[0].to_string());
             } else if !is_key && !args.is_empty() {
-                return Some(args.last().unwrap().clone());
+                return Some(args.last().unwrap().to_string());
             }
         }
     }

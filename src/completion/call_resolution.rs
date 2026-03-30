@@ -25,6 +25,7 @@ use std::sync::Arc;
 use crate::Backend;
 use crate::completion::variable::{ARRAY_ELEMENT_FUNCS, ARRAY_PRESERVING_FUNCS};
 use crate::docblock;
+use crate::php_type::PhpType;
 use crate::types::*;
 use crate::util::{find_class_at_offset, position_to_offset};
 
@@ -50,7 +51,7 @@ pub(super) struct MethodReturnCtx<'a> {
     /// Cross-file class resolution callback.
     pub class_loader: &'a dyn Fn(&str) -> Option<Arc<ClassInfo>>,
     /// Template substitution map (method-level `@template` bindings).
-    pub template_subs: &'a HashMap<String, String>,
+    pub template_subs: &'a HashMap<String, PhpType>,
     /// Resolves a variable name to class-string values (for conditional
     /// return type evaluation).
     pub var_resolver: VarClassStringResolver<'a>,
@@ -451,14 +452,13 @@ impl Backend {
                     let arg_raw_type = Self::resolve_inline_arg_raw_type(&first_arg, ctx);
 
                     if let Some(ref raw) = arg_raw_type
-                        && let Some(element_type) = crate::php_type::PhpType::parse(raw)
-                            .extract_value_type(true)
-                            .map(|t| t.to_string())
+                        && let Some(element_type) =
+                            crate::php_type::PhpType::parse(raw).extract_value_type(true)
                     {
                         let owner_name = ctx.current_class.map(|c| c.name.as_str()).unwrap_or("");
                         let classes: Vec<Arc<ClassInfo>> =
-                            super::type_resolution::type_hint_to_classes(
-                                &element_type,
+                            super::type_resolution::type_hint_to_classes_typed(
+                                element_type,
                                 owner_name,
                                 ctx.all_classes,
                                 ctx.class_loader,
@@ -524,10 +524,9 @@ impl Backend {
                             && let Some(ref ret) = func_info.return_type
                         {
                             let substituted = ret.substitute(&subs);
-                            let substituted_str = substituted.to_string();
                             let classes: Vec<Arc<ClassInfo>> =
-                                super::type_resolution::type_hint_to_classes(
-                                    &substituted_str,
+                                super::type_resolution::type_hint_to_classes_typed(
+                                    &substituted,
                                     "",
                                     ctx.all_classes,
                                     ctx.class_loader,
@@ -542,9 +541,8 @@ impl Backend {
                     }
 
                     if let Some(ref ret) = func_info.return_type {
-                        let ret_str = ret.to_string();
-                        return super::type_resolution::type_hint_to_classes(
-                            &ret_str,
+                        return super::type_resolution::type_hint_to_classes_typed(
+                            ret,
                             "",
                             ctx.all_classes,
                             ctx.class_loader,
@@ -571,10 +569,9 @@ impl Backend {
                 ) && let Some(ret_type) =
                     crate::php_type::PhpType::parse(&raw_type).callable_return_type()
                 {
-                    let ret = ret_type.to_string();
                     let classes: Vec<Arc<ClassInfo>> =
-                        super::type_resolution::type_hint_to_classes(
-                            &ret,
+                        super::type_resolution::type_hint_to_classes_typed(
+                            ret_type,
                             "",
                             ctx.all_classes,
                             ctx.class_loader,
@@ -638,10 +635,9 @@ impl Backend {
                     if let Some(invoke) = owner.methods.iter().find(|m| m.name == "__invoke")
                         && let Some(ref ret) = invoke.return_type
                     {
-                        let ret_str = ret.to_string();
                         let classes: Vec<Arc<ClassInfo>> =
-                            super::type_resolution::type_hint_to_classes(
-                                &ret_str,
+                            super::type_resolution::type_hint_to_classes_typed(
+                                ret,
                                 "",
                                 ctx.all_classes,
                                 ctx.class_loader,
@@ -683,10 +679,9 @@ impl Backend {
                     if let Some(invoke) = owner.methods.iter().find(|m| m.name == "__invoke")
                         && let Some(ref ret) = invoke.return_type
                     {
-                        let ret_str = ret.to_string();
                         let classes: Vec<Arc<ClassInfo>> =
-                            super::type_resolution::type_hint_to_classes(
-                                &ret_str,
+                            super::type_resolution::type_hint_to_classes_typed(
+                                ret,
                                 "",
                                 ctx.all_classes,
                                 ctx.class_loader,
@@ -772,10 +767,9 @@ impl Backend {
             {
                 let substituted = ret.substitute(template_subs);
                 if &substituted != ret {
-                    let substituted_str = substituted.to_string();
                     let classes: Vec<Arc<ClassInfo>> =
-                        super::type_resolution::type_hint_to_classes(
-                            &substituted_str,
+                        super::type_resolution::type_hint_to_classes_typed(
+                            &substituted,
                             &class_info.name,
                             all_classes,
                             class_loader,
@@ -806,8 +800,8 @@ impl Backend {
                 if base == "static" || base == "self" || base == "$this" {
                     return vec![Arc::new(class_info.clone())];
                 }
-                return super::type_resolution::type_hint_to_classes(
-                    &ret_str,
+                return super::type_resolution::type_hint_to_classes_typed(
+                    ret,
                     &class_info.name,
                     all_classes,
                     class_loader,
@@ -858,7 +852,7 @@ impl Backend {
         method_name: &str,
         text_args: &str,
         ctx: &ResolutionCtx<'_>,
-    ) -> HashMap<String, String> {
+    ) -> HashMap<String, PhpType> {
         // Find the method — first on the class directly, then via inheritance.
         let method = class_info
             .methods
@@ -901,7 +895,7 @@ impl Backend {
 
             // Try to resolve the argument text to a type name.
             if let Some(type_name) = Self::resolve_arg_text_to_type(arg_text, ctx) {
-                subs.insert(tpl_name.clone(), type_name);
+                subs.insert(tpl_name.clone(), PhpType::parse(&type_name));
             }
         }
 

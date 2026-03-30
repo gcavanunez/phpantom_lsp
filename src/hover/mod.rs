@@ -998,12 +998,7 @@ impl Backend {
     ) -> Option<String> {
         // Only bare names (no `\`, `<`, `|`) can be template params.
         let name = type_str.trim();
-        if name.is_empty()
-            || name.contains('\\')
-            || name.contains('<')
-            || name.contains('|')
-            || name.contains('&')
-        {
+        if !is_bare_identifier(name) {
             return None;
         }
 
@@ -1154,7 +1149,7 @@ impl Backend {
         if let Some(section) = build_param_return_section(
             &method.parameters,
             effective_return.as_deref(),
-            method.native_return_type.as_deref(),
+            method.native_return_type.as_ref(),
             method.return_description.as_deref(),
         ) {
             lines.push(section);
@@ -1197,10 +1192,8 @@ impl Backend {
         // Build the docblock annotation showing the effective type
         // when it differs from the native one.
         let eff_type_str = property.type_hint_str();
-        let var_annotation = build_var_annotation(
-            eff_type_str.as_deref(),
-            property.native_type_hint.as_deref(),
-        );
+        let var_annotation =
+            build_var_annotation(eff_type_str.as_deref(), property.native_type_hint.as_ref());
 
         let mut lines = Vec::new();
 
@@ -1536,12 +1529,7 @@ fn find_template_info_in_method_or_class(
 /// not a method-level template param.
 fn find_template_info_in_method(type_str: &str, method: &MethodInfo) -> Option<String> {
     let name = type_str.trim();
-    if name.is_empty()
-        || name.contains('\\')
-        || name.contains('<')
-        || name.contains('|')
-        || name.contains('&')
-    {
+    if !is_bare_identifier(name) {
         return None;
     }
 
@@ -1553,7 +1541,7 @@ fn find_template_info_in_method(type_str: &str, method: &MethodInfo) -> Option<S
     let bound_display = method
         .template_param_bounds
         .get(name)
-        .map(|b| format!(" of `{}`", PhpType::parse(b).shorten()))
+        .map(|b| format!(" of `{}`", b.shorten()))
         .unwrap_or_default();
 
     // Method-level templates don't carry variance info (always invariant).
@@ -1566,12 +1554,7 @@ fn find_template_info_in_method(type_str: &str, method: &MethodInfo) -> Option<S
 /// when the type is not a template param on the class.
 fn find_template_info_in_class(type_str: &str, owner: &ClassInfo) -> Option<String> {
     let name = type_str.trim();
-    if name.is_empty()
-        || name.contains('\\')
-        || name.contains('<')
-        || name.contains('|')
-        || name.contains('&')
-    {
+    if !is_bare_identifier(name) {
         return None;
     }
 
@@ -1591,6 +1574,13 @@ fn find_template_info_in_class(type_str: &str, owner: &ClassInfo) -> Option<Stri
         tpl_name,
         bound_display
     ))
+}
+
+/// Returns `true` when `s` is a simple, unqualified identifier that could
+/// name a template parameter — i.e. it parses as [`PhpType::Named`] and
+/// contains no namespace separator.
+fn is_bare_identifier(s: &str) -> bool {
+    !s.is_empty() && !s.contains('\\') && matches!(PhpType::parse(s), PhpType::Named(_))
 }
 
 /// Maximum number of enum cases or trait methods to show before

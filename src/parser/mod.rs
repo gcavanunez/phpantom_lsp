@@ -886,7 +886,10 @@ pub(crate) fn extract_parameters(
             let has_default = param.default_value.is_some();
             let is_required = !has_default && !is_variadic;
 
-            let native_type_hint = param.hint.as_ref().map(|h| extract_hint_string(h));
+            let native_type_hint = param
+                .hint
+                .as_ref()
+                .map(|h| PhpType::parse(&extract_hint_string(h)));
 
             // Check for a #[LanguageLevelTypeAware] override on the
             // parameter.  When present, it replaces the native type hint
@@ -895,7 +898,7 @@ pub(crate) fn extract_parameters(
                 && let Some(ctx) = doc_ctx
                 && let Some(override_type) = extract_language_level_type_for_param(param, ctx, ver)
             {
-                Some(override_type)
+                Some(PhpType::parse(&override_type))
             } else {
                 native_type_hint.clone()
             };
@@ -912,7 +915,7 @@ pub(crate) fn extract_parameters(
                 name,
                 is_required,
                 native_type_hint: native_type_hint.clone(),
-                type_hint: type_hint.map(|s| PhpType::parse(&s)),
+                type_hint,
                 description: None,
                 default_value,
                 is_variadic,
@@ -947,7 +950,9 @@ pub(crate) fn extract_property_info(property: &Property) -> Vec<PropertyInfo> {
     let is_static = property.modifiers().iter().any(|m| m.is_static());
     let visibility = extract_visibility(property.modifiers().iter());
 
-    let type_hint = property.hint().map(|h| extract_hint_string(h));
+    let native_hint = property
+        .hint()
+        .map(|h| PhpType::parse(&extract_hint_string(h)));
 
     property
         .variables()
@@ -965,8 +970,8 @@ pub(crate) fn extract_property_info(property: &Property) -> Vec<PropertyInfo> {
             PropertyInfo {
                 name,
                 name_offset: var.span.start.offset,
-                type_hint: type_hint.as_deref().map(PhpType::parse),
-                native_type_hint: type_hint.clone(),
+                type_hint: native_hint.clone(),
+                native_type_hint: native_hint.clone(),
                 description: None,
                 is_static,
                 visibility,

@@ -378,7 +378,7 @@ impl VirtualMemberProvider for PHPDocProvider {
         // generics and applies it to the mixin's generic args, turning
         // `Builder<TRelatedModel>` into `Builder<Product>`.
         let mut current_ancestor: ClassRef<'_> = ClassRef::Borrowed(class);
-        let mut active_subs: HashMap<String, String> = HashMap::new();
+        let mut active_subs: HashMap<String, PhpType> = HashMap::new();
         let mut depth = 0u32;
         while let Some(ref parent_name) = current_ancestor.parent_class.clone() {
             depth += 1;
@@ -399,20 +399,16 @@ impl VirtualMemberProvider for PHPDocProvider {
                 // Apply the accumulated substitution map to the
                 // parent's mixin generic arguments so that template
                 // param names are replaced with concrete types.
-                let resolved_mixin_generics: Vec<(String, Vec<String>)> = if level_subs.is_empty() {
+                let resolved_mixin_generics: Vec<(String, Vec<PhpType>)> = if level_subs.is_empty()
+                {
                     parent.mixin_generics.clone()
                 } else {
                     parent
                         .mixin_generics
                         .iter()
                         .map(|(name, args)| {
-                            let resolved_args: Vec<String> = args
-                                .iter()
-                                .map(|arg| {
-                                    let sub = inheritance::apply_substitution(arg, &level_subs);
-                                    sub.into_owned()
-                                })
-                                .collect();
+                            let resolved_args: Vec<PhpType> =
+                                args.iter().map(|arg| arg.substitute(&level_subs)).collect();
                             (name.clone(), resolved_args)
                         })
                         .collect()
@@ -459,7 +455,7 @@ impl VirtualMemberProvider for PHPDocProvider {
 /// with dozens of traits).
 fn collect_mixin_members(
     mixin_names: &[String],
-    mixin_generics: &[(String, Vec<String>)],
+    mixin_generics: &[(String, Vec<PhpType>)],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
     collector: &mut MixinCollector,
     depth: u32,
@@ -477,7 +473,7 @@ fn collect_mixin_members(
 
         // Find generic args for this mixin from the @mixin tag.
         let mixin_short = short_name(mixin_name);
-        let generic_args: Option<&[String]> = mixin_generics
+        let generic_args: Option<&[PhpType]> = mixin_generics
             .iter()
             .find(|(name, _)| name == mixin_name || short_name(name) == mixin_short)
             .map(|(_, args)| args.as_slice());
@@ -500,7 +496,7 @@ fn collect_mixin_members(
 
         // Build a substitution map from the mixin class's template params
         // to the concrete types provided in the @mixin tag's generic args.
-        let subs: HashMap<String, String> = if let Some(args) = generic_args {
+        let subs: HashMap<String, PhpType> = if let Some(args) = generic_args {
             let mut map = HashMap::new();
             for (i, param_name) in mixin_class.template_params.iter().enumerate() {
                 if let Some(arg) = args.get(i) {
@@ -586,8 +582,8 @@ fn collect_mixin_members(
 fn build_mixin_substitution_map(
     current: &ClassInfo,
     parent: &ClassInfo,
-    active_subs: &HashMap<String, String>,
-) -> HashMap<String, String> {
+    active_subs: &HashMap<String, PhpType>,
+) -> HashMap<String, PhpType> {
     if parent.template_params.is_empty() {
         return active_subs.clone();
     }
@@ -616,7 +612,7 @@ fn build_mixin_substitution_map(
             let resolved = if active_subs.is_empty() {
                 arg.clone()
             } else {
-                inheritance::apply_substitution(arg, active_subs).into_owned()
+                arg.substitute(active_subs)
             };
             map.insert(param_name.clone(), resolved);
         }

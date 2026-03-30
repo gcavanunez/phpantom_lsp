@@ -244,7 +244,7 @@ impl Backend {
                     }
                 }
                 if let Some(ref ret) = func.native_return_type {
-                    let resolved = Self::resolve_type_string_via_php_type(ret, &resolver);
+                    let resolved = ret.resolve_names(&resolver);
                     if resolved != *ret {
                         func.native_return_type = Some(resolved);
                     }
@@ -948,19 +948,21 @@ impl Backend {
     /// e.g. `Illuminate\Database\Eloquent\TModel`, preventing it from
     /// matching substitution map keys during generic resolution.
     fn resolve_generics_type_args(
-        generics: &mut [(String, Vec<String>)],
+        generics: &mut [(String, Vec<PhpType>)],
         use_map: &HashMap<String, String>,
         namespace: &Option<String>,
         skip_names: &[String],
     ) {
+        let resolver = Self::build_type_resolver(use_map, namespace, skip_names);
         for (class_name, type_args) in generics.iter_mut() {
             // Resolve the base class/trait/interface name
             *class_name = Self::resolve_name(class_name, use_map, namespace);
 
-            // Resolve each type argument that is a class-like name
+            // Resolve each type argument (now PhpType) via resolve_names
             for arg in type_args.iter_mut() {
-                if !PhpType::parse(arg).is_scalar() && !skip_names.contains(arg) {
-                    *arg = Self::resolve_name(arg, use_map, namespace);
+                let resolved = arg.resolve_names(&resolver);
+                if resolved != *arg {
+                    *arg = resolved;
                 }
             }
         }

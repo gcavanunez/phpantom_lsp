@@ -155,7 +155,7 @@ fn format_param_with_default_value() {
     let p = ParameterInfo {
         name: "$limit".to_string(),
         type_hint: Some(PhpType::parse("int")),
-        native_type_hint: Some("int".to_string()),
+        native_type_hint: Some(PhpType::parse("int")),
         description: None,
         default_value: Some("10".to_string()),
         is_required: false,
@@ -171,7 +171,7 @@ fn format_param_with_null_default() {
     let p = ParameterInfo {
         name: "$name".to_string(),
         type_hint: Some(PhpType::parse("?string")),
-        native_type_hint: Some("?string".to_string()),
+        native_type_hint: Some(PhpType::parse("?string")),
         description: None,
         default_value: Some("null".to_string()),
         is_required: false,
@@ -188,7 +188,7 @@ fn format_param_optional_no_known_default() {
     let p = ParameterInfo {
         name: "$x".to_string(),
         type_hint: Some(PhpType::parse("int")),
-        native_type_hint: Some("int".to_string()),
+        native_type_hint: Some(PhpType::parse("int")),
         description: None,
         default_value: None,
         is_required: false,
@@ -205,7 +205,7 @@ fn format_param_variadic_no_default_even_if_set() {
     let p = ParameterInfo {
         name: "$items".to_string(),
         type_hint: Some(PhpType::parse("string")),
-        native_type_hint: Some("string".to_string()),
+        native_type_hint: Some(PhpType::parse("string")),
         description: None,
         default_value: Some("[]".to_string()),
         is_required: false,
@@ -221,7 +221,7 @@ fn format_param_simple() {
     let p = ParameterInfo {
         name: "$x".to_string(),
         type_hint: Some(PhpType::parse("int")),
-        native_type_hint: Some("int".to_string()),
+        native_type_hint: Some(PhpType::parse("int")),
         description: None,
         default_value: None,
         is_required: true,
@@ -237,7 +237,7 @@ fn format_param_variadic() {
     let p = ParameterInfo {
         name: "$items".to_string(),
         type_hint: Some(PhpType::parse("string")),
-        native_type_hint: Some("string".to_string()),
+        native_type_hint: Some(PhpType::parse("string")),
         description: None,
         default_value: None,
         is_required: false,
@@ -253,7 +253,7 @@ fn format_param_reference() {
     let p = ParameterInfo {
         name: "$arr".to_string(),
         type_hint: Some(PhpType::parse("array")),
-        native_type_hint: Some("array".to_string()),
+        native_type_hint: Some(PhpType::parse("array")),
         description: None,
         default_value: None,
         is_required: true,
@@ -288,7 +288,7 @@ fn build_signature_label() {
         ParameterInfo {
             name: "$name".to_string(),
             type_hint: Some(PhpType::parse("string")),
-            native_type_hint: Some("string".to_string()),
+            native_type_hint: Some(PhpType::parse("string")),
             description: None,
             default_value: None,
             is_required: true,
@@ -299,7 +299,7 @@ fn build_signature_label() {
         ParameterInfo {
             name: "$age".to_string(),
             type_hint: Some(PhpType::parse("int")),
-            native_type_hint: Some("int".to_string()),
+            native_type_hint: Some(PhpType::parse("int")),
             description: None,
             default_value: None,
             is_required: true,
@@ -365,7 +365,7 @@ fn build_signature_with_default_values() {
         ParameterInfo {
             name: "$name".to_string(),
             type_hint: Some(PhpType::parse("string")),
-            native_type_hint: Some("string".to_string()),
+            native_type_hint: Some(PhpType::parse("string")),
             description: None,
             default_value: Some("'World'".to_string()),
             is_required: false,
@@ -376,7 +376,7 @@ fn build_signature_with_default_values() {
         ParameterInfo {
             name: "$count".to_string(),
             type_hint: Some(PhpType::parse("int")),
-            native_type_hint: Some("int".to_string()),
+            native_type_hint: Some(PhpType::parse("int")),
             description: None,
             default_value: Some("1".to_string()),
             is_required: false,
@@ -402,7 +402,7 @@ fn build_signature_param_documentation_same_types() {
         ParameterInfo {
             name: "$callback".to_string(),
             type_hint: Some(PhpType::parse("callable")),
-            native_type_hint: Some("callable".to_string()),
+            native_type_hint: Some(PhpType::parse("callable")),
             description: Some("The callback function to run for each element.".to_string()),
             default_value: None,
             is_required: true,
@@ -413,7 +413,7 @@ fn build_signature_param_documentation_same_types() {
         ParameterInfo {
             name: "$array".to_string(),
             type_hint: Some(PhpType::parse("array")),
-            native_type_hint: Some("array".to_string()),
+            native_type_hint: Some(PhpType::parse("array")),
             description: None,
             default_value: None,
             is_required: true,
@@ -443,7 +443,7 @@ fn build_signature_param_documentation_effective_differs() {
     let params = vec![ParameterInfo {
         name: "$users".to_string(),
         type_hint: Some(PhpType::parse("list<User>")),
-        native_type_hint: Some("array".to_string()),
+        native_type_hint: Some(PhpType::parse("array")),
         description: Some("The active users.".to_string()),
         default_value: None,
         is_required: true,
@@ -498,7 +498,7 @@ fn build_signature_param_effective_differs_no_description() {
     let params = vec![ParameterInfo {
         name: "$class".to_string(),
         type_hint: Some(PhpType::parse("class-string<T>")),
-        native_type_hint: Some("string".to_string()),
+        native_type_hint: Some(PhpType::parse("string")),
         description: None,
         default_value: None,
         is_required: true,
@@ -533,7 +533,7 @@ fn build_signature_param_effective_fqn_shortened_in_doc() {
     let params = vec![ParameterInfo {
         name: "$users".to_string(),
         type_hint: Some(PhpType::parse("list<\\App\\Models\\User>")),
-        native_type_hint: Some("array".to_string()),
+        native_type_hint: Some(PhpType::parse("array")),
         description: Some("The active users.".to_string()),
         default_value: None,
         is_required: true,
@@ -558,7 +558,7 @@ fn build_signature_param_effective_fqn_no_desc() {
     let params = vec![ParameterInfo {
         name: "$item".to_string(),
         type_hint: Some(PhpType::parse("\\App\\Models\\Item")),
-        native_type_hint: Some("object".to_string()),
+        native_type_hint: Some(PhpType::parse("object")),
         description: None,
         default_value: None,
         is_required: true,

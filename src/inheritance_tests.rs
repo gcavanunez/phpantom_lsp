@@ -1,10 +1,17 @@
 use super::*;
+use crate::php_type::PhpType;
+
+/// Helper to build a `HashMap<String, PhpType>` from `(&str, &str)` pairs.
+fn make_subs(pairs: &[(&str, &str)]) -> HashMap<String, PhpType> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), PhpType::parse(v)))
+        .collect()
+}
 
 #[test]
 fn test_apply_substitution_direct() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "Language".to_string());
-    subs.insert("TKey".to_string(), "int".to_string());
+    let subs = make_subs(&[("TValue", "Language"), ("TKey", "int")]);
 
     assert_eq!(apply_substitution("TValue", &subs), "Language");
     assert_eq!(apply_substitution("TKey", &subs), "int");
@@ -13,16 +20,14 @@ fn test_apply_substitution_direct() {
 
 #[test]
 fn test_apply_substitution_nullable() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "Language".to_string());
+    let subs = make_subs(&[("TValue", "Language")]);
 
     assert_eq!(apply_substitution("?TValue", &subs), "?Language");
 }
 
 #[test]
 fn test_apply_substitution_union() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "Language".to_string());
+    let subs = make_subs(&[("TValue", "Language")]);
 
     assert_eq!(apply_substitution("TValue|null", &subs), "Language|null");
     assert_eq!(
@@ -33,8 +38,7 @@ fn test_apply_substitution_union() {
 
 #[test]
 fn test_apply_substitution_intersection() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "Language".to_string());
+    let subs = make_subs(&[("TValue", "Language")]);
 
     assert_eq!(
         apply_substitution("TValue&Countable", &subs),
@@ -44,9 +48,7 @@ fn test_apply_substitution_intersection() {
 
 #[test]
 fn test_apply_substitution_generic() {
-    let mut subs = HashMap::new();
-    subs.insert("TKey".to_string(), "int".to_string());
-    subs.insert("TValue".to_string(), "Language".to_string());
+    let subs = make_subs(&[("TKey", "int"), ("TValue", "Language")]);
 
     assert_eq!(
         apply_substitution("array<TKey, TValue>", &subs),
@@ -56,8 +58,7 @@ fn test_apply_substitution_generic() {
 
 #[test]
 fn test_apply_substitution_nested_generic() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TValue", "User")]);
 
     assert_eq!(
         apply_substitution("Collection<int, list<TValue>>", &subs),
@@ -67,16 +68,14 @@ fn test_apply_substitution_nested_generic() {
 
 #[test]
 fn test_apply_substitution_array_shorthand() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TValue", "User")]);
 
     assert_eq!(apply_substitution("TValue[]", &subs), "User[]");
 }
 
 #[test]
 fn test_apply_substitution_no_match() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TValue", "User")]);
 
     assert_eq!(apply_substitution("string", &subs), "string");
     assert_eq!(apply_substitution("void", &subs), "void");
@@ -85,9 +84,7 @@ fn test_apply_substitution_no_match() {
 
 #[test]
 fn test_apply_substitution_complex_union_with_generic() {
-    let mut subs = HashMap::new();
-    subs.insert("TKey".to_string(), "int".to_string());
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TKey", "int"), ("TValue", "User")]);
 
     assert_eq!(
         apply_substitution("array<TKey, TValue>|null", &subs),
@@ -97,8 +94,7 @@ fn test_apply_substitution_complex_union_with_generic() {
 
 #[test]
 fn test_apply_substitution_dnf_parens() {
-    let mut subs = HashMap::new();
-    subs.insert("T".to_string(), "User".to_string());
+    let subs = make_subs(&[("T", "User")]);
 
     // Standalone `(A&B)` normalizes to `A&B` — the parentheses are
     // only semantically meaningful inside a union like `(A&B)|C`.
@@ -107,8 +103,7 @@ fn test_apply_substitution_dnf_parens() {
 
 #[test]
 fn test_apply_substitution_callable_params() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TValue", "User")]);
 
     assert_eq!(
         apply_substitution("callable(TValue): void", &subs),
@@ -118,9 +113,7 @@ fn test_apply_substitution_callable_params() {
 
 #[test]
 fn test_apply_substitution_callable_multiple_params() {
-    let mut subs = HashMap::new();
-    subs.insert("TKey".to_string(), "int".to_string());
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TKey", "int"), ("TValue", "User")]);
 
     assert_eq!(
         apply_substitution("callable(TKey, TValue): mixed", &subs),
@@ -130,8 +123,7 @@ fn test_apply_substitution_callable_multiple_params() {
 
 #[test]
 fn test_apply_substitution_callable_return_type() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "Order".to_string());
+    let subs = make_subs(&[("TValue", "Order")]);
 
     assert_eq!(
         apply_substitution("callable(string): TValue", &subs),
@@ -141,8 +133,7 @@ fn test_apply_substitution_callable_return_type() {
 
 #[test]
 fn test_apply_substitution_closure_syntax() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "Product".to_string());
+    let subs = make_subs(&[("TValue", "Product")]);
 
     assert_eq!(
         apply_substitution("Closure(TValue): bool", &subs),
@@ -152,8 +143,7 @@ fn test_apply_substitution_closure_syntax() {
 
 #[test]
 fn test_apply_substitution_callable_empty_params() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TValue", "User")]);
 
     assert_eq!(
         apply_substitution("callable(): TValue", &subs),
@@ -163,8 +153,7 @@ fn test_apply_substitution_callable_empty_params() {
 
 #[test]
 fn test_apply_substitution_callable_no_match() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TValue", "User")]);
 
     // No template params inside callable — returned unchanged.
     assert_eq!(
@@ -175,8 +164,7 @@ fn test_apply_substitution_callable_no_match() {
 
 #[test]
 fn test_apply_substitution_callable_generic_param() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "User".to_string());
+    let subs = make_subs(&[("TValue", "User")]);
 
     assert_eq!(
         apply_substitution("callable(Collection<int, TValue>): void", &subs),
@@ -186,8 +174,7 @@ fn test_apply_substitution_callable_generic_param() {
 
 #[test]
 fn test_apply_substitution_fqn_closure() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "Item".to_string());
+    let subs = make_subs(&[("TValue", "Item")]);
 
     assert_eq!(
         apply_substitution("Closure(TValue): void", &subs),
@@ -203,7 +190,7 @@ fn test_build_substitution_map_basic() {
         is_final: true,
         extends_generics: vec![(
             "Collection".to_string(),
-            vec!["int".to_string(), "Language".to_string()],
+            vec![PhpType::parse("int"), PhpType::parse("Language")],
         )],
         ..ClassInfo::default()
     };
@@ -215,8 +202,8 @@ fn test_build_substitution_map_basic() {
     };
 
     let subs = build_substitution_map(&child, &parent, &HashMap::new());
-    assert_eq!(subs.get("TKey").unwrap(), "int");
-    assert_eq!(subs.get("TValue").unwrap(), "Language");
+    assert_eq!(subs.get("TKey").unwrap().to_string(), "int");
+    assert_eq!(subs.get("TValue").unwrap().to_string(), "Language");
 }
 
 #[test]
@@ -229,7 +216,7 @@ fn test_build_substitution_map_chained() {
         name: "B".to_string(),
         parent_class: Some("A".to_string()),
         template_params: vec!["T".to_string()],
-        extends_generics: vec![("A".to_string(), vec!["T".to_string()])],
+        extends_generics: vec![("A".to_string(), vec![PhpType::parse("T")])],
         ..ClassInfo::default()
     };
 
@@ -239,11 +226,10 @@ fn test_build_substitution_map_chained() {
         ..ClassInfo::default()
     };
 
-    let mut active = HashMap::new();
-    active.insert("T".to_string(), "Foo".to_string());
+    let active = make_subs(&[("T", "Foo")]);
 
     let subs = build_substitution_map(&current_b, &parent_a, &active);
-    assert_eq!(subs.get("U").unwrap(), "Foo");
+    assert_eq!(subs.get("U").unwrap().to_string(), "Foo");
 }
 
 #[test]
@@ -256,8 +242,7 @@ fn test_short_name() {
 
 #[test]
 fn test_apply_substitution_array_shape() {
-    let mut subs = HashMap::new();
-    subs.insert("T".to_string(), "User".to_string());
+    let subs = make_subs(&[("T", "User")]);
 
     assert_eq!(
         apply_substitution("array{data: T, items: list<T>}", &subs),
@@ -267,8 +252,7 @@ fn test_apply_substitution_array_shape() {
 
 #[test]
 fn test_apply_substitution_object_shape() {
-    let mut subs = HashMap::new();
-    subs.insert("T".to_string(), "User".to_string());
+    let subs = make_subs(&[("T", "User")]);
 
     assert_eq!(
         apply_substitution("object{name: T}", &subs),
@@ -278,8 +262,7 @@ fn test_apply_substitution_object_shape() {
 
 #[test]
 fn test_apply_substitution_array_shape_nested() {
-    let mut subs = HashMap::new();
-    subs.insert("T".to_string(), "Foo".to_string());
+    let subs = make_subs(&[("T", "Foo")]);
 
     assert_eq!(
         apply_substitution("array{inner: array{val: T}}", &subs),
@@ -289,8 +272,7 @@ fn test_apply_substitution_array_shape_nested() {
 
 #[test]
 fn test_apply_substitution_shape_in_union() {
-    let mut subs = HashMap::new();
-    subs.insert("T".to_string(), "User".to_string());
+    let subs = make_subs(&[("T", "User")]);
 
     assert_eq!(
         apply_substitution("array{data: T}|null", &subs),
@@ -300,8 +282,7 @@ fn test_apply_substitution_shape_in_union() {
 
 #[test]
 fn test_apply_substitution_shape_no_key() {
-    let mut subs = HashMap::new();
-    subs.insert("T".to_string(), "User".to_string());
+    let subs = make_subs(&[("T", "User")]);
 
     assert_eq!(
         apply_substitution("array{T, string}", &subs),
@@ -311,9 +292,7 @@ fn test_apply_substitution_shape_no_key() {
 
 #[test]
 fn test_apply_substitution_to_method_modifies_return_and_params() {
-    let mut subs = HashMap::new();
-    subs.insert("TValue".to_string(), "Language".to_string());
-    subs.insert("TKey".to_string(), "int".to_string());
+    let subs = make_subs(&[("TValue", "Language"), ("TKey", "int")]);
 
     let mut method = MethodInfo {
         name: "first".to_string(),
@@ -322,7 +301,7 @@ fn test_apply_substitution_to_method_modifies_return_and_params() {
             name: "$key".to_string(),
             is_required: false,
             type_hint: Some(PhpType::parse("TKey")),
-            native_type_hint: Some("TKey".to_string()),
+            native_type_hint: Some(PhpType::parse("TKey")),
             description: None,
             default_value: None,
             is_variadic: false,
@@ -352,6 +331,9 @@ fn test_apply_substitution_to_method_modifies_return_and_params() {
 
     apply_substitution_to_method(&mut method, &subs);
 
-    assert_eq!(method.return_type, Some(PhpType::parse("Language")));
-    assert_eq!(method.parameters[0].type_hint, Some(PhpType::parse("int")));
+    assert_eq!(method.return_type.as_ref().unwrap().to_string(), "Language");
+    assert_eq!(
+        method.parameters[0].type_hint.as_ref().unwrap().to_string(),
+        "int"
+    );
 }

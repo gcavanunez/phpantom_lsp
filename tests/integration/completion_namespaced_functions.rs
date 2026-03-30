@@ -849,7 +849,7 @@ async fn test_use_function_namespaced_detail_shows_signature() {
                         name: "$value".to_string(),
                         is_required: true,
                         type_hint: Some(PhpType::parse("mixed")),
-                        native_type_hint: Some("mixed".to_string()),
+                        native_type_hint: Some(PhpType::parse("mixed")),
                         description: None,
                         default_value: None,
                         is_variadic: false,

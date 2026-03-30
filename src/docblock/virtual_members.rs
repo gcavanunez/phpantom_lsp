@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use mago_docblock::document::TagKind;
 
 use super::parser::parse_docblock_for_tags;
-use super::types::{clean_type, split_type_token};
+use super::types::split_type_token;
 use crate::php_type::PhpType;
 use crate::types::{MethodInfo, ParameterInfo, Visibility};
 
@@ -80,8 +80,15 @@ pub fn extract_property_tags(docblock: &str) -> Vec<(String, String)> {
             continue;
         }
 
-        let cleaned = clean_type(type_token);
-        results.push((name.to_string(), cleaned));
+        // Use the raw type token instead of `clean_type()`.
+        // `clean_type()` strips `|null` from union types, which loses
+        // nullable information (e.g. `@property int|null $foo` would
+        // become just `int`).  Downstream consumers parse the string
+        // with `PhpType::parse()` which handles nullability correctly.
+        // Only strip trailing punctuation that could leak from
+        // descriptions (e.g. trailing `.` or `,`).
+        let type_str = type_token.trim_end_matches(['.', ',']);
+        results.push((name.to_string(), type_str.to_string()));
     }
 
     results
@@ -167,7 +174,10 @@ pub fn extract_method_tags(docblock: &str) -> Vec<MethodInfo> {
             continue;
         }
 
-        let return_type = return_type_raw.map(clean_type);
+        // Use the raw type token with only trailing punctuation
+        // stripped, instead of `clean_type()` which strips `|null`
+        // and loses nullable information.
+        let return_type = return_type_raw.map(|s| s.trim_end_matches(['.', ',']).to_string());
         let return_type = match return_type {
             Some(ref s) if s.is_empty() => None,
             other => other,
@@ -258,7 +268,7 @@ fn parse_method_tag_params(params_str: &str) -> Vec<ParameterInfo> {
             let type_str = if before.is_empty() {
                 None
             } else {
-                Some(clean_type(before))
+                Some(before.trim_end_matches(['.', ',']).to_string())
             };
             let type_str = match type_str {
                 Some(ref s) if s.is_empty() => None,
@@ -278,7 +288,7 @@ fn parse_method_tag_params(params_str: &str) -> Vec<ParameterInfo> {
             name: param_name,
             is_required,
             type_hint: type_hint.as_deref().map(PhpType::parse),
-            native_type_hint: type_hint,
+            native_type_hint: type_hint.as_deref().map(PhpType::parse),
             description: None,
             default_value: None,
             is_variadic,

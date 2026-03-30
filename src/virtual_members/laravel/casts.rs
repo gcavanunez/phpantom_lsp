@@ -163,9 +163,11 @@ fn extract_tget_from_implements_generics(class: &ClassInfo) -> Option<String> {
             || name == CASTS_ATTRIBUTES_SHORT
             || short_name(name) == CASTS_ATTRIBUTES_SHORT)
             && let Some(tget) = args.first()
-            && !tget.is_empty()
         {
-            return Some(tget.clone());
+            let tget_str = tget.to_string();
+            if !tget_str.is_empty() {
+                return Some(tget_str);
+            }
         }
     }
     None

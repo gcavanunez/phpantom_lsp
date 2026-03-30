@@ -33,6 +33,7 @@ use mago_syntax::ast::sequence::TokenSeparatedSequence;
 use mago_syntax::ast::*;
 
 use crate::completion::resolver::ResolutionCtx;
+use crate::php_type::PhpType;
 
 /// Maximum recursion depth for callable parameter inference.
 ///
@@ -1248,7 +1249,8 @@ fn resolve_closure_params_with_inferred(
                         ctx.class_loader,
                     );
                     if !resolved.is_empty() {
-                        *results = ResolvedType::from_classes_with_hint(resolved, dt);
+                        *results =
+                            ResolvedType::from_classes_with_hint(resolved, PhpType::parse(dt));
                         break;
                     }
                 }
@@ -1258,7 +1260,7 @@ fn resolve_closure_params_with_inferred(
                 // even when it's a scalar.  Prefer the docblock type
                 // over the native type when available.
                 let best_type = docblock_type.unwrap_or(type_str);
-                *results = vec![ResolvedType::from_type_string(best_type)];
+                *results = vec![ResolvedType::from_type_string(PhpType::parse(&best_type))];
                 break;
             }
             // 2. Fall back to the inferred type from the callable
@@ -1288,20 +1290,24 @@ fn resolve_closure_params_with_inferred(
 /// names are compared by their last segment so that `Collection` matches
 /// `Illuminate\Support\Collection<int, Customer>`.
 fn inferred_type_is_more_specific(explicit_hint: &str, inferred: &str) -> bool {
-    // The explicit hint must not already carry generic args.
-    if explicit_hint.contains('<') {
-        return false;
-    }
-    // The inferred type must carry generic args.
-    let angle = match inferred.find('<') {
-        Some(pos) => pos,
-        None => return false,
+    let explicit_parsed = PhpType::parse(explicit_hint);
+    let inferred_parsed = PhpType::parse(inferred);
+
+    // The explicit hint must be a bare class name (no generic args).
+    let explicit_base = match &explicit_parsed {
+        PhpType::Named(name) => name.as_str(),
+        _ => return false,
     };
-    let inferred_base = &inferred[..angle];
+
+    // The inferred type must be a generic type (carries generic args).
+    let inferred_base = match &inferred_parsed {
+        PhpType::Generic(name, _) => name.as_str(),
+        _ => return false,
+    };
 
     // Compare by short name so that `Collection` matches
     // `Illuminate\Support\Collection<…>`.
-    let explicit_short = crate::util::short_name(explicit_hint);
+    let explicit_short = crate::util::short_name(explicit_base);
     let inferred_short = crate::util::short_name(inferred_base);
 
     explicit_short.eq_ignore_ascii_case(inferred_short)

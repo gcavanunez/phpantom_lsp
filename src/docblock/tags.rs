@@ -364,7 +364,7 @@ pub fn extract_type_assertions_from_info(info: &DocblockInfo) -> Vec<TypeAsserti
         results.push(TypeAssertion {
             kind: assertion_kind_for(tag.kind),
             param_name: param_str.to_string(),
-            asserted_type: clean_type(type_str),
+            asserted_type: PhpType::parse(&clean_type(type_str)),
             negated,
         });
     }
@@ -1448,16 +1448,19 @@ pub fn get_docblock_info_for_node(
 // ─── Effective Type Resolution ──────────────────────────────────────────────
 
 /// Pick the best available type between a native type hint and a docblock
-/// annotation.
+/// annotation, returning a parsed [`PhpType`].
 ///
 /// When both are present, the docblock type is used only if
 /// [`should_override_type`] approves (i.e. the native hint is broad enough
 /// to refine).  Malformed docblock types with unclosed brackets are
 /// partially recovered or discarded.
+///
+/// Callers that need a string representation can use
+/// [`PhpType::to_string()`] on the result.
 pub fn resolve_effective_type(
     native_type: Option<&str>,
     docblock_type: Option<&str>,
-) -> Option<String> {
+) -> Option<PhpType> {
     // When the docblock type has unclosed brackets (e.g. a multi-line
     // `@return` that couldn't be fully joined), treat it as broken and
     // attempt partial recovery.  If recovery yields nothing useful, fall
@@ -1478,17 +1481,17 @@ pub fn resolve_effective_type(
 
     match (native_type, sanitised_doc.as_deref()) {
         // Docblock provided, no native hint → use docblock.
-        (None, Some(doc)) => Some(doc.to_string()),
+        (None, Some(doc)) => Some(PhpType::parse(doc)),
         // Both present → override only if compatible.
         (Some(native), Some(doc)) => {
             if should_override_type(doc, native) {
-                Some(doc.to_string())
+                Some(PhpType::parse(doc))
             } else {
-                Some(native.to_string())
+                Some(PhpType::parse(native))
             }
         }
         // Native only → keep it.
-        (Some(native), None) => Some(native.to_string()),
+        (Some(native), None) => Some(PhpType::parse(native)),
         // Neither → nothing.
         (None, None) => None,
     }

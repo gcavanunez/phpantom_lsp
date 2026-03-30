@@ -351,12 +351,14 @@ pub struct ParameterInfo {
     ///
     /// Call `.to_string()` when a display string is needed.
     pub type_hint: Option<PhpType>,
-    /// The native PHP type hint as written in source code (e.g. "array", "string").
+    /// The native PHP type hint as a parsed `PhpType` (e.g. `array`, `string`).
     ///
     /// Preserved separately so that hover can show the actual PHP declaration
     /// in the code block while displaying the richer docblock type alongside
     /// the FQN header.  `None` when no type hint is present in source.
-    pub native_type_hint: Option<String>,
+    ///
+    /// Call `.to_string()` when a display string is needed.
+    pub native_type_hint: Option<PhpType>,
     /// Human-readable description extracted from the `@param` tag.
     ///
     /// For `@param list<User> $users The active users`, this would be
@@ -407,6 +409,15 @@ impl ParameterInfo {
     pub fn type_hint_str(&self) -> Option<String> {
         self.type_hint.as_ref().map(|t| t.to_string())
     }
+
+    /// Return the native type hint as a string, if present.
+    ///
+    /// Convenience wrapper around `self.native_type_hint.as_ref().map(|t| t.to_string())`.
+    /// Use this when you need a display string (hover, completion detail,
+    /// code generation).
+    pub fn native_type_hint_str(&self) -> Option<String> {
+        self.native_type_hint.as_ref().map(|t| t.to_string())
+    }
 }
 
 /// Stores extracted method information from a parsed PHP class.
@@ -430,12 +441,14 @@ pub struct MethodInfo {
     ///
     /// Call `.to_string()` when a display string is needed.
     pub return_type: Option<PhpType>,
-    /// The native PHP return type hint as written in source code (e.g. "array", "self").
+    /// The native PHP return type hint as a parsed `PhpType` (e.g. `array`, `self`).
     ///
     /// Preserved separately so that hover can show the actual PHP declaration
     /// in the code block while displaying the richer docblock type alongside
     /// the FQN header.  `None` when no return type hint is present in source.
-    pub native_return_type: Option<String>,
+    ///
+    /// Call `.to_string()` when a display string is needed.
+    pub native_return_type: Option<PhpType>,
     /// Human-readable description extracted from the method's docblock.
     ///
     /// This is the free-text portion of the docblock (before any `@tag` lines).
@@ -496,10 +509,10 @@ pub struct MethodInfo {
     pub template_params: Vec<String>,
     /// Upper bounds for method-level template parameters.
     ///
-    /// For `@template T of Model`, maps `"T"` → `"Model"`.  Used by
-    /// hover to display the constraint when the return type or a
+    /// For `@template T of Model`, maps `"T"` → `PhpType::parse("Model")`.
+    /// Used by hover to display the constraint when the return type or a
     /// parameter type is a method-level template parameter.
-    pub template_param_bounds: HashMap<String, String>,
+    pub template_param_bounds: HashMap<String, PhpType>,
     /// Mappings from method-level template parameter names to the method
     /// parameter names (with `$` prefix) that directly bind them via
     /// `@param` annotations.
@@ -658,12 +671,14 @@ pub struct PropertyInfo {
     ///
     /// Call `.to_string()` when a display string is needed.
     pub type_hint: Option<PhpType>,
-    /// The native PHP type hint as written in source code (e.g. "array", "string").
+    /// The native PHP type hint as a parsed `PhpType` (e.g. `array`, `string`).
     ///
     /// Preserved separately so that hover can show the actual PHP declaration
     /// in the code block while displaying the richer docblock type alongside
     /// the FQN header.  `None` when no type hint is present in source.
-    pub native_type_hint: Option<String>,
+    ///
+    /// Call `.to_string()` when a display string is needed.
+    pub native_type_hint: Option<PhpType>,
     /// Human-readable description extracted from the property's docblock.
     ///
     /// This is the free-text portion of the docblock (before any `@tag` lines).
@@ -932,12 +947,14 @@ pub struct FunctionInfo {
     ///
     /// Call `.to_string()` when a display string is needed.
     pub return_type: Option<PhpType>,
-    /// The native PHP return type hint as written in source code (e.g. "array", "self").
+    /// The native PHP return type hint as a parsed `PhpType` (e.g. `array`, `self`).
     ///
     /// Preserved separately so that hover can show the actual PHP declaration
     /// in the code block while displaying the richer docblock type alongside
     /// the FQN header.  `None` when no return type hint is present in source.
-    pub native_return_type: Option<String>,
+    ///
+    /// Call `.to_string()` when a display string is needed.
+    pub native_return_type: Option<PhpType>,
     /// Human-readable description extracted from the function's docblock.
     ///
     /// This is the free-text portion of the docblock (before any `@tag` lines).
@@ -1045,6 +1062,15 @@ impl FunctionInfo {
     pub fn return_type_str(&self) -> Option<String> {
         self.return_type.as_ref().map(|t| t.to_string())
     }
+
+    /// Return the native return type as a string, if present.
+    ///
+    /// Convenience wrapper around `self.native_return_type.as_ref().map(|t| t.to_string())`.
+    /// Use this when you need a display string (hover, completion detail,
+    /// code generation).
+    pub fn native_return_type_str(&self) -> Option<String> {
+        self.native_return_type.as_ref().map(|t| t.to_string())
+    }
 }
 
 // ─── PHPStan Type Assertions ────────────────────────────────────────────────
@@ -1055,14 +1081,17 @@ impl FunctionInfo {
 /// These annotations let any function or method act as a custom type
 /// guard, telling the analyser that a parameter has been narrowed to
 /// a specific type after the call succeeds.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeAssertion {
     /// When the assertion applies.
     pub kind: AssertionKind,
     /// The parameter name **with** the `$` prefix (e.g. `"$value"`).
     pub param_name: String,
-    /// The asserted type (e.g. `"User"`, `"AdminUser"`).
-    pub asserted_type: String,
+    /// The asserted type (e.g. `User`, `AdminUser`).
+    ///
+    /// Parsed from the raw docblock text via `PhpType::parse()`.
+    /// Call `.to_string()` when a display string is needed.
+    pub asserted_type: crate::php_type::PhpType,
     /// Whether the assertion is negated (`!Type`), meaning the parameter
     /// is guaranteed to *not* be this type.
     pub negated: bool,
@@ -1279,13 +1308,13 @@ pub struct ClassInfo {
     ///
     /// Each entry is `(MixinClassName, [TypeArg1, TypeArg2, …])`.
     /// For example, `@mixin Builder<TRelatedModel>` produces
-    /// `("Builder", ["TRelatedModel"])`.
+    /// `("Builder", [PhpType::parse("TRelatedModel")])`.
     ///
     /// Used by [`collect_mixin_members`] to build a substitution map
     /// from the mixin class's `@template` parameters to the provided
     /// concrete types, analogous to how `extends_generics` works for
     /// parent class inheritance.
-    pub mixin_generics: Vec<(String, Vec<String>)>,
+    pub mixin_generics: Vec<(String, Vec<PhpType>)>,
     /// Whether the class is declared `final`.
     ///
     /// Final classes cannot be extended, so `static::` is equivalent to
@@ -1327,35 +1356,36 @@ pub struct ClassInfo {
     /// Upper bounds for template parameters, keyed by parameter name.
     ///
     /// Populated from the `of` clause in `@template` tags. For example,
-    /// `@template TNode of PDependNode` produces `("TNode", "PDependNode")`.
+    /// `@template TNode of PDependNode` produces
+    /// `("TNode", PhpType::parse("PDependNode"))`.
     ///
     /// When a type hint resolves to a template parameter name that cannot be
     /// concretely substituted, the resolver falls back to this bound so that
     /// completion and go-to-definition still work against the bound type.
-    pub template_param_bounds: HashMap<String, String>,
+    pub template_param_bounds: HashMap<String, PhpType>,
     /// Generic type arguments from `@extends` / `@phpstan-extends` tags.
     ///
     /// Each entry is `(ClassName, [TypeArg1, TypeArg2, …])`.
     /// For example, `@extends Collection<int, Language>` produces
-    /// `("Collection", ["int", "Language"])`.
-    pub extends_generics: Vec<(String, Vec<String>)>,
+    /// `("Collection", [PhpType::parse("int"), PhpType::parse("Language")])`.
+    pub extends_generics: Vec<(String, Vec<PhpType>)>,
     /// Generic type arguments from `@implements` / `@phpstan-implements` tags.
     ///
     /// Each entry is `(InterfaceName, [TypeArg1, TypeArg2, …])`.
     /// For example, `@implements ArrayAccess<int, User>` produces
-    /// `("ArrayAccess", ["int", "User"])`.
-    pub implements_generics: Vec<(String, Vec<String>)>,
+    /// `("ArrayAccess", [PhpType::parse("int"), PhpType::parse("User")])`.
+    pub implements_generics: Vec<(String, Vec<PhpType>)>,
     /// Generic type arguments from `@use` / `@phpstan-use` tags.
     ///
     /// Each entry is `(TraitName, [TypeArg1, TypeArg2, …])`.
     /// For example, `@use HasFactory<UserFactory>` produces
-    /// `("HasFactory", ["UserFactory"])`.
+    /// `("HasFactory", [PhpType::parse("UserFactory")])`.
     ///
     /// When a trait declares `@template T` and a class uses it with
     /// `@use SomeTrait<ConcreteType>`, the trait's template parameter `T`
     /// is substituted with `ConcreteType` in all inherited methods and
     /// properties.
-    pub use_generics: Vec<(String, Vec<String>)>,
+    pub use_generics: Vec<(String, Vec<PhpType>)>,
     /// Type aliases defined via `@phpstan-type` / `@psalm-type` tags in the
     /// class-level docblock, and imported via `@phpstan-import-type` /
     /// `@psalm-import-type`.
@@ -1622,9 +1652,10 @@ impl ClassInfo {
 /// consumer reads the field it needs.
 #[derive(Clone, Debug)]
 pub struct ResolvedType {
-    /// Full type string, e.g. `"Collection<int, User>"`, `"int"`,
-    /// `"array{name: string}"`, `"Foo|Bar|null"`.
-    pub type_string: String,
+    /// Structured type expression, e.g. `PhpType::Generic("Collection", [PhpType::Named("int"), PhpType::Named("User")])`.
+    ///
+    /// Call `.to_string()` when a display string is needed.
+    pub type_string: PhpType,
 
     /// Resolved class info, present when the base type names a
     /// class/interface/trait/enum.  `None` for scalars, shapes
@@ -1642,7 +1673,7 @@ impl ResolvedType {
     /// but loses generic parameters.  Future sprints will populate the
     /// type string from the actual return type annotation.
     pub fn from_class(class: ClassInfo) -> Self {
-        let type_string = class.name.clone();
+        let type_string = PhpType::Named(class.name.clone());
         Self {
             type_string,
             class_info: Some(class),
@@ -1654,9 +1685,9 @@ impl ResolvedType {
     ///
     /// Use this for scalar types (`"int"`, `"string"`), array shapes
     /// (`"array{name: string}"`), and other non-class types.
-    pub fn from_type_string(type_string: impl Into<String>) -> Self {
+    pub fn from_type_string(type_string: PhpType) -> Self {
         Self {
-            type_string: type_string.into(),
+            type_string,
             class_info: None,
         }
     }
@@ -1668,9 +1699,9 @@ impl ResolvedType {
     /// return type annotation of a method).  The type string preserves
     /// generic parameters that would otherwise be lost when resolving
     /// to `ClassInfo`.
-    pub fn from_both(type_string: impl Into<String>, class: ClassInfo) -> Self {
+    pub fn from_both(type_string: PhpType, class: ClassInfo) -> Self {
         Self {
-            type_string: type_string.into(),
+            type_string,
             class_info: Some(class),
         }
     }
@@ -1727,7 +1758,7 @@ impl ResolvedType {
     /// type string because the hint was already split into parts.
     pub(crate) fn from_classes_with_hint(
         classes: Vec<ClassInfo>,
-        type_hint: &str,
+        type_hint: PhpType,
     ) -> Vec<ResolvedType> {
         if classes.len() == 1 {
             let class = classes.into_iter().next().unwrap();
@@ -1803,7 +1834,7 @@ impl ResolvedType {
     pub(crate) fn type_strings_joined(resolved: &[ResolvedType]) -> String {
         resolved
             .iter()
-            .map(|rt| rt.type_string.as_str())
+            .map(|rt| rt.type_string.to_string())
             .collect::<Vec<_>>()
             .join("|")
     }
@@ -2483,12 +2514,18 @@ mod tests {
     fn class_signature_eq_detects_extends_generics_change() {
         let a = ClassInfo {
             name: "Foo".to_string(),
-            extends_generics: vec![("Base".to_string(), vec!["int".to_string()])],
+            extends_generics: vec![(
+                "Base".to_string(),
+                vec![crate::php_type::PhpType::parse("int")],
+            )],
             ..Default::default()
         };
         let b = ClassInfo {
             name: "Foo".to_string(),
-            extends_generics: vec![("Base".to_string(), vec!["string".to_string()])],
+            extends_generics: vec![(
+                "Base".to_string(),
+                vec![crate::php_type::PhpType::parse("string")],
+            )],
             ..Default::default()
         };
         assert!(!a.signature_eq(&b));

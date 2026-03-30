@@ -20,7 +20,7 @@ use crate::completion::named_args::{
     extract_call_expression, find_enclosing_open_paren, position_to_char_offset,
     split_args_top_level,
 };
-use crate::php_type::PhpType;
+
 use crate::symbol_map::SymbolMap;
 use crate::types::*;
 use crate::util::position_to_offset;
@@ -184,7 +184,7 @@ fn count_top_level_commas(chars: &[char], start: usize, end: usize) -> u32 {
 fn format_param_label(param: &ParameterInfo) -> String {
     let mut parts = Vec::new();
     if let Some(ref th) = param.native_type_hint {
-        parts.push(th.clone());
+        parts.push(th.to_string());
     }
     if param.is_variadic {
         parts.push(format!("...{}", param.name));
@@ -246,11 +246,11 @@ fn shorten_type(ty: &str) -> String {
 /// types are identical or absent).
 fn build_param_documentation(param: &ParameterInfo) -> Option<Documentation> {
     let effective = param.type_hint_str();
-    let native = param.native_type_hint.as_deref();
+    let native = param.native_type_hint.as_ref();
     let desc = param.description.as_deref();
 
     let show_effective = match (&param.type_hint, native) {
-        (Some(eff), Some(nat)) => !eff.equivalent(&PhpType::parse(nat)),
+        (Some(eff), Some(nat)) => !eff.equivalent(nat),
         (Some(_), None) => true,
         _ => false,
     };

@@ -204,9 +204,10 @@ impl Backend {
                 let is_deprecated = info.deprecation_message.is_some();
 
                 let return_type_string = info.return_type_str();
+                let native_ret_str = info.native_return_type.as_ref().map(|t| t.to_string());
                 let return_type = return_type_string
                     .as_deref()
-                    .or(info.native_return_type.as_deref())
+                    .or(native_ret_str.as_deref())
                     .map(crate::hover::shorten_type_string);
 
                 if for_use_import {

@@ -165,13 +165,13 @@ struct ClassDocblockInfo {
     /// `@template` parameters declared on the class-like.
     template_params: Vec<String>,
     /// Upper bounds for template parameters (`@template T of Bound`).
-    template_param_bounds: HashMap<String, String>,
+    template_param_bounds: HashMap<String, PhpType>,
     /// Generic arguments from `@extends` / `@phpstan-extends`.
-    extends_generics: Vec<(String, Vec<String>)>,
+    extends_generics: Vec<(String, Vec<PhpType>)>,
     /// Generic arguments from `@implements` / `@phpstan-implements`.
-    implements_generics: Vec<(String, Vec<String>)>,
+    implements_generics: Vec<(String, Vec<PhpType>)>,
     /// Generic arguments from `@use` / `@phpstan-use`.
-    use_generics: Vec<(String, Vec<String>)>,
+    use_generics: Vec<(String, Vec<PhpType>)>,
     /// Type aliases from `@phpstan-type` / `@psalm-type`.
     type_aliases: HashMap<String, String>,
     /// Mixin class names from `@mixin` tags.
@@ -180,7 +180,7 @@ struct ClassDocblockInfo {
     ///
     /// Each entry is `(MixinClassName, [TypeArg1, TypeArg2, …])`.
     /// Only populated for mixins that have generic arguments.
-    mixin_generics: Vec<(String, Vec<String>)>,
+    mixin_generics: Vec<(String, Vec<PhpType>)>,
     /// URLs from `@link` and `@see` tags in the class-level docblock.
     links: Vec<String>,
     /// `@see` references from the class-level docblock.
@@ -211,25 +211,35 @@ fn extract_class_docblock<'a>(
 
     let params_with_bounds = docblock::extract_template_params_with_bounds_from_info(&info);
     let template_params = params_with_bounds.iter().map(|(n, _)| n.clone()).collect();
-    let template_param_bounds: HashMap<String, String> = params_with_bounds
+    let template_param_bounds: HashMap<String, PhpType> = params_with_bounds
         .into_iter()
-        .filter_map(|(name, bound)| bound.map(|b| (name, b)))
+        .filter_map(|(name, bound)| bound.map(|b| (name, PhpType::parse(&b))))
         .collect();
 
     let mixin_data = docblock::extract_mixin_tags_from_info(&info);
     let mixins: Vec<String> = mixin_data.iter().map(|(name, _)| name.clone()).collect();
-    let mixin_generics: Vec<(String, Vec<String>)> = mixin_data
+    let mixin_generics: Vec<(String, Vec<PhpType>)> = mixin_data
         .into_iter()
         .filter(|(_, args)| !args.is_empty())
+        .map(|(name, args)| (name, args.into_iter().map(|a| PhpType::parse(&a)).collect()))
         .collect();
 
     ClassDocblockInfo {
         deprecation_message: docblock::extract_deprecation_message_from_info(&info),
         template_params,
         template_param_bounds,
-        extends_generics: docblock::extract_generics_tag_from_info(&info, "@extends"),
-        implements_generics: docblock::extract_generics_tag_from_info(&info, "@implements"),
-        use_generics: docblock::extract_generics_tag_from_info(&info, "@use"),
+        extends_generics: docblock::extract_generics_tag_from_info(&info, "@extends")
+            .into_iter()
+            .map(|(name, args)| (name, args.into_iter().map(|a| PhpType::parse(&a)).collect()))
+            .collect(),
+        implements_generics: docblock::extract_generics_tag_from_info(&info, "@implements")
+            .into_iter()
+            .map(|(name, args)| (name, args.into_iter().map(|a| PhpType::parse(&a)).collect()))
+            .collect(),
+        use_generics: docblock::extract_generics_tag_from_info(&info, "@use")
+            .into_iter()
+            .map(|(name, args)| (name, args.into_iter().map(|a| PhpType::parse(&a)).collect()))
+            .collect(),
         type_aliases: docblock::extract_type_aliases_from_info(&info),
         mixins,
         mixin_generics,
@@ -281,7 +291,7 @@ fn extract_collected_by_attribute(
 /// The attribute takes priority because it is the newer Laravel API.
 fn extract_custom_collection(
     attribute_lists: &Sequence<'_, AttributeList<'_>>,
-    use_generics: &[(String, Vec<String>)],
+    use_generics: &[(String, Vec<PhpType>)],
     methods: &[MethodInfo],
     content: &str,
 ) -> Option<String> {
@@ -294,7 +304,7 @@ fn extract_custom_collection(
     for (trait_name, args) in use_generics {
         let short = trait_name.rsplit('\\').next().unwrap_or(trait_name);
         if short == "HasCollection" && !args.is_empty() {
-            return Some(args[0].clone());
+            return Some(args[0].to_string());
         }
     }
 
@@ -796,7 +806,9 @@ impl Backend {
                     );
 
                     let mut use_generics = doc_info.use_generics;
-                    use_generics.extend(inline_use_generics);
+                    use_generics.extend(inline_use_generics.into_iter().map(|(name, args)| {
+                        (name, args.into_iter().map(|a| PhpType::parse(&a)).collect())
+                    }));
 
                     let keyword_offset = class.class.span.start.offset;
                     let start_offset = class.left_brace.start.offset;
@@ -949,7 +961,9 @@ impl Backend {
                         implements_generics: doc_info.implements_generics,
                         use_generics: {
                             let mut ug = doc_info.use_generics;
-                            ug.extend(inline_use_generics);
+                            ug.extend(inline_use_generics.into_iter().map(|(name, args)| {
+                                (name, args.into_iter().map(|a| PhpType::parse(&a)).collect())
+                            }));
                             ug
                         },
                         type_aliases: doc_info.type_aliases,
@@ -1027,8 +1041,10 @@ impl Backend {
                         extends_generics: vec![],
                         implements_generics: vec![],
                         use_generics: {
-                            let mut ug: Vec<(String, Vec<String>)> = vec![];
-                            ug.extend(inline_use_generics);
+                            let mut ug: Vec<(String, Vec<PhpType>)> = vec![];
+                            ug.extend(inline_use_generics.into_iter().map(|(name, args)| {
+                                (name, args.into_iter().map(|a| PhpType::parse(&a)).collect())
+                            }));
                             ug
                         },
                         type_aliases: HashMap::new(),
@@ -1707,9 +1723,9 @@ impl Backend {
                         && let Some(override_type) =
                             super::extract_language_level_type(&method.attribute_lists, ctx, ver)
                     {
-                        Some(override_type)
+                        Some(PhpType::parse(&override_type))
                     } else {
-                        raw_native_return_type
+                        raw_native_return_type.map(|s| PhpType::parse(&s))
                     };
                     let is_static = method.modifiers.iter().any(|m| m.is_static());
                     let visibility = extract_visibility(method.modifiers.iter());
@@ -1741,8 +1757,10 @@ impl Backend {
                     ) = if let Some(ref info) = method_docblock_info {
                         let doc_type = docblock::extract_return_type_from_info(info);
 
+                        let native_return_type_str =
+                            native_return_type.as_ref().map(|t| t.to_string());
                         let effective = docblock::resolve_effective_type(
-                            native_return_type.as_deref(),
+                            native_return_type_str.as_deref(),
                             doc_type.as_deref(),
                         );
 
@@ -1756,9 +1774,9 @@ impl Backend {
                             .iter()
                             .map(|(n, _)| n.clone())
                             .collect();
-                        let tpl_param_bounds: HashMap<String, String> = tpl_params_with_bounds
+                        let tpl_param_bounds: HashMap<String, PhpType> = tpl_params_with_bounds
                             .into_iter()
-                            .filter_map(|(n, b)| b.map(|b| (n, b)))
+                            .filter_map(|(n, b)| b.map(|b| (n, PhpType::parse(&b))))
                             .collect();
                         let tpl_bindings = if !tpl_params.is_empty() {
                             docblock::extract_template_param_bindings_from_info(info, &tpl_params)
@@ -1803,11 +1821,12 @@ impl Backend {
                         //   @return T
                         // becomes a conditional that resolves T from the
                         // call-site argument (e.g. find(User::class) → User).
+                        let effective_str = effective.as_ref().map(|t| t.to_string());
                         let conditional = conditional.or_else(|| {
                             docblock::synthesize_template_conditional_from_info(
                                 info,
                                 &tpl_params,
-                                effective.as_deref(),
+                                effective_str.as_deref(),
                                 false,
                             )
                         });
@@ -1858,9 +1877,10 @@ impl Backend {
                                 let raw_name = param.variable.name.to_string();
                                 let prop_name =
                                     raw_name.strip_prefix('$').unwrap_or(&raw_name).to_string();
-                                let native_hint =
+                                let native_hint_str =
                                     param.hint.as_ref().map(|h| extract_hint_string(h));
-                                let saved_native_hint = native_hint.clone();
+                                let saved_native_hint =
+                                    native_hint_str.as_ref().map(|s| PhpType::parse(s));
                                 let prop_visibility = extract_visibility(param.modifiers.iter());
 
                                 // Check for a docblock type override.
@@ -1880,18 +1900,18 @@ impl Backend {
 
                                 let type_hint = if let Some(var_type) = inline_var_type {
                                     docblock::resolve_effective_type(
-                                        native_hint.as_deref(),
+                                        native_hint_str.as_deref(),
                                         Some(&var_type),
                                     )
                                 } else if let Some(ref info) = method_docblock_info {
                                     let param_doc_type =
                                         docblock::extract_param_raw_type_from_info(info, &raw_name);
                                     docblock::resolve_effective_type(
-                                        native_hint.as_deref(),
+                                        native_hint_str.as_deref(),
                                         param_doc_type.as_deref(),
                                     )
                                 } else {
-                                    native_hint
+                                    saved_native_hint.clone()
                                 };
 
                                 let prop_name_offset = param.variable.span.start.offset;
@@ -1899,7 +1919,7 @@ impl Backend {
                                     name: prop_name,
                                     name_offset: prop_name_offset,
                                     native_type_hint: saved_native_hint,
-                                    type_hint: type_hint.map(|s| PhpType::parse(&s)),
+                                    type_hint,
                                     description: None,
                                     is_static: false,
                                     visibility: prop_visibility,
@@ -1918,7 +1938,7 @@ impl Backend {
                     // For example, `$this->hasMany(Post::class)` produces
                     // a return type of `HasMany<Post>`.
                     let return_type = if return_type.is_none() {
-                        infer_relationship_from_method(method, doc_ctx)
+                        infer_relationship_from_method(method, doc_ctx).map(|s| PhpType::parse(&s))
                     } else {
                         return_type
                     };
@@ -1938,7 +1958,7 @@ impl Backend {
                                     Some(doc_type),
                                 );
                                 if effective.is_some() {
-                                    param.type_hint = effective.map(|s| PhpType::parse(&s));
+                                    param.type_hint = effective;
                                 }
                             }
                         }
@@ -2034,7 +2054,7 @@ impl Backend {
                         name_offset,
                         parameters,
                         native_return_type: native_return_type.clone(),
-                        return_type: return_type.map(|s| PhpType::parse(&s)),
+                        return_type,
                         description: method_description,
                         return_description,
                         links,
@@ -2075,7 +2095,7 @@ impl Backend {
                     {
                         for prop in &mut prop_infos {
                             prop.type_hint = Some(PhpType::parse(&override_type));
-                            prop.native_type_hint = Some(override_type.clone());
+                            prop.native_type_hint = Some(PhpType::parse(&override_type));
                         }
                     }
 
@@ -2127,7 +2147,7 @@ impl Backend {
                                     prop.type_hint.as_ref().map(|t| t.to_string()).as_deref(),
                                     Some(&doc_type),
                                 );
-                                prop.type_hint = effective.map(|s| PhpType::parse(&s));
+                                prop.type_hint = effective;
                             }
                         }
                         let description = info

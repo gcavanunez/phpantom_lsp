@@ -71,7 +71,7 @@ fn format_params_inner(params: &[ParameterInfo], use_native: bool) -> String {
         .map(|p| {
             let mut parts = Vec::new();
             let hint: Option<String> = if use_native {
-                p.native_type_hint.clone()
+                p.native_type_hint.as_ref().map(|t| t.to_string())
             } else {
                 p.type_hint.as_ref().map(|t| t.to_string())
             };
@@ -118,7 +118,7 @@ pub(super) fn namespace_line(namespace: &Option<String>) -> String {
 /// is no effective type.
 pub(super) fn build_var_annotation(
     effective: Option<&str>,
-    native: Option<&str>,
+    native: Option<&PhpType>,
 ) -> Option<String> {
     let eff = effective?;
     // When there is no native type hint, `mixed` is the implicit type
@@ -128,8 +128,7 @@ pub(super) fn build_var_annotation(
     }
     if let Some(n) = native {
         let eff_parsed = PhpType::parse(eff);
-        let nat_parsed = PhpType::parse(n);
-        if eff_parsed.equivalent(&nat_parsed) {
+        if eff_parsed.equivalent(n) {
             return None;
         }
     }
@@ -166,14 +165,14 @@ pub(super) fn build_var_annotation(
 pub(super) fn build_param_return_section(
     params: &[ParameterInfo],
     effective_return: Option<&str>,
-    native_return: Option<&str>,
+    native_return: Option<&PhpType>,
     return_description: Option<&str>,
 ) -> Option<String> {
     let mut entries = Vec::new();
 
     for p in params {
-        let type_differs = match (&p.type_hint, p.native_type_hint.as_deref()) {
-            (Some(eff_type), Some(nat)) => !eff_type.equivalent(&PhpType::parse(nat)),
+        let type_differs = match (&p.type_hint, p.native_type_hint.as_ref()) {
+            (Some(eff_type), Some(nat)) => !eff_type.equivalent(nat),
             (Some(eff_type), None) => eff_type.to_string() != "mixed",
             _ => false,
         };
@@ -206,7 +205,7 @@ pub(super) fn build_param_return_section(
 
     // return entry
     let ret_type_differs = match (effective_return, native_return) {
-        (Some(eff), Some(nat)) => !PhpType::parse(eff).equivalent(&PhpType::parse(nat)),
+        (Some(eff), Some(nat)) => !PhpType::parse(eff).equivalent(nat),
         (Some(eff), None) => eff != "mixed",
         _ => false,
     };
@@ -373,7 +372,7 @@ pub(crate) fn hover_for_function(
     if let Some(section) = build_param_return_section(
         &func.parameters,
         effective_return.as_deref(),
-        func.native_return_type.as_deref(),
+        func.native_return_type.as_ref(),
         func.return_description.as_deref(),
     ) {
         lines.push(section);
@@ -543,6 +542,23 @@ pub(crate) fn extract_docblock_description(docblock: Option<&str>) -> Option<Str
 ///   - `"list<App\\Models\\User>"` → `"list<User>"`
 ///   - `"App\\Foo|App\\Bar|null"` → `"Foo|Bar|null"`
 pub(crate) fn shorten_type_string(ty: &str) -> String {
+    use crate::php_type::PhpType;
+
+    let parsed = PhpType::parse(ty);
+    if matches!(parsed, PhpType::Raw(_)) {
+        // Fallback: if mago couldn't parse the type, apply
+        // the old segment-based shortening so we still shorten
+        // namespace-qualified names in unparseable type strings.
+        return shorten_type_string_fallback(ty);
+    }
+    parsed.shorten().to_string()
+}
+
+/// Fallback character-by-character shortener for type strings that
+/// `mago_type_syntax` cannot parse.  Splits on delimiter characters
+/// (`|`, `&`, `<`, `>`, `,`, etc.) and shortens each segment
+/// individually.
+fn shorten_type_string_fallback(ty: &str) -> String {
     let mut result = String::with_capacity(ty.len());
     let mut segment_start = 0;
     let bytes = ty.as_bytes();

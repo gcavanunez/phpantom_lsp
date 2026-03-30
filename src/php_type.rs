@@ -353,7 +353,7 @@ impl PhpType {
                 params,
                 return_type,
             } => PhpType::Callable {
-                kind: kind.clone(),
+                kind: Self::short_name_of(kind).to_owned(),
                 params: params
                     .iter()
                     .map(|p| CallableParam {
@@ -651,6 +651,104 @@ impl PhpType {
         self.extract_value_type(false)
     }
 
+    /// Look up the value type for a specific key in an array shape.
+    ///
+    /// Given a parsed `array{name: string, user: User}` and key `"user"`,
+    /// returns `Some(&PhpType::Named("User"))`.
+    ///
+    /// For positional (unkeyed) entries like `array{User, Address}`, a
+    /// numeric string key (e.g. `"0"`, `"1"`) matches the entry at that
+    /// index position. This mirrors PHPStan's behaviour where positional
+    /// entries implicitly have numeric keys.
+    ///
+    /// Also handles nullable shapes (`?array{…}`) by delegating to the
+    /// inner type.
+    ///
+    /// Returns `None` if this is not an array shape or the key is not found.
+    pub fn shape_value_type(&self, key: &str) -> Option<&PhpType> {
+        match self {
+            PhpType::ArrayShape(entries) => {
+                // First try an exact key match (handles named and explicit
+                // numeric keys like `array{0: User, 1: Address}`).
+                if let Some(entry) = entries.iter().find(|e| e.key.as_deref() == Some(key)) {
+                    return Some(&entry.value_type);
+                }
+                // Fall back to positional index matching: if the key is a
+                // valid numeric index, match the Nth positional (unkeyed)
+                // entry. This handles `array{User, Address}` where the
+                // entries have `key: None`.
+                if let Ok(idx) = key.parse::<usize>() {
+                    let mut positional_idx = 0usize;
+                    for entry in entries {
+                        if entry.key.is_none() {
+                            if positional_idx == idx {
+                                return Some(&entry.value_type);
+                            }
+                            positional_idx += 1;
+                        }
+                    }
+                }
+                None
+            }
+            PhpType::Nullable(inner) => inner.shape_value_type(key),
+            _ => None,
+        }
+    }
+
+    /// Return the shape entries if this is an `ArrayShape` or `ObjectShape`.
+    ///
+    /// Also handles nullable shapes by delegating to the inner type.
+    /// Returns `None` for all other variants.
+    pub fn shape_entries(&self) -> Option<&[ShapeEntry]> {
+        match self {
+            PhpType::ArrayShape(entries) | PhpType::ObjectShape(entries) => Some(entries),
+            PhpType::Nullable(inner) => inner.shape_entries(),
+            _ => None,
+        }
+    }
+
+    /// Return `true` if this type is an array shape (`array{…}`).
+    ///
+    /// Also returns `true` for `?array{…}`.
+    pub fn is_array_shape(&self) -> bool {
+        match self {
+            PhpType::ArrayShape(_) => true,
+            PhpType::Nullable(inner) => inner.is_array_shape(),
+            _ => false,
+        }
+    }
+
+    /// Return `true` if this type is an object shape (`object{…}`).
+    ///
+    /// Also returns `true` for `?object{…}`.
+    pub fn is_object_shape(&self) -> bool {
+        match self {
+            PhpType::ObjectShape(_) => true,
+            PhpType::Nullable(inner) => inner.is_object_shape(),
+            _ => false,
+        }
+    }
+
+    /// Look up the value type for a specific property in an object shape.
+    ///
+    /// Given a parsed `object{name: string, user: User}` and key `"user"`,
+    /// returns `Some(&PhpType::Named("User"))`.
+    ///
+    /// Also handles nullable object shapes (`?object{…}`).
+    ///
+    /// Returns `None` if this is not an object shape or the property
+    /// is not found.
+    pub fn object_shape_property_type(&self, prop: &str) -> Option<&PhpType> {
+        match self {
+            PhpType::ObjectShape(entries) => entries
+                .iter()
+                .find(|e| e.key.as_deref() == Some(prop))
+                .map(|e| &e.value_type),
+            PhpType::Nullable(inner) => inner.object_shape_property_type(prop),
+            _ => None,
+        }
+    }
+
     /// Extract parameter types from a `Callable` variant.
     ///
     /// Returns the parameter list for callable/Closure types without
@@ -933,20 +1031,20 @@ impl PhpType {
     /// ```ignore
     /// use std::collections::HashMap;
     /// let ty = PhpType::parse("Collection<TKey, TValue>");
-    /// let subs: HashMap<String, String> =
-    ///     [("TKey".into(), "int".into()), ("TValue".into(), "User".into())]
+    /// let subs: HashMap<String, PhpType> =
+    ///     [("TKey".into(), PhpType::parse("int")), ("TValue".into(), PhpType::parse("User"))]
     ///         .into_iter().collect();
     /// let result = ty.substitute(&subs);
     /// assert_eq!(result.to_string(), "Collection<int, User>");
     /// ```
-    pub fn substitute(&self, subs: &std::collections::HashMap<String, String>) -> PhpType {
+    pub fn substitute(&self, subs: &std::collections::HashMap<String, PhpType>) -> PhpType {
         if subs.is_empty() {
             return self.clone();
         }
         match self {
             PhpType::Named(s) => {
                 if let Some(replacement) = subs.get(s.as_str()) {
-                    PhpType::parse(replacement)
+                    replacement.clone()
                 } else {
                     self.clone()
                 }
@@ -1012,10 +1110,9 @@ impl PhpType {
                 let resolved_name = if let Some(replacement) = subs.get(name.as_str()) {
                     // If the replacement is a simple name, use it as the
                     // generic base. Otherwise, fall back to string form.
-                    let parsed = PhpType::parse(replacement);
-                    match parsed {
-                        PhpType::Named(n) => n,
-                        _ => replacement.clone(),
+                    match replacement {
+                        PhpType::Named(n) => n.clone(),
+                        _ => replacement.to_string(),
                     }
                 } else {
                     name.clone()
@@ -1772,7 +1869,14 @@ impl fmt::Display for PhpType {
                     if i > 0 {
                         write!(f, "|")?;
                     }
-                    write!(f, "{ty}")?;
+                    // Wrap callable types in parentheses so
+                    // `(Closure(int): string)|Foo` is not misread as
+                    // `Closure(int): string|Foo`.
+                    if matches!(ty, PhpType::Callable { .. }) {
+                        write!(f, "({ty})")?;
+                    } else {
+                        write!(f, "{ty}")?;
+                    }
                 }
                 Ok(())
             }
@@ -2210,6 +2314,120 @@ mod tests {
             }
             other => panic!("Expected ArrayShape, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn shape_value_type_named_key() {
+        let ty = PhpType::parse("array{name: string, user: User}");
+        assert_eq!(
+            ty.shape_value_type("user"),
+            Some(&PhpType::Named("User".to_owned()))
+        );
+        assert_eq!(
+            ty.shape_value_type("name"),
+            Some(&PhpType::Named("string".to_owned()))
+        );
+        assert_eq!(ty.shape_value_type("missing"), None);
+    }
+
+    #[test]
+    fn shape_value_type_positional() {
+        let ty = PhpType::parse("array{User, Address}");
+        assert_eq!(
+            ty.shape_value_type("0"),
+            Some(&PhpType::Named("User".to_owned()))
+        );
+        assert_eq!(
+            ty.shape_value_type("1"),
+            Some(&PhpType::Named("Address".to_owned()))
+        );
+        assert_eq!(ty.shape_value_type("2"), None);
+    }
+
+    #[test]
+    fn shape_value_type_explicit_numeric_key() {
+        let ty = PhpType::parse("array{0: User, 1: Address}");
+        assert_eq!(
+            ty.shape_value_type("0"),
+            Some(&PhpType::Named("User".to_owned()))
+        );
+        assert_eq!(
+            ty.shape_value_type("1"),
+            Some(&PhpType::Named("Address".to_owned()))
+        );
+    }
+
+    #[test]
+    fn shape_value_type_nullable() {
+        let ty = PhpType::parse("?array{name: string}");
+        assert_eq!(
+            ty.shape_value_type("name"),
+            Some(&PhpType::Named("string".to_owned()))
+        );
+    }
+
+    #[test]
+    fn shape_value_type_non_shape_returns_none() {
+        assert_eq!(
+            PhpType::parse("array<int, User>").shape_value_type("0"),
+            None
+        );
+        assert_eq!(PhpType::parse("string").shape_value_type("0"), None);
+    }
+
+    #[test]
+    fn shape_entries_array() {
+        let ty = PhpType::parse("array{name: string, age?: int}");
+        let entries = ty.shape_entries().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].key, Some("name".to_owned()));
+        assert!(!entries[0].optional);
+        assert_eq!(entries[1].key, Some("age".to_owned()));
+        assert!(entries[1].optional);
+    }
+
+    #[test]
+    fn shape_entries_object() {
+        let ty = PhpType::parse("object{foo: int}");
+        let entries = ty.shape_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, Some("foo".to_owned()));
+    }
+
+    #[test]
+    fn shape_entries_non_shape_returns_none() {
+        assert!(PhpType::parse("string").shape_entries().is_none());
+        assert!(PhpType::parse("array<int>").shape_entries().is_none());
+    }
+
+    #[test]
+    fn is_array_shape_test() {
+        assert!(PhpType::parse("array{name: string}").is_array_shape());
+        assert!(PhpType::parse("?array{name: string}").is_array_shape());
+        assert!(!PhpType::parse("array<int>").is_array_shape());
+        assert!(!PhpType::parse("object{name: string}").is_array_shape());
+    }
+
+    #[test]
+    fn is_object_shape_test() {
+        assert!(PhpType::parse("object{name: string}").is_object_shape());
+        assert!(PhpType::parse("?object{name: string}").is_object_shape());
+        assert!(!PhpType::parse("array{name: string}").is_object_shape());
+        assert!(!PhpType::parse("string").is_object_shape());
+    }
+
+    #[test]
+    fn object_shape_property_type_test() {
+        let ty = PhpType::parse("object{name: string, user: User}");
+        assert_eq!(
+            ty.object_shape_property_type("user"),
+            Some(&PhpType::Named("User".to_owned()))
+        );
+        assert_eq!(
+            ty.object_shape_property_type("name"),
+            Some(&PhpType::Named("string".to_owned()))
+        );
+        assert_eq!(ty.object_shape_property_type("missing"), None);
     }
 
     #[test]
@@ -2996,10 +3214,10 @@ mod tests {
 
     // ── substitute ──────────────────────────────────────────────────
 
-    fn make_subs(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+    fn make_subs(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, PhpType> {
         pairs
             .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .map(|(k, v)| (k.to_string(), PhpType::parse(v)))
             .collect()
     }
 
@@ -3132,7 +3350,7 @@ mod tests {
     #[test]
     fn substitute_empty_subs_unchanged() {
         let ty = PhpType::parse("Collection<int, User>");
-        let subs = std::collections::HashMap::new();
+        let subs: std::collections::HashMap<String, PhpType> = std::collections::HashMap::new();
         let result = ty.substitute(&subs);
         assert_eq!(result.to_string(), "Collection<int, User>");
     }

@@ -200,39 +200,11 @@ pub fn extract_template_param_bindings_from_info(
             _ => continue,
         };
 
-        // Strip nullable prefix and `|null` suffix to get the core type.
-        let core = type_token.strip_prefix('?').unwrap_or(type_token);
-        // Handle `T|null` — split on `|` and check non-null parts.
-        // Collect ALL matching template params (not just the first) so
-        // that `@param array<TKey, TValue> $value` binds both TKey and
-        // TValue to `$value`.
-        for part in core.split('|').map(str::trim).filter(|p| *p != "null") {
-            // Direct match: `T`
-            if let Some(t) = template_params.iter().find(|t| t.as_str() == part) {
-                results.push((t.to_string(), param_name.to_string()));
-                continue;
-            }
-            // Array suffix: `T[]`
-            if let Some(base) = part.strip_suffix("[]")
-                && let Some(t) = template_params.iter().find(|t| t.as_str() == base)
-            {
-                results.push((t.to_string(), param_name.to_string()));
-                continue;
-            }
-            // Generic wrapper: `Wrapper<T>`, `Wrapper<T, U>`,
-            // `array<TKey, TValue>` — bind every template param found.
-            if let Some(open) = part.find('<')
-                && let Some(close) = part.rfind('>')
-            {
-                let inner_str = &part[open + 1..close];
-                for arg in inner_str.split(',') {
-                    let arg = arg.trim();
-                    if let Some(t) = template_params.iter().find(|t| t.as_str() == arg) {
-                        results.push((t.to_string(), param_name.to_string()));
-                    }
-                }
-            }
-        }
+        // Parse the type token into a PhpType tree and walk it to find
+        // all template parameter references, correctly handling nested
+        // generics like `Wrapper<Collection<T>, V>`.
+        let parsed = PhpType::parse(type_token);
+        collect_template_bindings(&parsed, template_params, param_name, &mut results);
     }
 
     results
@@ -260,6 +232,77 @@ pub fn extract_generics_tag(docblock: &str, tag: &str) -> Vec<(String, Vec<Strin
     };
 
     extract_generics_tag_from_info(&info, tag)
+}
+
+/// Recursively walk a [`PhpType`] tree and collect `(template_name, param_name)` pairs
+/// for every template parameter reference found anywhere in the type.
+fn collect_template_bindings(
+    ty: &PhpType,
+    template_params: &[String],
+    param_name: &str,
+    results: &mut Vec<(String, String)>,
+) {
+    match ty {
+        PhpType::Named(name) => {
+            if let Some(t) = template_params.iter().find(|t| t.as_str() == name) {
+                results.push((t.to_string(), param_name.to_string()));
+            }
+        }
+        PhpType::Nullable(inner) => {
+            collect_template_bindings(inner, template_params, param_name, results);
+        }
+        PhpType::Union(members) | PhpType::Intersection(members) => {
+            for member in members {
+                collect_template_bindings(member, template_params, param_name, results);
+            }
+        }
+        PhpType::Array(inner) => {
+            collect_template_bindings(inner, template_params, param_name, results);
+        }
+        PhpType::Generic(_, args) => {
+            for arg in args {
+                collect_template_bindings(arg, template_params, param_name, results);
+            }
+        }
+        PhpType::ClassString(Some(inner))
+        | PhpType::InterfaceString(Some(inner))
+        | PhpType::KeyOf(inner)
+        | PhpType::ValueOf(inner) => {
+            collect_template_bindings(inner, template_params, param_name, results);
+        }
+        PhpType::Callable {
+            params,
+            return_type,
+            ..
+        } => {
+            for p in params {
+                collect_template_bindings(&p.type_hint, template_params, param_name, results);
+            }
+            if let Some(rt) = return_type {
+                collect_template_bindings(rt, template_params, param_name, results);
+            }
+        }
+        PhpType::ArrayShape(entries) | PhpType::ObjectShape(entries) => {
+            for entry in entries {
+                collect_template_bindings(&entry.value_type, template_params, param_name, results);
+            }
+        }
+        PhpType::IndexAccess(target, index) => {
+            collect_template_bindings(target, template_params, param_name, results);
+            collect_template_bindings(index, template_params, param_name, results);
+        }
+        PhpType::Conditional {
+            condition,
+            then_type,
+            else_type,
+            ..
+        } => {
+            collect_template_bindings(condition, template_params, param_name, results);
+            collect_template_bindings(then_type, template_params, param_name, results);
+            collect_template_bindings(else_type, template_params, param_name, results);
+        }
+        _ => {}
+    }
 }
 
 /// Like [`extract_generics_tag`], but operates on a pre-parsed [`DocblockInfo`].

@@ -639,17 +639,23 @@ fn is_type_contradiction(doc_type: &str, native_type: &str) -> bool {
     // `list<User>` refines `array`, `positive-int` refines `int`).
     // This uses the shared refinement checker that also guards
     // `resolve_effective_type`.
-    let native_stripped = native_type
-        .strip_prefix('\\')
-        .unwrap_or(native_type)
-        .strip_prefix('?')
-        .unwrap_or(native_type.strip_prefix('\\').unwrap_or(native_type));
-    let doc_stripped = doc_type
-        .strip_prefix('\\')
-        .unwrap_or(doc_type)
-        .strip_prefix('?')
-        .unwrap_or(doc_type.strip_prefix('\\').unwrap_or(doc_type));
-    if is_compatible_refinement(doc_stripped, &native_stripped.to_ascii_lowercase()) {
+    let native_parsed_raw = PhpType::parse(&native_clean);
+    let doc_parsed_raw = PhpType::parse(&doc_clean);
+    let native_core = native_parsed_raw
+        .non_null_type()
+        .unwrap_or_else(|| native_parsed_raw.clone());
+    let doc_core = doc_parsed_raw
+        .non_null_type()
+        .unwrap_or_else(|| doc_parsed_raw.clone());
+    let native_str = native_core
+        .base_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| native_core.to_string());
+    let doc_str = doc_core
+        .base_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| doc_core.to_string());
+    if is_compatible_refinement(&doc_str, &native_str.to_ascii_lowercase()) {
         return false;
     }
 

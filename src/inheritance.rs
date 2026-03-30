@@ -49,7 +49,7 @@ impl std::ops::Deref for ClassRef<'_> {
 
 pub(crate) struct TraitContext<'a> {
     /// Generic type arguments for `@use Trait<Type>` declarations.
-    pub use_generics: &'a [(String, Vec<String>)],
+    pub use_generics: &'a [(String, Vec<PhpType>)],
     /// `insteadof` precedence declarations.
     pub precedences: &'a [TraitPrecedence],
     /// `as` alias declarations.
@@ -149,7 +149,7 @@ pub(crate) fn resolve_class_with_inheritance(
     // It maps template parameter names → concrete types, and is
     // re-computed at each level based on the `@extends` generics
     // of the current class and the `@template` params of the parent.
-    let mut active_subs: HashMap<String, String> = HashMap::new();
+    let mut active_subs: HashMap<String, PhpType> = HashMap::new();
 
     // Seed the initial substitution map from the root class's
     // `@extends` generics.  If the root class has
@@ -195,7 +195,7 @@ pub(crate) fn resolve_class_with_inheritance(
                 && class_loader(&model_fqn).is_some()
             {
                 for param in &parent.template_params {
-                    level_subs.insert(param.clone(), model_fqn.clone());
+                    level_subs.insert(param.clone(), PhpType::parse(&model_fqn));
                 }
             }
         }
@@ -374,7 +374,7 @@ fn merge_traits_into(
             let factory_fqn = model_to_factory_fqn(&model_fqn);
             if class_loader(&factory_fqn).is_some() {
                 for param in &trait_info.template_params {
-                    trait_subs.insert(param.clone(), factory_fqn.clone());
+                    trait_subs.insert(param.clone(), PhpType::parse(&factory_fqn));
                 }
             }
         }
@@ -609,8 +609,8 @@ fn is_factory_class(class_name: &str) -> bool {
 fn build_trait_substitution_map(
     trait_name: &str,
     trait_info: &ClassInfo,
-    use_generics: &[(String, Vec<String>)],
-) -> HashMap<String, String> {
+    use_generics: &[(String, Vec<PhpType>)],
+) -> HashMap<String, PhpType> {
     if trait_info.template_params.is_empty() || use_generics.is_empty() {
         return HashMap::new();
     }
@@ -664,8 +664,8 @@ fn build_trait_substitution_map(
 fn build_substitution_map(
     current: &ClassInfo,
     parent: &ClassInfo,
-    active_subs: &HashMap<String, String>,
-) -> HashMap<String, String> {
+    active_subs: &HashMap<String, PhpType>,
+) -> HashMap<String, PhpType> {
     if parent.template_params.is_empty() {
         return active_subs.clone();
     }
@@ -705,7 +705,7 @@ fn build_substitution_map(
             let resolved = if active_subs.is_empty() {
                 arg.clone()
             } else {
-                apply_substitution(arg, active_subs).into_owned()
+                arg.substitute(active_subs)
             };
             map.insert(param_name.clone(), resolved);
         }
@@ -718,7 +718,7 @@ fn build_substitution_map(
 /// type hints.
 pub(crate) fn apply_substitution_to_method(
     method: &mut MethodInfo,
-    subs: &HashMap<String, String>,
+    subs: &HashMap<String, PhpType>,
 ) {
     if let Some(ref mut ret) = method.return_type {
         *ret = ret.substitute(subs);
@@ -740,7 +740,7 @@ pub(crate) fn apply_substitution_to_method(
 /// parameter names with their concrete types.
 pub(crate) fn apply_substitution_to_conditional(
     cond: &mut PhpType,
-    subs: &HashMap<String, String>,
+    subs: &HashMap<String, PhpType>,
 ) {
     *cond = cond.substitute(subs);
 }
@@ -748,7 +748,7 @@ pub(crate) fn apply_substitution_to_conditional(
 /// Apply generic type substitution to a property's type hint.
 pub(crate) fn apply_substitution_to_property(
     property: &mut PropertyInfo,
-    subs: &HashMap<String, String>,
+    subs: &HashMap<String, PhpType>,
 ) {
     if let Some(ref mut hint) = property.type_hint {
         *hint = hint.substitute(subs);
@@ -772,7 +772,7 @@ pub(crate) fn apply_substitution_to_property(
 /// so that existing callers do not need to change.
 pub(crate) fn apply_substitution<'a>(
     type_str: &'a str,
-    subs: &HashMap<String, String>,
+    subs: &HashMap<String, PhpType>,
 ) -> Cow<'a, str> {
     let s = type_str.trim();
     if s.is_empty() || subs.is_empty() {
@@ -824,7 +824,7 @@ pub(crate) fn apply_generic_args(class: &ClassInfo, type_args: &[&str]) -> Class
     let mut subs = HashMap::new();
     for (i, param_name) in class.template_params.iter().enumerate() {
         if let Some(arg) = type_args.get(i) {
-            subs.insert(param_name.clone(), (*arg).to_string());
+            subs.insert(param_name.clone(), PhpType::parse(arg));
         }
     }
 
@@ -858,14 +858,14 @@ pub(crate) fn apply_generic_args(class: &ClassInfo, type_args: &[&str]) -> Class
 /// Each entry is `(ClassName, [TypeArg1, TypeArg2, …])`.  Only the type
 /// arguments are substituted; the class name is left unchanged.
 fn apply_substitution_to_generics(
-    generics: &mut [(String, Vec<String>)],
-    subs: &HashMap<String, String>,
+    generics: &mut [(String, Vec<PhpType>)],
+    subs: &HashMap<String, PhpType>,
 ) {
     for (_class_name, type_args) in generics.iter_mut() {
         for arg in type_args.iter_mut() {
-            let substituted = apply_substitution(arg, subs);
-            if substituted.as_ref() != arg.as_str() {
-                *arg = substituted.into_owned();
+            let substituted = arg.substitute(subs);
+            if substituted != *arg {
+                *arg = substituted;
             }
         }
     }

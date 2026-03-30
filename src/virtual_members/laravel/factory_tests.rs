@@ -1,4 +1,5 @@
 use super::*;
+use crate::php_type::PhpType;
 use crate::test_fixtures::{make_class, no_loader};
 use std::sync::Arc;
 
@@ -124,14 +125,14 @@ fn does_not_extend_factory() {
 #[test]
 fn has_factory_extends_generic_present() {
     let mut class = make_class("UserFactory");
-    class.extends_generics = vec![("Factory".to_string(), vec!["User".to_string()])];
+    class.extends_generics = vec![("Factory".to_string(), vec![PhpType::parse("User")])];
     assert!(has_factory_extends_generic(&class));
 }
 
 #[test]
 fn has_factory_extends_generic_fqn() {
     let mut class = make_class("UserFactory");
-    class.extends_generics = vec![(FACTORY_FQN.to_string(), vec!["User".to_string()])];
+    class.extends_generics = vec![(FACTORY_FQN.to_string(), vec![PhpType::parse("User")])];
     assert!(has_factory_extends_generic(&class));
 }
 
@@ -227,7 +228,7 @@ fn factory_provider_does_not_apply_when_extends_generic_present() {
     let provider = LaravelFactoryProvider;
     let mut factory = make_class("Database\\Factories\\UserFactory");
     factory.parent_class = Some(FACTORY_FQN.to_string());
-    factory.extends_generics = vec![("Factory".to_string(), vec!["User".to_string()])];
+    factory.extends_generics = vec![("Factory".to_string(), vec![PhpType::parse("User")])];
 
     assert!(!provider.applies_to(&factory, &no_loader));
 }

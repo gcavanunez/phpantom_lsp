@@ -1,4 +1,5 @@
 use super::*;
+use crate::php_type::PhpType;
 use crate::test_fixtures::{make_class, make_method, no_loader};
 use std::sync::Arc;
 
@@ -438,7 +439,7 @@ fn tget_from_casts_attributes_short_name() {
     let mut c = make_class("App\\Casts\\HtmlCast");
     c.implements_generics = vec![(
         "CastsAttributes".to_string(),
-        vec!["HtmlString".to_string(), "HtmlString".to_string()],
+        vec![PhpType::parse("HtmlString"), PhpType::parse("HtmlString")],
     )];
     assert_eq!(
         extract_tget_from_implements_generics(&c),
@@ -452,8 +453,8 @@ fn tget_from_casts_attributes_fqn() {
     c.implements_generics = vec![(
         CASTS_ATTRIBUTES_FQN.to_string(),
         vec![
-            "\\Illuminate\\Support\\HtmlString".to_string(),
-            "string".to_string(),
+            PhpType::parse("\\Illuminate\\Support\\HtmlString"),
+            PhpType::parse("string"),
         ],
     )];
     assert_eq!(
@@ -469,7 +470,7 @@ fn tget_from_casts_attributes_fqn_canonical() {
     let mut c = make_class("App\\Casts\\HtmlCast");
     c.implements_generics = vec![(
         CASTS_ATTRIBUTES_FQN.to_string(),
-        vec!["HtmlString".to_string(), "HtmlString".to_string()],
+        vec![PhpType::parse("HtmlString"), PhpType::parse("HtmlString")],
     )];
     assert_eq!(
         extract_tget_from_implements_generics(&c),
@@ -486,7 +487,10 @@ fn tget_returns_none_when_no_implements_generics() {
 #[test]
 fn tget_returns_none_for_unrelated_interface() {
     let mut c = make_class("App\\Casts\\HtmlCast");
-    c.implements_generics = vec![("SomeOtherInterface".to_string(), vec!["Foo".to_string()])];
+    c.implements_generics = vec![(
+        "SomeOtherInterface".to_string(),
+        vec![PhpType::parse("Foo")],
+    )];
     assert_eq!(extract_tget_from_implements_generics(&c), None);
 }
 
@@ -502,7 +506,7 @@ fn tget_skips_empty_string_arg() {
     let mut c = make_class("App\\Casts\\HtmlCast");
     c.implements_generics = vec![(
         "CastsAttributes".to_string(),
-        vec!["".to_string(), "HtmlString".to_string()],
+        vec![PhpType::parse(""), PhpType::parse("HtmlString")],
     )];
     assert_eq!(extract_tget_from_implements_generics(&c), None);
 }
@@ -518,7 +522,7 @@ fn cast_custom_class_falls_back_to_implements_generics() {
             cast_class.methods.push(make_method("get", None));
             cast_class.implements_generics = vec![(
                 "CastsAttributes".to_string(),
-                vec!["HtmlString".to_string(), "HtmlString".to_string()],
+                vec![PhpType::parse("HtmlString"), PhpType::parse("HtmlString")],
             )];
             Some(Arc::new(cast_class))
         } else {
@@ -541,7 +545,10 @@ fn cast_implements_generics_take_priority_over_get_return_type() {
                 .push(make_method("get", Some("?HtmlString")));
             cast_class.implements_generics = vec![(
                 "CastsAttributes".to_string(),
-                vec!["DifferentType".to_string(), "DifferentType".to_string()],
+                vec![
+                    PhpType::parse("DifferentType"),
+                    PhpType::parse("DifferentType"),
+                ],
             )];
             Some(Arc::new(cast_class))
         } else {

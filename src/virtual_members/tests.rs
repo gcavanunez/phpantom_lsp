@@ -511,7 +511,7 @@ fn merge_native_type_hint_beats_untyped_virtual() {
     // higher than an untyped virtual property (specificity 0).
     let mut class = make_class("Foo");
     class.properties.push(PropertyInfo {
-        native_type_hint: Some("string".to_string()),
+        native_type_hint: Some(PhpType::parse("string")),
         type_hint: None,
         ..PropertyInfo::virtual_property("name", None)
     });
@@ -526,7 +526,11 @@ fn merge_native_type_hint_beats_untyped_virtual() {
 
     assert_eq!(class.properties.len(), 1);
     assert_eq!(
-        class.properties[0].native_type_hint.as_deref(),
+        class.properties[0]
+            .native_type_hint
+            .as_ref()
+            .map(|t| t.to_string())
+            .as_deref(),
         Some("string"),
         "property with native type hint should not be overwritten by untyped virtual"
     );
@@ -538,7 +542,7 @@ fn merge_native_type_hint_beats_mixed_virtual() {
     // should not be replaced by a virtual property typed "mixed".
     let mut class = make_class("Foo");
     class.properties.push(PropertyInfo {
-        native_type_hint: Some("int".to_string()),
+        native_type_hint: Some(PhpType::parse("int")),
         type_hint: None,
         ..PropertyInfo::virtual_property("code", None)
     });
@@ -553,7 +557,11 @@ fn merge_native_type_hint_beats_mixed_virtual() {
 
     assert_eq!(class.properties.len(), 1);
     assert_eq!(
-        class.properties[0].native_type_hint.as_deref(),
+        class.properties[0]
+            .native_type_hint
+            .as_ref()
+            .map(|t| t.to_string())
+            .as_deref(),
         Some("int"),
         "property with native type hint should not be overwritten by mixed virtual"
     );
@@ -569,7 +577,7 @@ fn merge_specific_virtual_beats_native_only() {
     // (first-writer-wins at the same tier).
     let mut class = make_class("Foo");
     class.properties.push(PropertyInfo {
-        native_type_hint: Some("string".to_string()),
+        native_type_hint: Some(PhpType::parse("string")),
         type_hint: None,
         ..PropertyInfo::virtual_property("col", None)
     });
@@ -585,7 +593,11 @@ fn merge_specific_virtual_beats_native_only() {
     assert_eq!(class.properties.len(), 1);
     // Same specificity (both 1) → first writer wins
     assert_eq!(
-        class.properties[0].native_type_hint.as_deref(),
+        class.properties[0]
+            .native_type_hint
+            .as_ref()
+            .map(|t| t.to_string())
+            .as_deref(),
         Some("string"),
         "equal specificity should preserve the existing property"
     );
@@ -598,7 +610,7 @@ fn merge_generic_virtual_beats_native_bare() {
     // ("array", score 1 via native fallback).
     let mut class = make_class("Foo");
     class.properties.push(PropertyInfo {
-        native_type_hint: Some("array".to_string()),
+        native_type_hint: Some(PhpType::parse("array")),
         type_hint: None,
         ..PropertyInfo::virtual_property("tags", None)
     });

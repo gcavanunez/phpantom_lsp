@@ -197,7 +197,7 @@ fn property_tags_are_public_and_non_static() {
 }
 
 #[test]
-fn nullable_type_cleaned() {
+fn nullable_type_preserved() {
     let provider = PHPDocProvider;
     let mut class = make_class("Customer");
     class.class_docblock = Some("/** @property null|int $agreement_id */".to_string());
@@ -206,8 +206,8 @@ fn nullable_type_cleaned() {
     assert_eq!(result.properties.len(), 1);
     assert_eq!(
         result.properties[0].type_hint_str().as_deref(),
-        Some("int"),
-        "null|int should resolve to int via clean_type"
+        Some("null|int"),
+        "null|int should be preserved (not stripped by clean_type)"
     );
 }
 

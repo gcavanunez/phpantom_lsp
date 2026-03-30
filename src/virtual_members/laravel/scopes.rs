@@ -161,9 +161,9 @@ pub fn build_scope_methods_for_builder(
     // `static` means the model, so substituting `static` → `User`
     // produces `\...\Builder<User>`, keeping the chain on the builder.
     let mut subs = HashMap::new();
-    subs.insert("static".to_string(), model_name.to_string());
-    subs.insert("$this".to_string(), model_name.to_string());
-    subs.insert("self".to_string(), model_name.to_string());
+    subs.insert("static".to_string(), PhpType::parse(model_name));
+    subs.insert("$this".to_string(), PhpType::parse(model_name));
+    subs.insert("self".to_string(), PhpType::parse(model_name));
 
     let mut methods = Vec::new();
 

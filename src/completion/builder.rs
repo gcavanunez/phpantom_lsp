@@ -148,8 +148,8 @@ fn attribute_placeholder(param: &ParameterInfo) -> (String, String, String) {
 
     // Infer from the type hint.
     let type_hint_string = param.type_hint_str();
-    let hint = param
-        .native_type_hint
+    let native_str = param.native_type_hint.as_ref().map(|t| t.to_string());
+    let hint = native_str
         .as_deref()
         .or(type_hint_string.as_deref())
         .unwrap_or("");
@@ -340,9 +340,10 @@ pub(crate) fn build_completion_items(
         // Show the return type inline after the label so the user sees
         // e.g. `getUser($id): User` in the completion popup.
         let return_type_string = method.return_type_str();
+        let native_ret_str = method.native_return_type.as_ref().map(|t| t.to_string());
         let return_type = return_type_string
             .as_deref()
-            .or(method.native_return_type.as_deref())
+            .or(native_ret_str.as_deref())
             .map(shorten_type_string);
 
         let data = serde_json::to_value(CompletionItemData {

@@ -16,10 +16,20 @@ use mago_syntax::ast::*;
 use std::sync::Arc;
 
 use crate::docblock;
+use crate::php_type::PhpType;
 use crate::types::{ClassInfo, ResolvedType};
 use crate::util::short_name;
 
 use crate::completion::resolver::{Loaders, VarResolutionCtx};
+
+/// Returns `true` when the type string carries structural type information
+/// (generics, array syntax, shapes, etc.) rather than being a bare class
+/// name.  Bare `Named` and unparseable `Raw` types return `false` so that
+/// the class-based fallback can resolve generics through `@implements` /
+/// `@extends` annotations.
+fn has_type_structure(ts: &str) -> bool {
+    !matches!(PhpType::parse(ts), PhpType::Named(_) | PhpType::Raw(_))
+}
 
 /// Resolve an expression's type string via the unified pipeline.
 ///
@@ -128,7 +138,8 @@ pub(in crate::completion) fn try_resolve_foreach_value_type<'b>(
                 ctx.class_loader,
             );
             if !resolved.is_empty() {
-                let resolved_types = ResolvedType::from_classes_with_hint(resolved, &var_type);
+                let resolved_types =
+                    ResolvedType::from_classes_with_hint(resolved, PhpType::parse(&var_type));
                 if conditional {
                     ResolvedType::extend_unique(results, resolved_types);
                 } else {
@@ -164,8 +175,7 @@ pub(in crate::completion) fn try_resolve_foreach_value_type<'b>(
         // Skip expression-based resolution to avoid the cycle.
         None
     } else {
-        resolve_expression_type_string(foreach.expression, ctx)
-            .filter(|ts| ts.contains('<') || ts.contains('[') || ts.contains('{'))
+        resolve_expression_type_string(foreach.expression, ctx).filter(|ts| has_type_structure(ts))
     }
     .or_else(|| {
         // Fallback 1: for simple `$variable` expressions, search backward
@@ -222,7 +232,7 @@ pub(in crate::completion) fn try_resolve_foreach_value_type<'b>(
             // array suffix, or shape), return None so that the
             // class-based fallback can resolve generics through
             // @implements / @extends annotations.
-            if !ts.contains('<') && !ts.contains('[') && !ts.contains('{') {
+            if !has_type_structure(&ts) {
                 None
             } else {
                 Some(ts)
@@ -335,7 +345,7 @@ pub(in crate::completion) fn try_resolve_foreach_key_type<'b>(
     // via the unified pipeline.  Same bare-class-name filter as the
     // value-type path above.
     let raw_type = resolve_expression_type_string(foreach.expression, ctx)
-        .filter(|ts| ts.contains('<') || ts.contains('[') || ts.contains('{'))
+        .filter(|ts| has_type_structure(ts))
         .or_else(|| {
             // Fallback 1: for simple `$variable` expressions, search backward
             // from the foreach for @var or @param annotations.
@@ -384,7 +394,7 @@ pub(in crate::completion) fn try_resolve_foreach_key_type<'b>(
                 // array suffix, or shape), return None so that the
                 // class-based fallback can resolve generics through
                 // @implements / @extends annotations.
-                if !ts.contains('<') && !ts.contains('[') && !ts.contains('{') {
+                if !has_type_structure(&ts) {
                     None
                 } else {
                     Some(ts)
@@ -467,7 +477,7 @@ fn push_foreach_resolved_types(
         return;
     }
 
-    let resolved_types = ResolvedType::from_classes_with_hint(resolved, type_str);
+    let resolved_types = ResolvedType::from_classes_with_hint(resolved, PhpType::parse(type_str));
     if !conditional {
         results.clear();
     }
@@ -536,8 +546,8 @@ fn extract_iterable_element_type_from_class(
         let short = short_name(name);
         if ITERABLE_IFACE_NAMES.contains(&short) && !args.is_empty() {
             let value = args.last().unwrap();
-            if !crate::php_type::PhpType::parse(value).is_scalar() {
-                return Some(value.clone());
+            if !value.is_scalar() {
+                return Some(value.to_string());
             }
         }
     }
@@ -553,8 +563,8 @@ fn extract_iterable_element_type_from_class(
             && is_transitive_iterable(&iface, class_loader)
         {
             let value = args.last().unwrap();
-            if !crate::php_type::PhpType::parse(value).is_scalar() {
-                return Some(value.clone());
+            if !value.is_scalar() {
+                return Some(value.to_string());
             }
         }
     }
@@ -564,8 +574,8 @@ fn extract_iterable_element_type_from_class(
     for (_, args) in &class.extends_generics {
         if !args.is_empty() {
             let value = args.last().unwrap();
-            if !crate::php_type::PhpType::parse(value).is_scalar() {
-                return Some(value.clone());
+            if !value.is_scalar() {
+                return Some(value.to_string());
             }
         }
     }
@@ -590,8 +600,8 @@ fn extract_iterable_key_type_from_class(
         let short = short_name(name);
         if ITERABLE_IFACE_NAMES.contains(&short) && args.len() >= 2 {
             let key = &args[0];
-            if !crate::php_type::PhpType::parse(key).is_scalar() {
-                return Some(key.clone());
+            if !key.is_scalar() {
+                return Some(key.to_string());
             }
         }
     }
@@ -606,8 +616,8 @@ fn extract_iterable_key_type_from_class(
             && is_transitive_iterable(&iface, class_loader)
         {
             let key = &args[0];
-            if !crate::php_type::PhpType::parse(key).is_scalar() {
-                return Some(key.clone());
+            if !key.is_scalar() {
+                return Some(key.to_string());
             }
         }
     }
@@ -616,8 +626,8 @@ fn extract_iterable_key_type_from_class(
     for (_, args) in &class.extends_generics {
         if args.len() >= 2 {
             let key = &args[0];
-            if !crate::php_type::PhpType::parse(key).is_scalar() {
-                return Some(key.clone());
+            if !key.is_scalar() {
+                return Some(key.to_string());
             }
         }
     }
@@ -744,16 +754,18 @@ pub(in crate::completion) fn try_resolve_destructured_type<'b>(
     {
         if let Some(ref key) = shape_key
             && let Some(entry_type) =
-                docblock::types::extract_array_shape_value_type(&var_type, key)
+                crate::php_type::PhpType::parse(&var_type).shape_value_type(key)
         {
-            let resolved = crate::completion::type_resolution::type_hint_to_classes(
-                &entry_type,
+            let entry_type_str = entry_type.to_string();
+            let resolved = crate::completion::type_resolution::type_hint_to_classes_typed(
+                entry_type,
                 current_class_name,
                 all_classes,
                 class_loader,
             );
             if !resolved.is_empty() {
-                let resolved_types = ResolvedType::from_classes_with_hint(resolved, &entry_type);
+                let resolved_types =
+                    ResolvedType::from_classes_with_hint(resolved, PhpType::parse(&entry_type_str));
                 if !conditional {
                     results.clear();
                 }
@@ -765,14 +777,15 @@ pub(in crate::completion) fn try_resolve_destructured_type<'b>(
         let var_parsed = crate::php_type::PhpType::parse(&var_type);
         if let Some(element_type) = var_parsed.extract_value_type(true) {
             let element_str = element_type.to_string();
-            let resolved = crate::completion::type_resolution::type_hint_to_classes(
-                &element_str,
+            let resolved = crate::completion::type_resolution::type_hint_to_classes_typed(
+                element_type,
                 current_class_name,
                 all_classes,
                 class_loader,
             );
             if !resolved.is_empty() {
-                let resolved_types = ResolvedType::from_classes_with_hint(resolved, &element_str);
+                let resolved_types =
+                    ResolvedType::from_classes_with_hint(resolved, PhpType::parse(&element_str));
                 if !conditional {
                     results.clear();
                 }
@@ -803,16 +816,18 @@ pub(in crate::completion) fn try_resolve_destructured_type<'b>(
     if let Some(ref raw) = raw_type {
         // First try array shape lookup with the destructured key.
         if let Some(ref key) = shape_key
-            && let Some(entry_type) = docblock::types::extract_array_shape_value_type(raw, key)
+            && let Some(entry_type) = crate::php_type::PhpType::parse(raw).shape_value_type(key)
         {
-            let resolved = crate::completion::type_resolution::type_hint_to_classes(
-                &entry_type,
+            let entry_type_str = entry_type.to_string();
+            let resolved = crate::completion::type_resolution::type_hint_to_classes_typed(
+                entry_type,
                 current_class_name,
                 all_classes,
                 class_loader,
             );
             if !resolved.is_empty() {
-                let resolved_types = ResolvedType::from_classes_with_hint(resolved, &entry_type);
+                let resolved_types =
+                    ResolvedType::from_classes_with_hint(resolved, PhpType::parse(&entry_type_str));
                 if !conditional {
                     results.clear();
                 }
@@ -825,14 +840,15 @@ pub(in crate::completion) fn try_resolve_destructured_type<'b>(
         let raw_parsed = crate::php_type::PhpType::parse(raw);
         if let Some(element_type) = raw_parsed.extract_value_type(true) {
             let element_str = element_type.to_string();
-            let resolved = crate::completion::type_resolution::type_hint_to_classes(
-                &element_str,
+            let resolved = crate::completion::type_resolution::type_hint_to_classes_typed(
+                element_type,
                 current_class_name,
                 all_classes,
                 class_loader,
             );
             if !resolved.is_empty() {
-                let resolved_types = ResolvedType::from_classes_with_hint(resolved, &element_str);
+                let resolved_types =
+                    ResolvedType::from_classes_with_hint(resolved, PhpType::parse(&element_str));
                 if !conditional {
                     results.clear();
                 }

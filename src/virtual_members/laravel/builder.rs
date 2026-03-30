@@ -129,11 +129,11 @@ pub(super) fn build_builder_forwarded_methods(
     .to_string();
     let mut subs = HashMap::new();
     for param in &builder_class.template_params {
-        subs.insert(param.clone(), class.name.clone());
+        subs.insert(param.clone(), PhpType::Named(class.name.clone()));
     }
-    subs.insert("static".to_string(), builder_self_type.clone());
-    subs.insert("$this".to_string(), builder_self_type.clone());
-    subs.insert("self".to_string(), builder_self_type.clone());
+    subs.insert("static".to_string(), PhpType::parse(&builder_self_type));
+    subs.insert("$this".to_string(), PhpType::parse(&builder_self_type));
+    subs.insert("self".to_string(), PhpType::parse(&builder_self_type));
 
     let mut methods = Vec::new();
 

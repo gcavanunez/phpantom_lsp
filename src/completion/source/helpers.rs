@@ -363,10 +363,12 @@ fn walk_array_segments_and_resolve(
     for seg in segments {
         match seg {
             BracketSegment::StringKey(key) => {
-                current_type = docblock::extract_array_shape_value_type(&current_type, key)?;
+                current_type = PhpType::parse(&current_type)
+                    .shape_value_type(key)
+                    .map(|t| t.to_string())?;
             }
             BracketSegment::ElementAccess => {
-                current_type = crate::php_type::PhpType::parse(&current_type)
+                current_type = PhpType::parse(&current_type)
                     .extract_value_type(true)
                     .map(|t| t.to_string())?;
             }
@@ -390,7 +392,7 @@ fn walk_array_segments_and_resolve(
     // worth resolving.  `type_hint_to_classes` handles unions,
     // intersections, generics, nullable, etc. — so we pass the full
     // type string and only bail out when the entire type is scalar.
-    let parsed = crate::php_type::PhpType::parse(&current_type);
+    let parsed = PhpType::parse(&current_type);
     if parsed.is_scalar() {
         return None;
     }

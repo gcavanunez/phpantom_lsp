@@ -96,7 +96,6 @@ use casts::cast_type_to_php_type;
 pub use factory::LaravelFactoryProvider;
 pub(crate) use factory::{factory_to_model_fqn, model_to_factory_fqn};
 
-use crate::php_type::PhpType;
 use crate::types::{ClassInfo, PropertyInfo};
 
 use super::{ResolvedClassCache, VirtualMemberProvider, VirtualMembers};
@@ -237,6 +236,7 @@ fn inject_model_virtual_methods(
     use std::collections::HashMap;
 
     use crate::inheritance::apply_substitution;
+    use crate::php_type::PhpType;
 
     let model_class = match class_loader(model_name) {
         Some(c) => c,
@@ -263,10 +263,11 @@ fn inject_model_virtual_methods(
     // produces `Builder<Customer>`.  Using `Builder<Model>` here
     // would double-wrap to `Builder<Builder<Customer>>`.
     let model_fqn = model_name.to_string();
+    let model_type = PhpType::Named(model_fqn.clone());
     let mut subs = HashMap::new();
-    subs.insert("static".to_string(), model_fqn.clone());
-    subs.insert("$this".to_string(), model_fqn.clone());
-    subs.insert("self".to_string(), model_fqn);
+    subs.insert("static".to_string(), model_type.clone());
+    subs.insert("$this".to_string(), model_type.clone());
+    subs.insert("self".to_string(), model_type);
 
     for method in &resolved_model.methods {
         // Only inject virtual methods (from @method tags).  Real

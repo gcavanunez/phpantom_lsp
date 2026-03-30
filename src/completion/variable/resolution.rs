@@ -38,6 +38,7 @@ use mago_syntax::ast::*;
 use crate::completion::types::narrowing;
 use crate::docblock;
 use crate::parser::{extract_hint_string, with_parsed_program};
+use crate::php_type::PhpType;
 use crate::types::{ClassInfo, ResolvedType};
 
 use crate::completion::resolver::{Loaders, VarResolutionCtx};
@@ -762,7 +763,7 @@ fn resolve_variable_in_members<'b>(
                     if !resolved_from_native.is_empty() {
                         param_results = ResolvedType::from_classes_with_hint(
                             resolved_from_native,
-                            type_str_for_resolution.unwrap_or(""),
+                            PhpType::parse(type_str_for_resolution.unwrap_or("")),
                         );
                         break;
                     }
@@ -785,8 +786,10 @@ fn resolve_variable_in_members<'b>(
                             ctx.class_loader,
                         );
                         if !resolved.is_empty() {
-                            param_results =
-                                ResolvedType::from_classes_with_hint(resolved, raw_docblock_type);
+                            param_results = ResolvedType::from_classes_with_hint(
+                                resolved,
+                                PhpType::parse(raw_docblock_type),
+                            );
                             break;
                         }
                     }
@@ -816,15 +819,18 @@ fn resolve_variable_in_members<'b>(
                             && let Some(ref hint) = merged_param.type_hint
                         {
                             let hint_str = hint.to_string();
-                            let resolved = crate::completion::type_resolution::type_hint_to_classes(
-                                &hint_str,
-                                &ctx.current_class.name,
-                                ctx.all_classes,
-                                ctx.class_loader,
-                            );
+                            let resolved =
+                                crate::completion::type_resolution::type_hint_to_classes_typed(
+                                    hint,
+                                    &ctx.current_class.name,
+                                    ctx.all_classes,
+                                    ctx.class_loader,
+                                );
                             if !resolved.is_empty() {
-                                param_results =
-                                    ResolvedType::from_classes_with_hint(resolved, &hint_str);
+                                param_results = ResolvedType::from_classes_with_hint(
+                                    resolved,
+                                    PhpType::parse(&hint_str),
+                                );
                                 break;
                             }
                         }
@@ -840,7 +846,7 @@ fn resolve_variable_in_members<'b>(
                     // docblock provides a more specific annotation.
                     let best_type_str = raw_docblock_type.as_deref().or(type_str_for_resolution);
                     if let Some(ts) = best_type_str {
-                        param_results = vec![ResolvedType::from_type_string(ts.to_string())];
+                        param_results = vec![ResolvedType::from_type_string(PhpType::parse(ts))];
                     }
                 }
             }
@@ -2090,7 +2096,8 @@ pub(in crate::completion) fn try_inline_var_override<'b>(
         None => return false,
     };
 
-    let resolved = crate::completion::type_resolution::type_hint_to_classes(
+    let eff_type_str = eff_type.to_string();
+    let resolved = crate::completion::type_resolution::type_hint_to_classes_typed(
         &eff_type,
         &ctx.current_class.name,
         ctx.all_classes,
@@ -2105,8 +2112,10 @@ pub(in crate::completion) fn try_inline_var_override<'b>(
         // `PhpType::extract_value_type`.  Skip non-informative types
         // (`array`, `mixed`, etc.) so normal resolution can provide
         // more precise information.
-        if crate::completion::variable::rhs_resolution::is_informative_type_string(&eff_type) {
-            let resolved_types = vec![ResolvedType::from_type_string(eff_type)];
+        if crate::completion::variable::rhs_resolution::is_informative_type_string(&eff_type_str) {
+            let resolved_types = vec![ResolvedType::from_type_string(PhpType::parse(
+                &eff_type_str,
+            ))];
             if !conditional {
                 results.clear();
             }
@@ -2116,7 +2125,8 @@ pub(in crate::completion) fn try_inline_var_override<'b>(
         return false;
     }
 
-    let resolved_types = ResolvedType::from_classes_with_hint(resolved, &eff_type);
+    let resolved_types =
+        ResolvedType::from_classes_with_hint(resolved, PhpType::parse(&eff_type_str));
 
     // Apply the resolved type(s) with the same conditional semantics
     // used by `check_expression_for_assignment`.
@@ -2309,10 +2319,8 @@ pub(in crate::completion) fn check_expression_for_assignment<'b>(
                 };
                 // Read the current base type from results (if any)
                 // and merge the new key into its shape.
-                let base = results
-                    .last()
-                    .map(|rt| rt.type_string.as_str())
-                    .unwrap_or("array");
+                let base_string = results.last().map(|rt| rt.type_string.to_string());
+                let base = base_string.as_deref().unwrap_or("array");
                 let merged = merge_shape_key(base, &key, &value_type);
                 // Replace results with the enriched shape type.
                 // Use extend_unique so this works in conditional
@@ -2321,7 +2329,7 @@ pub(in crate::completion) fn check_expression_for_assignment<'b>(
                 // base assignment that preceded this).
                 // We always push here without clearing — shape keys
                 // accumulate on top of the existing base.
-                let new_rt = ResolvedType::from_type_string(merged);
+                let new_rt = ResolvedType::from_type_string(PhpType::parse(&merged));
                 results.clear();
                 results.push(new_rt);
             }
@@ -2358,15 +2366,13 @@ pub(in crate::completion) fn check_expression_for_assignment<'b>(
             // String-keyed entries take precedence over positional
             // pushes, matching the old AssignmentAccumulator's
             // finalize() behaviour.
-            let base = results
-                .last()
-                .map(|rt| rt.type_string.as_str())
-                .unwrap_or("array");
+            let base_string = results.last().map(|rt| rt.type_string.to_string());
+            let base = base_string.as_deref().unwrap_or("array");
             if base.starts_with("array{") {
                 return;
             }
             let merged = merge_push_type(base, &value_type);
-            let new_rt = ResolvedType::from_type_string(merged);
+            let new_rt = ResolvedType::from_type_string(PhpType::parse(&merged));
             results.clear();
             results.push(new_rt);
             return;
@@ -2451,9 +2457,12 @@ fn merge_shape_key(base: &str, key: &str, value_type: &str) -> String {
     let mut entries: Vec<(String, String)> = Vec::new();
 
     // Parse existing shape entries from the base type.
-    if let Some(parsed) = crate::docblock::parse_array_shape(base) {
-        for entry in &parsed {
-            entries.push((entry.key.clone(), entry.value_type.clone()));
+    let parsed = crate::php_type::PhpType::parse(base);
+    if let Some(shape_entries) = parsed.shape_entries() {
+        for entry in shape_entries {
+            if let Some(k) = entry.key.as_deref() {
+                entries.push((k.to_string(), entry.value_type.to_string()));
+            }
         }
     }
 
@@ -2641,8 +2650,8 @@ fn try_apply_pass_by_reference_type(
             && param.is_reference
             && let Some(ref type_hint) = param.type_hint
         {
-            let resolved = crate::completion::type_resolution::type_hint_to_classes(
-                &type_hint.to_string(),
+            let resolved = crate::completion::type_resolution::type_hint_to_classes_typed(
+                type_hint,
                 &ctx.current_class.name,
                 ctx.all_classes,
                 ctx.class_loader,

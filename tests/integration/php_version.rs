@@ -231,7 +231,11 @@ function array_combine(array $keys, array $values): array {}
     );
     // The 8.0+ variant has return type `array` (not `array|false`).
     assert_eq!(
-        functions[0].native_return_type.as_deref(),
+        functions[0]
+            .native_return_type
+            .as_ref()
+            .map(|t| t.to_string())
+            .as_deref(),
         Some("array"),
         "should pick the PHP 8.0+ variant"
     );
@@ -254,7 +258,11 @@ function array_combine(array $keys, array $values): array {}
     let functions = backend.parse_functions_versioned(stub_content, Some(PhpVersion::new(7, 4)));
     assert_eq!(functions.len(), 1);
     assert_eq!(
-        functions[0].native_return_type.as_deref(),
+        functions[0]
+            .native_return_type
+            .as_ref()
+            .map(|t| t.to_string())
+            .as_deref(),
         Some("array|false"),
         "should pick the PHP 5.3-7.4 variant"
     );

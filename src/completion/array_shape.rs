@@ -34,6 +34,7 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::completion::resolver::Loaders;
 use crate::docblock;
+use crate::php_type::PhpType;
 use crate::types::{ClassInfo, FileContext, ResolvedType};
 use crate::util::{find_class_at_offset, position_to_offset};
 
@@ -340,8 +341,9 @@ impl Backend {
         )
         .unwrap_or(effective_type);
 
-        // Parse the array shape entries.
-        let entries = match docblock::parse_array_shape(&effective_type) {
+        // Parse the array shape entries via PhpType.
+        let parsed = PhpType::parse(&effective_type);
+        let entries = match parsed.shape_entries() {
             Some(e) => e,
             None => return vec![],
         };
@@ -355,10 +357,14 @@ impl Backend {
         let mut items = Vec::new();
 
         for (sort_idx, entry) in entries.iter().enumerate() {
+            let key_name = match entry.key.as_deref() {
+                Some(k) => k,
+                None => continue, // skip positional entries without explicit keys
+            };
+
             // Filter by partial key prefix.
             if !ctx.partial_key.is_empty()
-                && !entry
-                    .key
+                && !key_name
                     .to_lowercase()
                     .starts_with(&ctx.partial_key.to_lowercase())
             {
@@ -366,23 +372,23 @@ impl Backend {
             }
 
             let optional_marker = if entry.optional { "?" } else { "" };
-            let detail = format!("{}{}: {}", entry.key, optional_marker, entry.value_type);
+            let detail = format!("{}{}: {}", key_name, optional_marker, entry.value_type);
 
             // The new_text always produces the complete `key']` or `'key']`
             // fragment. The text_edit range is set to cover any existing
             // partial key text *and* any trailing auto-closed chars, so
             // accepting the completion replaces everything cleanly.
             let new_text = if ctx.quote_char.is_some() {
-                format!("{}{}]", entry.key, quote)
+                format!("{}{}]", key_name, quote)
             } else {
-                format!("{}{}{}]", quote, entry.key, quote)
+                format!("{}{}{}]", quote, key_name, quote)
             };
 
             items.push(CompletionItem {
-                label: entry.key.clone(),
+                label: key_name.to_string(),
                 kind: Some(CompletionItemKind::FIELD),
                 detail: Some(detail),
-                filter_text: Some(entry.key.clone()),
+                filter_text: Some(key_name.to_string()),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit { range, new_text })),
                 sort_text: Some(format!("{:04}", sort_idx)),
                 ..CompletionItem::default()
@@ -486,11 +492,11 @@ impl Backend {
             return Some(raw_type.to_string());
         }
 
-        let mut current_type = raw_type.to_string();
+        let mut current = PhpType::parse(raw_type);
         for key in prefix_keys {
-            current_type = docblock::extract_array_shape_value_type(&current_type, key)?;
+            current = current.shape_value_type(key)?.clone();
         }
-        Some(current_type)
+        Some(current.to_string())
     }
 
     /// Resolve the raw (uncleaned) type annotation for a variable.

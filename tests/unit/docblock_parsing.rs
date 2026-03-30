@@ -183,7 +183,10 @@ fn property_tag_nullable() {
 fn property_tag_union_with_null() {
     let doc = "/** @property null|int $latest_id */";
     let props = extract_property_tags(doc);
-    assert_eq!(props, vec![("latest_id".to_string(), "int".to_string())]);
+    assert_eq!(
+        props,
+        vec![("latest_id".to_string(), "null|int".to_string())]
+    );
 }
 
 #[test]
@@ -206,11 +209,12 @@ fn property_tag_multiple() {
     );
     let props = extract_property_tags(doc);
     assert_eq!(props.len(), 2);
+    // `null|int` is now preserved (clean_type used to strip `|null`).
     assert_eq!(
         props[0],
         (
             "latest_subscription_agreement_id".to_string(),
-            "int".to_string()
+            "null|int".to_string()
         )
     );
     assert_eq!(
@@ -414,7 +418,7 @@ fn return_type_unclosed_angle_recovers_base() {
     let doc = concat!("/**\n", " * @return SomeType<\n", " */",);
     let raw = extract_return_type(doc);
     assert_eq!(raw, Some("SomeType<".into()));
-    let recovered = resolve_effective_type(None, raw.as_deref());
+    let recovered = resolve_effective_type(None, raw.as_deref()).map(|t| t.to_string());
     assert_eq!(recovered, Some("SomeType".into()));
 }
 
@@ -423,7 +427,7 @@ fn return_type_unclosed_angle_static_recovers() {
     let doc = concat!("/**\n", " * @return static<\n", " */",);
     let raw = extract_return_type(doc);
     assert_eq!(raw, Some("static<".into()));
-    let recovered = resolve_effective_type(None, raw.as_deref());
+    let recovered = resolve_effective_type(None, raw.as_deref()).map(|t| t.to_string());
     assert_eq!(recovered, Some("static".into()));
 }
 
@@ -434,7 +438,7 @@ fn effective_type_broken_docblock_falls_back_to_native() {
     // If the docblock type is completely unrecoverable, the native type
     // should win.
     assert_eq!(
-        resolve_effective_type(Some("Result"), Some("<broken")),
+        resolve_effective_type(Some("Result"), Some("<broken")).map(|t| t.to_string()),
         Some("Result".into()),
     );
 }
@@ -444,7 +448,7 @@ fn effective_type_broken_docblock_recovers_base() {
     // When there IS a recoverable base in the broken docblock and no
     // native hint, partial recovery should kick in.
     assert_eq!(
-        resolve_effective_type(None, Some("Collection<int")),
+        resolve_effective_type(None, Some("Collection<int")).map(|t| t.to_string()),
         Some("Collection".into()),
     );
 }
@@ -453,7 +457,7 @@ fn effective_type_broken_docblock_recovers_base() {
 fn effective_type_balanced_docblock_unchanged() {
     // A well-formed docblock type should pass through normally.
     assert_eq!(
-        resolve_effective_type(Some("array"), Some("Collection<int, User>")),
+        resolve_effective_type(Some("array"), Some("Collection<int, User>")).map(|t| t.to_string()),
         Some("Collection<int, User>".into()),
     );
 }
@@ -821,7 +825,7 @@ fn no_override_nullable_int_with_array_generic() {
 #[test]
 fn effective_type_docblock_only() {
     assert_eq!(
-        resolve_effective_type(None, Some("Session")),
+        resolve_effective_type(None, Some("Session")).map(|t| t.to_string()),
         Some("Session".into())
     );
 }
@@ -829,7 +833,7 @@ fn effective_type_docblock_only() {
 #[test]
 fn effective_type_native_only() {
     assert_eq!(
-        resolve_effective_type(Some("int"), None),
+        resolve_effective_type(Some("int"), None).map(|t| t.to_string()),
         Some("int".into())
     );
 }
@@ -837,7 +841,7 @@ fn effective_type_native_only() {
 #[test]
 fn effective_type_both_compatible() {
     assert_eq!(
-        resolve_effective_type(Some("object"), Some("Session")),
+        resolve_effective_type(Some("object"), Some("Session")).map(|t| t.to_string()),
         Some("Session".into())
     );
 }
@@ -845,14 +849,17 @@ fn effective_type_both_compatible() {
 #[test]
 fn effective_type_both_incompatible() {
     assert_eq!(
-        resolve_effective_type(Some("int"), Some("Session")),
+        resolve_effective_type(Some("int"), Some("Session")).map(|t| t.to_string()),
         Some("int".into())
     );
 }
 
 #[test]
 fn effective_type_neither() {
-    assert_eq!(resolve_effective_type(None, None), None);
+    assert_eq!(
+        resolve_effective_type(None, None).map(|t| t.to_string()),
+        None::<String>
+    );
 }
 
 // ── clean_type ──────────────────────────────────────────────────────
@@ -1197,7 +1204,7 @@ fn assert_simple_phpstan() {
     assert_eq!(assertions.len(), 1);
     assert_eq!(assertions[0].kind, AssertionKind::Always);
     assert_eq!(assertions[0].param_name, "$value");
-    assert_eq!(assertions[0].asserted_type, "User");
+    assert_eq!(assertions[0].asserted_type.to_string(), "User");
     assert!(!assertions[0].negated);
 }
 
@@ -1208,7 +1215,7 @@ fn assert_simple_psalm() {
     assert_eq!(assertions.len(), 1);
     assert_eq!(assertions[0].kind, AssertionKind::Always);
     assert_eq!(assertions[0].param_name, "$obj");
-    assert_eq!(assertions[0].asserted_type, "AdminUser");
+    assert_eq!(assertions[0].asserted_type.to_string(), "AdminUser");
     assert!(!assertions[0].negated);
 }
 
@@ -1218,7 +1225,7 @@ fn assert_negated() {
     let assertions = extract_type_assertions(doc);
     assert_eq!(assertions.len(), 1);
     assert_eq!(assertions[0].kind, AssertionKind::Always);
-    assert_eq!(assertions[0].asserted_type, "User");
+    assert_eq!(assertions[0].asserted_type.to_string(), "User");
     assert!(assertions[0].negated);
 }
 
@@ -1229,7 +1236,7 @@ fn assert_if_true() {
     assert_eq!(assertions.len(), 1);
     assert_eq!(assertions[0].kind, AssertionKind::IfTrue);
     assert_eq!(assertions[0].param_name, "$value");
-    assert_eq!(assertions[0].asserted_type, "User");
+    assert_eq!(assertions[0].asserted_type.to_string(), "User");
     assert!(!assertions[0].negated);
 }
 
@@ -1240,7 +1247,7 @@ fn assert_if_false() {
     assert_eq!(assertions.len(), 1);
     assert_eq!(assertions[0].kind, AssertionKind::IfFalse);
     assert_eq!(assertions[0].param_name, "$value");
-    assert_eq!(assertions[0].asserted_type, "User");
+    assert_eq!(assertions[0].asserted_type.to_string(), "User");
     assert!(!assertions[0].negated);
 }
 
@@ -1251,7 +1258,7 @@ fn assert_psalm_if_true() {
     assert_eq!(assertions.len(), 1);
     assert_eq!(assertions[0].kind, AssertionKind::IfTrue);
     assert_eq!(assertions[0].param_name, "$obj");
-    assert_eq!(assertions[0].asserted_type, "AdminUser");
+    assert_eq!(assertions[0].asserted_type.to_string(), "AdminUser");
 }
 
 #[test]
@@ -1263,7 +1270,10 @@ fn assert_fqn_type() {
     );
     let assertions = extract_type_assertions(doc);
     assert_eq!(assertions.len(), 1);
-    assert_eq!(assertions[0].asserted_type, "\\App\\Models\\User");
+    assert_eq!(
+        assertions[0].asserted_type.to_string(),
+        "\\App\\Models\\User"
+    );
 }
 
 #[test]
@@ -1277,9 +1287,9 @@ fn assert_multiple_annotations() {
     let assertions = extract_type_assertions(doc);
     assert_eq!(assertions.len(), 2);
     assert_eq!(assertions[0].param_name, "$first");
-    assert_eq!(assertions[0].asserted_type, "User");
+    assert_eq!(assertions[0].asserted_type.to_string(), "User");
     assert_eq!(assertions[1].param_name, "$second");
-    assert_eq!(assertions[1].asserted_type, "AdminUser");
+    assert_eq!(assertions[1].asserted_type.to_string(), "AdminUser");
 }
 
 #[test]
@@ -1295,7 +1305,7 @@ fn assert_mixed_with_other_tags() {
     );
     let assertions = extract_type_assertions(doc);
     assert_eq!(assertions.len(), 1);
-    assert_eq!(assertions[0].asserted_type, "User");
+    assert_eq!(assertions[0].asserted_type.to_string(), "User");
 }
 
 #[test]
@@ -1333,7 +1343,7 @@ fn assert_negated_if_true() {
     assert_eq!(assertions.len(), 1);
     assert_eq!(assertions[0].kind, AssertionKind::IfTrue);
     assert!(assertions[0].negated);
-    assert_eq!(assertions[0].asserted_type, "User");
+    assert_eq!(assertions[0].asserted_type.to_string(), "User");
 }
 
 // ─── @deprecated tag tests ──────────────────────────────────────

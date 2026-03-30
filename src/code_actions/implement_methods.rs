@@ -438,7 +438,8 @@ fn format_params(
         // Type hint — prefer native type hint (what appears in PHP source)
         // over the docblock-enriched one.
         if let Some(ref hint) = param.native_type_hint {
-            let shortened = shorten_type(hint, use_map, file_namespace);
+            let hint_str = hint.to_string();
+            let shortened = shorten_type(&hint_str, use_map, file_namespace);
             s.push_str(&shortened);
             s.push(' ');
         }
@@ -473,10 +474,8 @@ fn format_return_type(
 ) -> String {
     // Prefer native return type (the actual PHP source-level type hint).
     let return_type_str = method.return_type_str();
-    let hint = method
-        .native_return_type
-        .as_deref()
-        .or(return_type_str.as_deref());
+    let native_ret_str = method.native_return_type.as_ref().map(|t| t.to_string());
+    let hint = native_ret_str.as_deref().or(return_type_str.as_deref());
 
     match hint {
         Some(t) if !t.is_empty() => {
@@ -643,7 +642,7 @@ mod tests {
                     name: "$name".to_string(),
                     is_required: true,
                     type_hint: Some(PhpType::parse("string")),
-                    native_type_hint: Some("string".to_string()),
+                    native_type_hint: Some(PhpType::parse("string")),
                     description: None,
                     default_value: None,
                     is_variadic: false,
@@ -654,7 +653,7 @@ mod tests {
                     name: "$age".to_string(),
                     is_required: false,
                     type_hint: Some(PhpType::parse("int")),
-                    native_type_hint: Some("int".to_string()),
+                    native_type_hint: Some(PhpType::parse("int")),
                     description: None,
                     default_value: Some("0".to_string()),
                     is_variadic: false,
@@ -677,7 +676,7 @@ mod tests {
                     name: "$items".to_string(),
                     is_required: true,
                     type_hint: Some(PhpType::parse("string")),
-                    native_type_hint: Some("string".to_string()),
+                    native_type_hint: Some(PhpType::parse("string")),
                     description: None,
                     default_value: None,
                     is_variadic: true,
@@ -688,7 +687,7 @@ mod tests {
                     name: "$out".to_string(),
                     is_required: true,
                     type_hint: Some(PhpType::parse("array")),
-                    native_type_hint: Some("array".to_string()),
+                    native_type_hint: Some(PhpType::parse("array")),
                     description: None,
                     default_value: None,
                     is_variadic: false,
@@ -708,7 +707,7 @@ mod tests {
     #[test]
     fn format_return_type_with_native() {
         let method = MethodInfo {
-            native_return_type: Some("string".to_string()),
+            native_return_type: Some(PhpType::parse("string")),
             return_type: Some(PhpType::parse("string")),
             ..MethodInfo::virtual_method("test", Some("string"))
         };
@@ -722,7 +721,7 @@ mod tests {
     #[test]
     fn format_return_type_void() {
         let method = MethodInfo {
-            native_return_type: Some("void".to_string()),
+            native_return_type: Some(PhpType::parse("void")),
             ..MethodInfo::virtual_method("test", Some("void"))
         };
 
@@ -950,7 +949,7 @@ mod tests {
     #[test]
     fn stub_includes_return_type() {
         let methods = vec![MethodInfo {
-            native_return_type: Some("string".to_string()),
+            native_return_type: Some(PhpType::parse("string")),
             visibility: Visibility::Public,
             ..MethodInfo::virtual_method("render", Some("string"))
         }];
@@ -971,7 +970,7 @@ mod tests {
     fn stub_preserves_static_modifier() {
         let methods = vec![MethodInfo {
             is_static: true,
-            native_return_type: Some("void".to_string()),
+            native_return_type: Some(PhpType::parse("void")),
             visibility: Visibility::Public,
             ..MethodInfo::virtual_method("init", Some("void"))
         }];
@@ -1034,7 +1033,7 @@ mod tests {
                     name: "$name".to_string(),
                     is_required: true,
                     type_hint: Some(PhpType::parse("string")),
-                    native_type_hint: Some("string".to_string()),
+                    native_type_hint: Some(PhpType::parse("string")),
                     description: None,
                     default_value: None,
                     is_variadic: false,
@@ -1045,7 +1044,7 @@ mod tests {
                     name: "$options".to_string(),
                     is_required: false,
                     type_hint: Some(PhpType::parse("array")),
-                    native_type_hint: Some("array".to_string()),
+                    native_type_hint: Some(PhpType::parse("array")),
                     description: None,
                     default_value: Some("[]".to_string()),
                     is_variadic: false,
@@ -1053,7 +1052,7 @@ mod tests {
                     closure_this_type: None,
                 },
             ],
-            native_return_type: Some("void".to_string()),
+            native_return_type: Some(PhpType::parse("void")),
             visibility: Visibility::Public,
             ..MethodInfo::virtual_method("process", Some("void"))
         }];

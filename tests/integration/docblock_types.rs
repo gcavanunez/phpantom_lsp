@@ -1390,8 +1390,8 @@ async fn test_parse_php_class_property_tags() {
         .expect("Should have latest_subscription_agreement_id property");
     assert_eq!(
         id_prop.type_hint_str().as_deref(),
-        Some("int"),
-        "null|int should resolve to int via clean_type"
+        Some("null|int"),
+        "null|int should be preserved (not stripped by clean_type)"
     );
     assert!(!id_prop.is_static, "@property should not be static");
 

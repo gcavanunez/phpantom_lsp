@@ -751,12 +751,12 @@ Defer name resolution out of `update_ast_inner`. Options:
 
 ### When to implement
 
-Low priority. The M3 migration (see `docs/todo/mago.md`) is still
-in progress and will restructure how resolved names are stored and
-consumed. Further refactoring (removing the legacy `use_map`,
-migrating more consumers to byte-offset lookups) will change the
-access patterns. Optimizing now would likely be reworked. Revisit
-once M3 step 6 (remove `use_map`) is complete.
+Low priority. The `mago-names` migration is complete, but the
+`use_map` is still used by several consumers. Further refactoring
+(migrating more consumers to byte-offset lookups, eventually
+removing `use_map`) will change the access patterns. Optimizing
+now would likely be reworked. Revisit once `use_map` usage is
+significantly reduced.
 
 ---
 

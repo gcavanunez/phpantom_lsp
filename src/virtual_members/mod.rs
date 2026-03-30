@@ -58,9 +58,10 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::inheritance::{
-    ClassRef, apply_substitution, apply_substitution_to_method, apply_substitution_to_property,
+    ClassRef, apply_substitution_to_method, apply_substitution_to_property,
     resolve_class_with_inheritance,
 };
+use crate::php_type::PhpType;
 use crate::types::{ClassInfo, ConstantInfo, MethodInfo, PropertyInfo};
 use crate::util::short_name;
 
@@ -448,10 +449,11 @@ pub fn merge_virtual_members(class: &mut ClassInfo, virtual_members: VirtualMemb
 /// When merging virtual properties, the property with the higher
 /// specificity score wins.  Equal scores preserve the existing property
 /// (first-writer-wins within the same specificity tier).
-fn type_specificity(hint: &Option<String>) -> u8 {
+fn type_specificity(hint: &Option<PhpType>) -> u8 {
     match hint {
         None => 0,
-        Some(s) => {
+        Some(t) => {
+            let s = t.to_string();
             let trimmed = s.trim();
             if trimmed.is_empty() || trimmed == "mixed" {
                 0
@@ -476,7 +478,7 @@ fn type_specificity(hint: &Option<String>) -> u8 {
 /// any type information, even when docblocks are absent.
 fn property_type_specificity(property: &PropertyInfo) -> u8 {
     // First check the effective type hint (may include docblock override)
-    let effective_score = type_specificity(&property.type_hint_str());
+    let effective_score = type_specificity(&property.type_hint);
 
     // If effective type is specific enough, use it
     if effective_score > 0 {
@@ -662,11 +664,12 @@ fn resolve_class_fully_inner(
     // Walking from Test2: active_subs starts empty, then after loading
     // Test1 we get {TKey => int}.  Test1's `@implements MyIterator<TKey, string>`
     // becomes `@implements MyIterator<int, string>` after substitution.
-    let mut all_implements_generics: Vec<(String, Vec<String>)> = class.implements_generics.clone();
+    let mut all_implements_generics: Vec<(String, Vec<PhpType>)> =
+        class.implements_generics.clone();
     {
         let mut current: ClassRef<'_> = ClassRef::Borrowed(class);
         let mut depth = 0u32;
-        let mut active_subs: HashMap<String, String> = HashMap::new();
+        let mut active_subs: HashMap<String, PhpType> = HashMap::new();
 
         // Seed initial subs from the root class's @extends generics
         // so that if the root class itself has template params referenced
@@ -695,7 +698,7 @@ fn resolve_class_fully_inner(
                             let resolved = if active_subs.is_empty() {
                                 arg.clone()
                             } else {
-                                apply_substitution(arg, &active_subs).into_owned()
+                                arg.substitute(&active_subs)
                             };
                             map.insert(param_name.clone(), resolved);
                         }
@@ -720,12 +723,10 @@ fn resolve_class_fully_inner(
                 // Collect parent's @implements generics with substitutions
                 // applied so that template params resolve to concrete types.
                 for (iface_name, args) in &parent.implements_generics {
-                    let resolved_args: Vec<String> = if level_subs.is_empty() {
+                    let resolved_args: Vec<PhpType> = if level_subs.is_empty() {
                         args.clone()
                     } else {
-                        args.iter()
-                            .map(|a| apply_substitution(a, &level_subs).into_owned())
-                            .collect()
+                        args.iter().map(|a| a.substitute(&level_subs)).collect()
                     };
                     all_implements_generics.push((iface_name.clone(), resolved_args));
                 }
@@ -772,24 +773,20 @@ fn resolve_class_fully_inner(
             // types (e.g. `ReflectionArgument`) before propagation.
             for (name, args) in &iface.extends_generics {
                 if !all_implements_generics.iter().any(|(n, _)| n == name) {
-                    let resolved_args: Vec<String> = if iface_subs.is_empty() {
+                    let resolved_args: Vec<PhpType> = if iface_subs.is_empty() {
                         args.clone()
                     } else {
-                        args.iter()
-                            .map(|a| apply_substitution(a, &iface_subs).into_owned())
-                            .collect()
+                        args.iter().map(|a| a.substitute(&iface_subs)).collect()
                     };
                     all_implements_generics.push((name.clone(), resolved_args));
                 }
             }
             for (name, args) in &iface.implements_generics {
                 if !all_implements_generics.iter().any(|(n, _)| n == name) {
-                    let resolved_args: Vec<String> = if iface_subs.is_empty() {
+                    let resolved_args: Vec<PhpType> = if iface_subs.is_empty() {
                         args.clone()
                     } else {
-                        args.iter()
-                            .map(|a| apply_substitution(a, &iface_subs).into_owned())
-                            .collect()
+                        args.iter().map(|a| a.substitute(&iface_subs)).collect()
                     };
                     all_implements_generics.push((name.clone(), resolved_args));
                 }
@@ -865,7 +862,7 @@ fn resolve_class_fully_inner(
 fn merge_interface_members_into(
     merged: &mut ClassInfo,
     mut resolved_iface: ClassInfo,
-    iface_subs: &HashMap<String, String>,
+    iface_subs: &HashMap<String, PhpType>,
 ) {
     // Apply @implements generic substitutions to the resolved
     // interface members before merging.
@@ -952,8 +949,12 @@ fn merge_interface_members_into(
             for (existing_param, iface_param) in
                 existing.parameters.iter_mut().zip(&iface_method.parameters)
             {
-                let has_own_docblock_type = existing_param.type_hint.is_some()
-                    && existing_param.type_hint_str() != existing_param.native_type_hint;
+                let has_own_docblock_type =
+                    match (&existing_param.type_hint, &existing_param.native_type_hint) {
+                        (Some(eff), Some(nat)) => !eff.equivalent(nat),
+                        (Some(_), None) => true,
+                        _ => false,
+                    };
                 if !has_own_docblock_type && iface_param.type_hint.is_some() {
                     existing_param.type_hint = iface_param.type_hint.clone();
                 }
@@ -990,8 +991,8 @@ fn merge_interface_members_into(
 fn build_implements_substitution_map(
     iface_name: &str,
     iface: &ClassInfo,
-    all_implements_generics: &[(String, Vec<String>)],
-) -> HashMap<String, String> {
+    all_implements_generics: &[(String, Vec<PhpType>)],
+) -> HashMap<String, PhpType> {
     if iface.template_params.is_empty() || all_implements_generics.is_empty() {
         return HashMap::new();
     }

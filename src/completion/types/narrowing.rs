@@ -24,6 +24,7 @@ use mago_syntax::ast::*;
 ///     haystack's element type when the third argument is `true`.
 use std::sync::Arc;
 
+use crate::php_type::PhpType;
 use crate::types::{AssertionKind, ClassInfo, ParameterInfo, TypeAssertion};
 
 use super::conditional::extract_class_string_from_expr;
@@ -764,7 +765,7 @@ pub(in crate::completion) fn try_apply_custom_assert_narrowing(
             // ExpectedType $actual`), substitute it using the call-site
             // argument bound via `class-string<T>`.
             let effective_type =
-                resolve_assertion_template_type(&assertion.asserted_type, &info, ctx);
+                resolve_assertion_template_type(&assertion.asserted_type.to_string(), &info, ctx);
 
             if assertion.negated {
                 apply_instanceof_exclusion(&effective_type, ctx, results);
@@ -914,9 +915,14 @@ pub(in crate::completion) fn try_apply_assert_condition_narrowing(
                 // opposite + negated → include.
                 let should_exclude = assertion.negated ^ !applies_positively;
                 if should_exclude {
-                    apply_instanceof_exclusion(&assertion.asserted_type, ctx, results);
+                    apply_instanceof_exclusion(&assertion.asserted_type.to_string(), ctx, results);
                 } else {
-                    apply_instanceof_inclusion(&assertion.asserted_type, false, ctx, results);
+                    apply_instanceof_inclusion(
+                        &assertion.asserted_type.to_string(),
+                        false,
+                        ctx,
+                        results,
+                    );
                 }
             }
         }
@@ -980,7 +986,7 @@ fn apply_this_assert_condition_narrowing(
     // Collect (asserted_type, should_exclude) pairs from every current
     // candidate class that declares the method with a $this assertion.
     // We collect before mutating `results` to avoid borrow conflicts.
-    let mut to_apply: Vec<(String, bool)> = Vec::new();
+    let mut to_apply: Vec<(PhpType, bool)> = Vec::new();
     for class_info in results.iter() {
         let method = class_info
             .methods
@@ -1003,10 +1009,11 @@ fn apply_this_assert_condition_narrowing(
     }
 
     for (asserted_type, should_exclude) in to_apply {
+        let type_str = asserted_type.to_string();
         if should_exclude {
-            apply_instanceof_exclusion(&asserted_type, ctx, results);
+            apply_instanceof_exclusion(&type_str, ctx, results);
         } else {
-            apply_instanceof_inclusion(&asserted_type, false, ctx, results);
+            apply_instanceof_inclusion(&type_str, false, ctx, results);
         }
     }
 }
@@ -1658,9 +1665,14 @@ pub(in crate::completion) fn apply_guard_clause_narrowing(
             {
                 let should_exclude = assertion.negated ^ !applies_positively;
                 if should_exclude {
-                    apply_instanceof_exclusion(&assertion.asserted_type, ctx, results);
+                    apply_instanceof_exclusion(&assertion.asserted_type.to_string(), ctx, results);
                 } else {
-                    apply_instanceof_inclusion(&assertion.asserted_type, false, ctx, results);
+                    apply_instanceof_inclusion(
+                        &assertion.asserted_type.to_string(),
+                        false,
+                        ctx,
+                        results,
+                    );
                 }
             }
         }
