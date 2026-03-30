@@ -31,14 +31,10 @@ async fn complete_at(
         context: None,
     };
 
-    match backend
-        .completion(completion_params)
-        .await
-        .unwrap()
-        .unwrap()
-    {
-        CompletionResponse::Array(items) => items,
-        CompletionResponse::List(list) => list.items,
+    match backend.completion(completion_params).await.unwrap() {
+        Some(CompletionResponse::Array(items)) => items,
+        Some(CompletionResponse::List(list)) => list.items,
+        None => Vec::new(),
     }
 }
 

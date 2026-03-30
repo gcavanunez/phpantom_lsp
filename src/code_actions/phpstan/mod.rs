@@ -30,6 +30,9 @@
 //! - **Fix prefixed class name** — when PHPStan reports
 //!   `class.prefixed` (a class name with an unnecessary leading
 //!   backslash), offer to replace it with the corrected name.
+//! - **Remove always-true `assert()`** — when PHPStan reports
+//!   `function.alreadyNarrowedType` for an `assert()` call, offer to
+//!   delete the no-op statement.
 //! - **PHPStan ignore** — when the cursor is on a line with a PHPStan
 //!   error, offer to add `@phpstan-ignore <identifier>`.  When PHPStan
 //!   reports an unnecessary ignore, offer to remove it.
@@ -41,6 +44,7 @@ pub(crate) mod fix_phpdoc_type;
 pub(crate) mod fix_prefixed_class;
 mod ignore;
 pub(crate) mod new_static;
+pub(crate) mod remove_assert;
 pub(crate) mod remove_override;
 mod remove_throws;
 
@@ -102,6 +106,9 @@ impl Backend {
 
         // ── Fix prefixed class name ─────────────────────────────────
         self.collect_fix_prefixed_class_actions(uri, content, params, out);
+
+        // ── Remove always-true assert() ─────────────────────────────
+        self.collect_remove_assert_actions(uri, content, params, out);
     }
 }
 

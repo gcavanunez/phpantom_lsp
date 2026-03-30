@@ -102,7 +102,7 @@ impl Backend {
                 diagnostics: Some(diags.clone()),
                 edit: None,
                 command: None,
-                is_preferred: None,
+                is_preferred: Some(false),
                 disabled: None,
                 data: Some(make_code_action_data(
                     "phpstan.addIgnore",

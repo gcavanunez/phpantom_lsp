@@ -8,6 +8,15 @@ pub fn create_test_backend() -> Backend {
     Backend::new_test()
 }
 
+/// Create a test backend with the **full embedded stub indices** loaded.
+///
+/// This is much slower than [`create_test_backend`] — only use it for
+/// tests that specifically exercise behaviour backed by phpstorm-stubs
+/// (e.g. deep inheritance through `\Exception`, built-in attributes).
+pub fn create_test_backend_with_full_stubs() -> Backend {
+    Backend::new_test_with_full_stubs()
+}
+
 // Minimal PHP stubs for UnitEnum and BackedEnum so that tests exercising
 // the "embedded stub" code-path work without `composer install`.
 static UNIT_ENUM_STUB: &str = "\

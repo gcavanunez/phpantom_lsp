@@ -21,10 +21,11 @@ within the same impact tier.
 
 ## Sprint 4 — Refactoring toolkit
 
-| #   | Item                                                                                                                          | Impact | Effort |
-| --- | ----------------------------------------------------------------------------------------------------------------------------- | ------ | ------ |
-| H14 | [`throws.unusedType` — narrow `@throws` to actual thrown types](todo/phpstan-actions.md#h14-throwsunusedtype-narrow--narrow-throws-to-actual-thrown-types) | Medium | Medium |
-|     | **Release 0.7.0**                                                                                                             |        |        |
+| #   | Item                                                                                                                                              | Impact | Effort |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------ |
+| H25 | [`function.alreadyNarrowedType` — remove always-true `assert()`](todo/phpstan-actions.md#h25-functionalreadynarrowedtype--remove-always-true-assert) | Low    | Low    |
+| H26 | [`@phpstan-ignore` action must never be the preferred quickfix](todo/phpstan-actions.md#h26-phpstan-ignore-action-must-never-be-the-preferred-quickfix) | Low    | Low    |
+|     | **Release 0.7.0**                                                                                                                                 |        |        |
 
 ## Sprint 5 — Polish for office adoption
 

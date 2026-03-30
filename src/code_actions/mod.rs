@@ -241,6 +241,8 @@ impl Backend {
             | "phpstan.newStatic.finalConstructor" => self.resolve_new_static(&data, &content),
             // ── Fix prefixed class name ─────────────────────────────
             "phpstan.fixPrefixedClass" => self.resolve_fix_prefixed_class(&data, &content),
+            // ── Remove always-true assert() ─────────────────────────
+            "phpstan.removeAssert" => self.resolve_remove_assert(&data, &content),
             // ── Change visibility (parent-aware) ────────────────────
             "refactor.changeVisibility" => self.resolve_change_visibility(&data, &content),
             // ── Unused import quickfixes ─────────────────────────────

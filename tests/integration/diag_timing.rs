@@ -9,14 +9,14 @@
 //! invalidation, classes from unedited files stay cached and the second
 //! pass is significantly faster.
 
-use crate::common::{create_psr4_workspace, create_test_backend};
+use crate::common::{create_psr4_workspace, create_test_backend_with_full_stubs};
 use std::time::Instant;
 
 #[tokio::test]
 async fn time_diagnostics_on_example_php() {
     let content = std::fs::read_to_string("example.php").expect("failed to read example.php");
     let uri = "file:///example.php";
-    let backend = create_test_backend();
+    let backend = create_test_backend_with_full_stubs();
     backend.update_ast(uri, &content);
 
     // ── Deprecated diagnostics ──────────────────────────────────────────
@@ -85,7 +85,7 @@ async fn time_diagnostics_on_example_php() {
 async fn time_diagnostics_warm_cache_example_php() {
     let content = std::fs::read_to_string("example.php").expect("failed to read example.php");
     let uri = "file:///example.php";
-    let backend = create_test_backend();
+    let backend = create_test_backend_with_full_stubs();
     backend.update_ast(uri, &content);
 
     // ── Cold run: populates the resolved-class cache ────────────────────
@@ -427,7 +427,7 @@ async fn time_diagnostics_on_phpstan_fixture() {
         }
     };
     let uri = "file:///bench/phpstan.php";
-    let backend = create_test_backend();
+    let backend = create_test_backend_with_full_stubs();
     backend.update_ast(uri, &content);
 
     let start = Instant::now();
@@ -493,7 +493,7 @@ async fn time_diagnostics_warm_cache_phpstan() {
         }
     };
     let uri = "file:///bench/phpstan.php";
-    let backend = create_test_backend();
+    let backend = create_test_backend_with_full_stubs();
     backend.update_ast(uri, &content);
 
     // ── Cold run ────────────────────────────────────────────────────────

@@ -308,6 +308,19 @@ fn is_stale_phpstan_diagnostic(diag: &Diagnostic, content: &str) -> bool {
         );
     }
 
+    // ── function.alreadyNarrowedType — always-true assert() removed ─
+    // Only for `assert()` calls (not other functions sharing the same
+    // identifier).  The diagnostic is stale when `assert(` no longer
+    // appears on the diagnostic line.
+    if identifier == "function.alreadyNarrowedType"
+        && diag.message.starts_with("Call to function assert()")
+    {
+        return crate::code_actions::phpstan::remove_assert::is_remove_assert_stale(
+            content,
+            diag.range.start.line as usize,
+        );
+    }
+
     false
 }
 

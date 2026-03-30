@@ -3855,6 +3855,19 @@ class Svc {
 
     // ── self::/static::/parent:: in static access subjects ──────────
 
+    fn create_enum_backend() -> Backend {
+        let mut stubs = std::collections::HashMap::new();
+        stubs.insert(
+            "UnitEnum",
+            "<?php\ninterface UnitEnum {\n    /** @return static[] */\n    public static function cases(): array;\n    public readonly string $name;\n}\n",
+        );
+        stubs.insert(
+            "BackedEnum",
+            "<?php\ninterface BackedEnum extends UnitEnum {\n    public static function from(int|string $value): static;\n    public static function tryFrom(int|string $value): ?static;\n    public readonly int|string $value;\n}\n",
+        );
+        Backend::new_test_with_stubs(stubs)
+    }
+
     #[test]
     fn no_diagnostic_for_self_enum_case_value() {
         let php = r#"<?php
@@ -3876,7 +3889,7 @@ enum SizeUnit: string {
     }
 }
 "#;
-        let backend = Backend::new_test();
+        let backend = create_enum_backend();
         let diags = collect(&backend, "file:///test.php", php);
         assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
     }
@@ -3893,7 +3906,7 @@ enum Currency: string {
     }
 }
 "#;
-        let backend = Backend::new_test();
+        let backend = create_enum_backend();
         let diags = collect(&backend, "file:///test.php", php);
         assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
     }
@@ -3910,7 +3923,7 @@ enum Color: int {
     }
 }
 "#;
-        let backend = Backend::new_test();
+        let backend = create_enum_backend();
         let diags = collect(&backend, "file:///test.php", php);
         assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
     }

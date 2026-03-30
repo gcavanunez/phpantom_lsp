@@ -1,4 +1,4 @@
-use crate::common::{create_psr4_workspace, create_test_backend};
+use crate::common::{create_psr4_workspace, create_test_backend, create_test_backend_with_full_stubs};
 use tower_lsp::LanguageServer;
 use tower_lsp::lsp_types::*;
 
@@ -1793,7 +1793,7 @@ async fn test_interface_virtual_members_visible_through_parent_chain() {
 /// Exception).
 #[tokio::test]
 async fn test_completion_deep_inheritance_through_stubs() {
-    let backend = create_test_backend();
+    let backend = create_test_backend_with_full_stubs();
 
     let uri = Url::parse("file:///deep_chain.php").unwrap();
     let text = concat!(

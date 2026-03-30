@@ -527,6 +527,10 @@ impl Backend {
     /// Returns a `Backend` with no LSP client, empty maps, and the full
     /// embedded stub indices.  Each public constructor customises only the
     /// fields that differ.
+    ///
+    /// **Note:** This loads the full embedded stub indices (1,455 classes,
+    /// 5,023 functions, 8,119 constants).  Test code should use
+    /// [`test_defaults`] instead, which leaves stubs empty.
     fn defaults() -> Self {
         Self {
             name: "PHPantom".to_string(),
@@ -577,6 +581,62 @@ impl Backend {
         }
     }
 
+    /// Shared defaults for test Backend constructors.
+    ///
+    /// Identical to [`defaults`] but with **empty** stub indices, avoiding
+    /// the cost of building three large `HashMap`s (14,597 entries total)
+    /// that most tests never consult.  Tests that need specific stubs
+    /// override the relevant fields after construction.
+    fn test_defaults() -> Self {
+        Self {
+            name: "PHPantom".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Mutex::new(String::new()),
+            open_files: Arc::new(RwLock::new(HashMap::new())),
+            ast_map: Arc::new(RwLock::new(HashMap::new())),
+            symbol_maps: Arc::new(RwLock::new(HashMap::new())),
+            parse_errors: Arc::new(RwLock::new(HashMap::new())),
+            client: None,
+            workspace_root: Arc::new(RwLock::new(None)),
+            vendor_uri_prefixes: Mutex::new(Vec::new()),
+            vendor_dir_paths: Mutex::new(Vec::new()),
+            psr4_mappings: Arc::new(RwLock::new(Vec::new())),
+            use_map: Arc::new(RwLock::new(HashMap::new())),
+            resolved_names: Arc::new(RwLock::new(HashMap::new())),
+            namespace_map: Arc::new(RwLock::new(HashMap::new())),
+            global_functions: Arc::new(RwLock::new(HashMap::new())),
+            global_defines: Arc::new(RwLock::new(HashMap::new())),
+            autoload_function_index: Arc::new(RwLock::new(HashMap::new())),
+            autoload_constant_index: Arc::new(RwLock::new(HashMap::new())),
+            autoload_file_paths: Arc::new(RwLock::new(Vec::new())),
+            class_index: Arc::new(RwLock::new(HashMap::new())),
+            fqn_index: Arc::new(RwLock::new(HashMap::new())),
+            class_not_found_cache: Arc::new(RwLock::new(HashSet::new())),
+            classmap: Arc::new(RwLock::new(HashMap::new())),
+            phar_archives: Arc::new(RwLock::new(HashMap::new())),
+            stub_index: RwLock::new(HashMap::new()),
+            stub_function_index: RwLock::new(HashMap::new()),
+            stub_constant_index: RwLock::new(HashMap::new()),
+            resolved_class_cache: virtual_members::new_resolved_class_cache(),
+            php_version: Mutex::new(types::PhpVersion::default()),
+            diag_version: Arc::new(AtomicU64::new(0)),
+            diag_notify: Arc::new(tokio::sync::Notify::new()),
+            diag_pending_uris: Arc::new(Mutex::new(Vec::new())),
+            diag_last_slow: Arc::new(Mutex::new(HashMap::new())),
+            phpstan_notify: Arc::new(tokio::sync::Notify::new()),
+            phpstan_pending_uri: Arc::new(Mutex::new(None)),
+            phpstan_last_diags: Arc::new(Mutex::new(HashMap::new())),
+            diag_result_ids: Arc::new(Mutex::new(HashMap::new())),
+            diag_last_full: Arc::new(Mutex::new(HashMap::new())),
+            diag_suppressed: Arc::new(Mutex::new(Vec::new())),
+            supports_pull_diagnostics: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            supports_file_rename: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            supports_work_done_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            config: Mutex::new(config::Config::default()),
+        }
+    }
+
     /// Create a new `Backend` connected to an LSP client.
     pub fn new(client: Client) -> Self {
         Self {
@@ -587,10 +647,23 @@ impl Backend {
 
     /// Create a `Backend` without an LSP client (for unit / integration tests).
     ///
-    /// Calls [`set_php_version`] with the default version so that
-    /// version-aware stub filtering (e.g. `@removed` eviction) runs
-    /// exactly as it does during real server initialization.
+    /// Uses empty stub indices for fast construction.  Tests that need
+    /// specific stubs should use [`new_test_with_stubs`] or
+    /// [`new_test_with_all_stubs`] instead.
     pub fn new_test() -> Self {
+        virtual_members::phpdoc::clear_mixin_cache();
+        Self::test_defaults()
+    }
+
+    /// Create a `Backend` for tests that need the full embedded stub
+    /// indices (e.g. benchmarks, end-to-end tests exercising real PHP
+    /// stdlib classes).
+    ///
+    /// This is significantly slower than [`new_test`] because it builds
+    /// three large `HashMap`s from the embedded phpstorm-stubs.  Only
+    /// use this when the test specifically exercises stub-backed
+    /// behaviour.
+    pub fn new_test_with_full_stubs() -> Self {
         virtual_members::phpdoc::clear_mixin_cache();
         let backend = Self::defaults();
         backend.set_php_version(backend.php_version());
@@ -605,7 +678,7 @@ impl Backend {
         virtual_members::phpdoc::clear_mixin_cache();
         let backend = Self {
             stub_index: RwLock::new(stub_index),
-            ..Self::defaults()
+            ..Self::test_defaults()
         };
         backend.set_php_version(backend.php_version());
         backend
@@ -626,7 +699,7 @@ impl Backend {
             stub_index: RwLock::new(stub_index),
             stub_function_index: RwLock::new(stub_function_index),
             stub_constant_index: RwLock::new(stub_constant_index),
-            ..Self::defaults()
+            ..Self::test_defaults()
         };
         backend.set_php_version(backend.php_version());
         backend
@@ -639,13 +712,11 @@ impl Backend {
         psr4_mappings: Vec<composer::Psr4Mapping>,
     ) -> Self {
         virtual_members::phpdoc::clear_mixin_cache();
-        let backend = Self {
+        Self {
             workspace_root: Arc::new(RwLock::new(Some(workspace_root))),
             psr4_mappings: Arc::new(RwLock::new(psr4_mappings)),
-            ..Self::defaults()
-        };
-        backend.set_php_version(backend.php_version());
-        backend
+            ..Self::test_defaults()
+        }
     }
 
     // ── Public accessors for integration tests ──────────────────────────

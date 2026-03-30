@@ -1,4 +1,4 @@
-use crate::common::create_test_backend;
+use crate::common::{create_test_backend, create_test_backend_with_full_stubs};
 use phpantom_lsp::Backend;
 use tower_lsp::LanguageServer;
 use tower_lsp::lsp_types::*;
@@ -809,7 +809,7 @@ async fn attribute_context_no_following_declaration_in_class() {
 /// a method.
 #[tokio::test]
 async fn attribute_context_shows_builtin_override() {
-    let backend = create_test_backend();
+    let backend = create_test_backend_with_full_stubs();
 
     let uri = Url::parse("file:///test_attr_builtin.php").unwrap();
     let text = concat!(

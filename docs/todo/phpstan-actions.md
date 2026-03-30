@@ -133,27 +133,6 @@ class docblock contains `@property ... $bar`.
 
 ---
 
-### H14. `throws.unusedType` (narrow) — Narrow `@throws` to actual thrown types
-
-**Identifier:** `throws.unusedType`
-**Tip (in message):** `You can narrow the thrown type with PHPDoc tag @throws {narrowed_type}.`
-
-When the tip (after the `\n` separator in the message) contains
-`You can narrow the thrown type`, parse the narrowed type using:
-`@throws (.+)\.?$`
-
-Offer to replace the existing `@throws` tag with the narrowed type. This is
-different from the existing "Remove @throws" action: instead of removing the
-tag entirely, it replaces it with a more precise type.
-
-The existing `remove_throws.rs` already handles `throws.unusedType` for the
-"remove" case. This new action should be offered alongside it, with
-"Narrow @throws" marked as `is_preferred` (since it preserves documentation).
-
-**Stale detection:** the `@throws` tag now matches the narrowed type.
-
----
-
 ### H15. Template bound from tip — Add `@template T of X`
 
 **Identifiers:** various (`generics.*`, `phpDoc.*` — needs investigation)
@@ -328,12 +307,44 @@ the list.
 
 ---
 
+### H25. `function.alreadyNarrowedType` — Remove always-true `assert()`
+
+**Identifier:** `function.alreadyNarrowedType`
+**Message:** `Call to function assert() with {type} will always evaluate to true.`
+
+Only match when the message starts with `Call to function assert()`. Other
+functions (`is_bool()`, `instanceof`, etc.) use the same identifier but
+appear inside conditions where removal would change control flow.
+
+Delete the entire `assert(...)` statement line. This is safe because
+`assert()` with an always-true condition is a no-op.
+
+Primary value is for a future CLI batch-fix mode where users can auto-apply
+quickfixes across a codebase.
+
+**Stale detection:** the diagnostic line no longer contains `assert(`.
+
+---
+
+### H26. `@phpstan-ignore` action must never be the preferred quickfix
+
+**Identifier:** all
+
+The "Ignore PHPStan error" action currently uses `is_preferred: None`. When
+no other quickfix sets `is_preferred: Some(true)`, some editors treat `None`
+the same as absent, which can cause the ignore action to be applied on the
+keyboard shortcut (e.g. Ctrl+. then Enter).
+
+Change the ignore action to always use `is_preferred: Some(false)` so that
+a real quickfix is always chosen over suppression when available.
+
+---
+
 ## Suggested implementation order
 
 Based on effort-to-value ratio and shared infrastructure:
 
-1. **H14** — narrow `@throws` (extends existing `remove_throws.rs`)
-2. **H6** — return type update
+1. **H6** — return type update
 3. **H10** — remove unused union member
 4. **H12** — prefixed class name
 5. **H4** — unset by-ref foreach variable
@@ -372,7 +383,7 @@ let (message, tip) = match diag.message.split_once('\n') {
 };
 ```
 
-Actions that depend on tip text (H4, H12, H14, H15, H20) should use this
+Actions that depend on tip text (H4, H12, H15, H20) should use this
 pattern. The tip text has ANSI/HTML tags already stripped by `strip_ansi_tags`.
 
 ### Stale diagnostic detection
