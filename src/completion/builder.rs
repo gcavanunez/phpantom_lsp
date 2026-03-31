@@ -146,18 +146,20 @@ fn attribute_placeholder(param: &ParameterInfo) -> (String, String, String) {
         return (String::new(), default.clone(), String::new());
     }
 
-    // Infer from the type hint.
-    let type_hint_string = param.type_hint_str();
-    let native_str = param.native_type_hint.as_ref().map(|t| t.to_string());
-    let hint = native_str
-        .as_deref()
-        .or(type_hint_string.as_deref())
-        .unwrap_or("");
+    // Infer from the type hint.  Prefer the native hint over the
+    // docblock hint, and unwrap nullable wrappers (`?string` or
+    // `string|null` both yield `string`) via `PhpType::non_null_type()`
+    // instead of manual `?`-prefix stripping on strings.
+    let hint = param.native_type_hint.as_ref().or(param.type_hint.as_ref());
+    let base_str = match hint {
+        Some(t) => match t.non_null_type() {
+            Some(inner) => inner.to_string(),
+            None => t.to_string(),
+        },
+        None => String::new(),
+    };
 
-    // Strip leading `?` for nullable types (e.g. `?string` → `string`).
-    let base = crate::util::strip_nullable(hint);
-
-    match base.to_lowercase().as_str() {
+    match base_str.to_lowercase().as_str() {
         "string" => {
             // Use the parameter name (without $) as a descriptive
             // placeholder.  Quotes sit outside the tab stop so typing

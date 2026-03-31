@@ -2514,7 +2514,9 @@ fn build_raw_return_type_for_docblock(
             // Prefer the docblock @return type when it carries concrete
             // generics (e.g. `Collection<User>`) over the native hint
             // (e.g. `Collection`).
-            if !enclosing_docblock_return.is_empty() && enclosing_docblock_return.contains('<') {
+            if !enclosing_docblock_return.is_empty()
+                && PhpType::parse(enclosing_docblock_return).has_type_parameters()
+            {
                 enclosing_docblock_return.to_string()
             } else {
                 trailing_return_type.to_string()
@@ -2522,7 +2524,9 @@ fn build_raw_return_type_for_docblock(
         }
         ReturnStrategy::VoidGuards | ReturnStrategy::UniformGuards(_) => "bool".to_string(),
         ReturnStrategy::SentinelNull => {
-            if !enclosing_docblock_return.is_empty() && enclosing_docblock_return.contains('<') {
+            if !enclosing_docblock_return.is_empty()
+                && PhpType::parse(enclosing_docblock_return).has_type_parameters()
+            {
                 enclosing_docblock_return.to_string()
             } else if !trailing_return_type.is_empty() {
                 trailing_return_type.to_string()

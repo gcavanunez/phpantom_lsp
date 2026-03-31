@@ -26,7 +26,7 @@ use super::cursor_context::{CursorContext, MemberContext, find_cursor_context};
 use crate::Backend;
 use crate::completion::phpdoc::generation::enrichment_plain;
 use crate::completion::source::throws_analysis::{self, ThrowsContext};
-use crate::docblock::is_compatible_refinement;
+use crate::docblock::is_compatible_refinement_typed;
 use crate::docblock::parser::{DocblockInfo, parse_docblock_for_tags};
 use crate::docblock::type_strings::split_type_token;
 use crate::php_type::PhpType;
@@ -624,10 +624,14 @@ fn check_needs_update(
 /// contradiction. But docblock says `non-empty-string` while native says
 /// `string` is a refinement (not a contradiction).
 fn is_type_contradiction(doc_type: &str, native_type: &str) -> bool {
-    let doc_clean = normalize_type_for_comparison(doc_type);
-    let native_clean = normalize_type_for_comparison(native_type);
+    let doc_parsed = PhpType::parse(doc_type);
+    let native_parsed = PhpType::parse(native_type);
 
-    if doc_clean == native_clean {
+    // `PhpType::equivalent` handles `?T` ↔ `T|null`, order-independent
+    // unions, and FQN shortening.  It does not do case-insensitive
+    // comparison, but PHP class names in practice come from the same
+    // source so casing matches.
+    if doc_parsed.equivalent(&native_parsed) {
         return false;
     }
 
@@ -636,71 +640,34 @@ fn is_type_contradiction(doc_type: &str, native_type: &str) -> bool {
     // `list<User>` refines `array`, `positive-int` refines `int`).
     // This uses the shared refinement checker that also guards
     // `resolve_effective_type`.
-    let native_parsed_raw = PhpType::parse(&native_clean);
-    let doc_parsed_raw = PhpType::parse(&doc_clean);
-    let native_core = native_parsed_raw
+    let native_core = native_parsed
         .non_null_type()
-        .unwrap_or_else(|| native_parsed_raw.clone());
-    let doc_core = doc_parsed_raw
+        .unwrap_or_else(|| native_parsed.clone());
+    let doc_core = doc_parsed
         .non_null_type()
-        .unwrap_or_else(|| doc_parsed_raw.clone());
-    let native_str = native_core
-        .base_name()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| native_core.to_string());
-    let doc_str = doc_core
-        .base_name()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| doc_core.to_string());
-    if is_compatible_refinement(&doc_str, &native_str.to_ascii_lowercase()) {
+        .unwrap_or_else(|| doc_parsed.clone());
+    if is_compatible_refinement_typed(&doc_core, &native_core.to_string().to_ascii_lowercase()) {
         return false;
     }
 
-    // If the doc type contains `|` and the native type doesn't, it might be
-    // a broader docblock type — that's also a contradiction.
-    // If the native type contains `|`, compare the union components.
-
-    // Simple heuristic: normalize both and compare base types.
-    let doc_parsed = PhpType::parse(&doc_clean);
-    let native_parsed = PhpType::parse(&native_clean);
+    // For single-member types, compare base names directly.  If they
+    // differ and neither is a refinement of the other, it is a
+    // contradiction.
     let doc_bases = doc_parsed.union_members();
     let native_bases = native_parsed.union_members();
 
-    // If every native base appears in doc bases (or a refinement thereof),
-    // it's not a contradiction.
-    // For simplicity, if the base types are completely different, it's a
-    // contradiction.
-    if doc_bases.len() == 1 && native_bases.len() == 1 {
-        let db = doc_bases[0].to_string();
-        let nb = native_bases[0].to_string();
-        if db != nb && !is_compatible_refinement(&db, &nb) {
-            return true;
-        }
+    if doc_bases.len() == 1
+        && native_bases.len() == 1
+        && !doc_bases[0].equivalent(native_bases[0])
+        && !is_compatible_refinement_typed(
+            doc_bases[0],
+            &native_bases[0].to_string().to_ascii_lowercase(),
+        )
+    {
+        return true;
     }
 
     false
-}
-
-/// Normalize a type string for comparison: strip leading `\`, lowercase,
-/// normalize nullable.
-fn normalize_type_for_comparison(t: &str) -> String {
-    let parsed = PhpType::parse(t).shorten();
-    // Expand `?T` → `T|null` so that `?Foo` and `Foo|null` normalise
-    // to the same string.
-    let expanded = match &parsed {
-        PhpType::Nullable(inner) => {
-            PhpType::Union(vec![inner.as_ref().clone(), PhpType::Named("null".into())])
-        }
-        other => other.clone(),
-    };
-    // Sort union components for order-independent comparison.
-    let members = expanded.union_members();
-    let mut parts: Vec<String> = members
-        .iter()
-        .map(|m| m.to_string().to_lowercase())
-        .collect();
-    parts.sort();
-    parts.join("|")
 }
 
 /// Build the updated docblock text.

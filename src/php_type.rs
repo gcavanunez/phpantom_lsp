@@ -1423,6 +1423,27 @@ impl PhpType {
         }
     }
 
+    /// Whether this type carries generic type parameters (e.g.
+    /// `Collection<int, User>`).
+    ///
+    /// Returns `true` for `Generic`, `Array` (which represents `T[]`),
+    /// and composite types that contain a generic member.  Returns
+    /// `false` for bare named types like `Collection` without `<…>`.
+    ///
+    /// This replaces the `.contains('<')` string heuristic with a
+    /// structured check.
+    pub fn has_type_parameters(&self) -> bool {
+        match self {
+            PhpType::Generic(..) => true,
+            PhpType::Array(..) => true,
+            PhpType::Nullable(inner) => inner.has_type_parameters(),
+            PhpType::Union(members) | PhpType::Intersection(members) => {
+                members.iter().any(|m| m.has_type_parameters())
+            }
+            _ => false,
+        }
+    }
+
     pub fn equivalent(&self, other: &PhpType) -> bool {
         if self == other {
             return true;

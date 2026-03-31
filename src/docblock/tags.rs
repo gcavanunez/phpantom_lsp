@@ -1280,18 +1280,12 @@ fn is_bare_primitive_name(name: &str) -> bool {
 /// This is the single source of truth for refinement compatibility and
 /// is used by both `should_override_type` and the update-docblock
 /// contradiction checker.
-pub(crate) fn is_compatible_refinement(docblock_type: &str, native_lower: &str) -> bool {
-    is_compatible_refinement_typed(&PhpType::parse(docblock_type), native_lower)
-}
-
-/// Like [`is_compatible_refinement`] but accepts a pre-parsed [`PhpType`]
-/// to avoid a parse→stringify→reparse round-trip when the caller already
-/// has a structured type.
 ///
-/// Extracts the outermost type name from the docblock type, stripping
-/// generic parameters, shape braces, and callable signatures.  Unlike
-/// `base_name()` this includes scalar names (`array`, `int`, …) which
-/// are needed for the refinement checks.
+/// Accepts a pre-parsed [`PhpType`] to avoid a parse-stringify-reparse
+/// round-trip.  Extracts the outermost type name from the docblock type,
+/// stripping generic parameters, shape braces, and callable signatures.
+/// Unlike `base_name()` this includes scalar names (`array`, `int`, ...)
+/// which are needed for the refinement checks.
 pub(crate) fn is_compatible_refinement_typed(doc_type: &PhpType, native_lower: &str) -> bool {
     let doc_base = extract_base_name_lower(doc_type);
 

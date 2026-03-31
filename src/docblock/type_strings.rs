@@ -11,6 +11,8 @@
 //! classification, nullable handling, self/static replacement) have
 //! been migrated to `PhpType` methods in `php_type.rs`.
 
+use crate::php_type::PhpType;
+
 /// All built-in type keywords offered in PHPDoc type completion contexts.
 ///
 /// Includes primitive PHP types (`int`, `string`, `array`, …), PHPDoc-only
@@ -257,93 +259,55 @@ fn consume_union_intersection_suffix(s: &str, pos: usize) -> usize {
     end
 }
 
-/// Split a type string on `|` at nesting depth 0, respecting `<…>`,
-/// `(…)`, and `{…}` nesting.
-///
-/// Returns a `Vec` with at least one element.  If there is no `|` at
-/// depth 0, the returned vector contains the entire input as a single
-/// element.
-///
-/// # Examples
-///
-/// - `"Foo|null"` → `["Foo", "null"]`
-/// - `"Collection<int|string, User>|null"` → `["Collection<int|string, User>", "null"]`
-/// - `"array{name: string|int}|null"` → `["array{name: string|int}", "null"]`
-/// - `"Foo"` → `["Foo"]`
-pub(crate) fn split_union_depth0(s: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth_angle = 0i32;
-    let mut depth_paren = 0i32;
-    let mut depth_brace = 0i32;
-    let mut start = 0;
-
-    for (i, c) in s.char_indices() {
-        match c {
-            '<' => depth_angle += 1,
-            '>' => depth_angle -= 1,
-            '(' => depth_paren += 1,
-            ')' => depth_paren -= 1,
-            '{' => depth_brace += 1,
-            '}' => depth_brace -= 1,
-            '|' if depth_angle == 0 && depth_paren == 0 && depth_brace == 0 => {
-                parts.push(&s[start..i]);
-                start = i + c.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    parts.push(&s[start..]);
-    parts
-}
-
 /// Clean a raw type string from a docblock, **preserving** generic
 /// parameters so that downstream resolution can apply generic
 /// substitution.
 ///
 /// Specifically this function:
-///   - Strips leading `\` (PHP fully-qualified prefix)
 ///   - Strips trailing punctuation (`.`, `,`) that could leak from
 ///     docblock descriptions
-///   - Handles `TypeName|null` → `TypeName` (using depth-0 splitting so
-///     that `Collection<int|string, User>|null` is handled correctly)
+///   - Handles `TypeName|null` → `TypeName` (using `PhpType::parse` for
+///     structured union handling so that `Collection<int|string, User>|null`
+///     is handled correctly)
+///   - Preserves `?TypeName` (nullable shorthand is not stripped)
+///   - Preserves leading `\` (fully-qualified names)
 ///
 /// Generic parameters like `<int, User>` are **not** stripped.  Use
 /// `PhpType::parse(s).base_name()` when you need just the unparameterised
 /// class name.
 pub fn clean_type(raw: &str) -> String {
-    // Preserve the leading `\` — it marks the type as a fully-qualified
-    // name (FQN).  Stripping it would make the name look relative,
-    // causing `resolve_type_string` to incorrectly prepend the current
-    // file's namespace (e.g. `\Illuminate\Builder` would become
-    // `App\Models\Illuminate\Builder`).  Downstream consumers
-    // (`type_hint_to_classes`, `resolve_name`, `resolve_class_name`)
-    // all handle `\`-prefixed names correctly.
-    let s = raw;
-
     // Strip trailing punctuation that could leak from docblocks
     // (e.g. trailing `.` or `,` in descriptions).
-    // Be careful not to strip `,` or `.` that is inside `<…>`.
-    let s = s.trim_end_matches(['.', ',']);
+    let s = raw.trim_end_matches(['.', ',']);
 
-    // Handle `TypeName|null` → extract the non-null part, using depth-0
-    // splitting so that `|` inside `<…>` is not mistaken for a union
-    // separator.
-    let parts = split_union_depth0(s);
-    if parts.len() > 1 {
-        let non_null: Vec<&str> = parts
-            .into_iter()
-            .map(|p| p.trim())
-            .filter(|p| !p.eq_ignore_ascii_case("null"))
+    // Parse into a structured PhpType to handle union splitting.
+    // This replaces the manual `split_union_depth0` approach with
+    // mago-type-syntax, which correctly handles all nesting.
+    let parsed = PhpType::parse(s);
+
+    // Only strip `null` from explicit unions (`Foo|null`), NOT from
+    // the `?Foo` nullable shorthand — callers rely on `?Foo` being
+    // preserved for display and tag extraction.
+    if let PhpType::Union(ref members) = parsed {
+        let non_null: Vec<&PhpType> = members
+            .iter()
+            .filter(|m| !matches!(m, PhpType::Named(n) if n.eq_ignore_ascii_case("null")))
             .collect();
 
-        if non_null.len() == 1 {
-            return non_null[0].to_string();
-        }
-        // Multiple non-null parts → keep as union
-        if non_null.len() > 1 {
-            return non_null.join("|");
+        match non_null.len() {
+            0 => {}
+            1 => return non_null[0].to_string(),
+            _ => {
+                return non_null
+                    .iter()
+                    .map(|m| m.to_string())
+                    .collect::<Vec<_>>()
+                    .join("|");
+            }
         }
     }
 
+    // For non-union types (including Nullable, Named, Generic, Raw,
+    // etc.), return the punctuation-stripped string as-is.
     s.to_string()
 }

@@ -43,7 +43,7 @@ pub(crate) mod type_strings;
 pub use parser::{DocblockInfo, parse_docblock_for_tags};
 
 // Core tags
-pub(crate) use tags::is_compatible_refinement;
+pub(crate) use tags::is_compatible_refinement_typed;
 pub use tags::{
     extract_all_param_tags, extract_all_param_tags_from_info, extract_deprecation_message,
     extract_deprecation_message_from_info, extract_deprecation_with_see,
