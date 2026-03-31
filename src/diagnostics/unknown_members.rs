@@ -3942,4 +3942,62 @@ class Config {
         let diags = collect(&backend, "file:///test.php", php);
         assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
     }
+
+    #[test]
+    fn no_diagnostic_for_method_on_anonymous_class_variable() {
+        // When `$model = new class extends Foo { ... }` is used outside
+        // the anonymous class body, member access on `$model` should
+        // resolve via the anonymous class's ClassInfo (which inherits
+        // from the parent and uses traits).
+        let php = r#"<?php
+class Base {
+    public function hello(): string { return "hi"; }
+}
+
+function test(): void {
+    $model = new class extends Base {};
+    $model->hello();
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
+
+    #[test]
+    fn no_diagnostic_for_trait_method_on_anonymous_class_variable() {
+        let php = r#"<?php
+trait Greetable {
+    public function greet(): string { return "hello"; }
+}
+
+function test(): void {
+    $obj = new class {
+        use Greetable;
+    };
+    $obj->greet();
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
+
+    #[test]
+    fn flags_unknown_method_on_anonymous_class_variable() {
+        let php = r#"<?php
+function test(): void {
+    $obj = new class {
+        public function known(): void {}
+    };
+    $obj->unknown();
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(
+            diags.iter().any(|d| d.message.contains("unknown")),
+            "expected unknown member diagnostic, got: {diags:?}",
+        );
+    }
 }

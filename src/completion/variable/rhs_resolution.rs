@@ -91,6 +91,19 @@ pub(in crate::completion) fn resolve_rhs_expression<'b>(
             vec![ResolvedType::from_type_string(PhpType::parse(&ts))]
         }
         Expression::Instantiation(inst) => resolve_rhs_instantiation(inst, ctx),
+        // ── Anonymous class: `new class extends Foo { … }` ──────────
+        // The parser stores these in `all_classes` with a synthetic
+        // name `__anonymous@<offset>`.  Look it up by matching the
+        // left-brace offset so the variable inherits the full
+        // ClassInfo (parent class, traits, methods, etc.).
+        Expression::AnonymousClass(anon) => {
+            let start = anon.left_brace.start.offset;
+            let name = format!("__anonymous@{}", start);
+            if let Some(cls) = ctx.all_classes.iter().find(|c| c.name == name) {
+                return ResolvedType::from_classes(vec![(**cls).clone()]);
+            }
+            vec![]
+        }
         Expression::ArrayAccess(array_access) => resolve_rhs_array_access(array_access, expr, ctx),
         Expression::Call(call) => resolve_rhs_call(call, expr, ctx),
         Expression::Access(access) => resolve_rhs_property_access(access, ctx),

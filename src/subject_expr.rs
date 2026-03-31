@@ -529,6 +529,7 @@ pub(crate) fn parse_new_expression_class(s: &str) -> Option<String> {
         .unwrap_or(rest.len());
     let class_name = rest[..end].trim_start_matches('\\');
     if class_name.is_empty()
+        || class_name == "class"
         || !class_name
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '\\')
