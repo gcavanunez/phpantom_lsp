@@ -1565,6 +1565,7 @@ fn resolve_rhs_static_call(
     let class_name = match static_call.class {
         Expression::Self_(_) => Some(current_class_name.to_string()),
         Expression::Static(_) => Some(current_class_name.to_string()),
+        Expression::Parent(_) => ctx.current_class.parent_class.clone(),
         Expression::Identifier(ident) => Some(ident.value().to_string()),
         // ── `$var::method()` where `$var` holds a class-string ──
         Expression::Variable(Variable::Direct(dv)) => {

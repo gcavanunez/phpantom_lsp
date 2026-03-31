@@ -693,40 +693,22 @@ $total->add($order->postage);
 
 ---
 
-## T18. `@implements` generic interface parameter type inference
-**Impact: Medium · Effort: Medium**
+## ~~T18. `@implements` generic interface parameter type inference~~ (ALREADY WORKS)
 
-When a class declares `@implements Interface<ConcreteType>`, the
-generic binding should propagate to method parameter types inherited
-from that interface.  Currently, parameters with no native type hint
-that get their type from the interface's template parameter remain
-unresolved.
+Investigated during analyze-triage iteration 7.  The `@implements`
+generic parameter inference already works correctly — the 7
+`ProductExport.php` diagnostics originally attributed to this were
+actually caused by deep Eloquent property chain resolution failures
+(T14).  The parameter `$productTranslation` resolves to
+`ProductTranslation` via `@implements WithMapping<ProductTranslation>`;
+the errors occur further down the chain at
+`$subcategory->category->section->translations[0]->name` where the
+relationship chain loses generic type information at depth.
 
-**Reproducer:**
-
-```php
-/** @implements WithMapping<ProductTranslation> */
-final class ProductExport implements WithMapping {
-    public function map($productTranslation): array {
-        $productTranslation->product;
-        // "subject type could not be resolved"
-    }
-}
-```
-
-**What should work:** `$productTranslation` should be typed
-`ProductTranslation` via the `@implements WithMapping<ProductTranslation>`
-annotation, which binds the interface's template parameter.
-
-**Where to fix:**
-- `src/parser/classes.rs` — interface generic binding propagation to
-  method parameters.  When resolving a method parameter's type, check
-  whether the containing class has an `@implements` annotation that
-  binds a template parameter used in the interface method's signature.
-
-**Discovered in:** analyze-triage iteration 7 (F14).  
-**Impact in shared codebase:** 7 diagnostics (ProductExport.php —
-`name` property L51, L54, L57, L62, L63, L64, L68).
+Verified with an isolated reproducer: a class with
+`@implements WithMapping<ProductTranslation>` and an untyped
+`map($row)` parameter correctly resolves `$row` to
+`ProductTranslation` with no analyzer errors.
 
 ---
 
@@ -800,36 +782,19 @@ ProductSeeder.php ×2).
 
 ---
 
-## T21. `parent::method()` return type resolution
-**Impact: Medium · Effort: Low**
+## ~~T21. `parent::method()` return type resolution~~ (FIXED)
 
-PHPantom doesn't resolve the return type of `parent::method()` calls.
-The return type is lost across the `parent::` dispatch, causing the
-assigned variable to be unresolved.
-
-**Reproducer:**
-
-```php
-class LoggedConnection extends BaseApiConnector {
-    public function call(...): Response {
-        $response = parent::call($endpoint, $params, $method, $headers);
-        $response->status();   // "Cannot resolve type of '$response'"
-        $response->body();     // same
-    }
-}
-```
-
-**What should work:** `parent::call()` should resolve to the parent
-class's method and return its declared return type (`Response`).
-
-**Where to fix:**
-- `src/completion/call_resolution.rs` — static dispatch for `parent::`.
-- `src/diagnostics/unknown_members.rs` — ensure `parent::` dispatches
-  correctly.
+Fixed by adding an `Expression::Parent` arm to `resolve_rhs_static_call`
+in `src/completion/variable/rhs_resolution.rs`.  The missing arm caused
+`parent::method()` calls to return an empty type, making the assigned
+variable unresolved.  The fix resolves `parent::` to the current class's
+`parent_class` name so that the method return type is looked up on the
+correct class.
 
 **Discovered in:** analyze-triage iteration 7 (F11).  
-**Impact in shared codebase:** 5 diagnostics (LoggedConnection.php ×4,
-Paypal/Connector.php ×1).
+**Impact:** Eliminated 7 diagnostics in luxplus/shared (5 direct +
+2 cascading: LoggedConnection.php ×4, Paypal/Connector.php ×1,
+plus 2 downstream chain errors).
 
 ---
 

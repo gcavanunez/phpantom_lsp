@@ -665,3 +665,93 @@ function test() {
         "Numeric keys should not produce a shape, got: {ts}"
     );
 }
+
+#[test]
+fn resolve_var_from_parent_static_call() {
+    use crate::types::MethodInfo;
+
+    let content = r#"<?php
+class Response {
+    public function status(): int { return 200; }
+    public function body(): string { return ''; }
+}
+
+class BaseConnector {
+    protected function call(string $endpoint): Response
+    {
+        return new Response();
+    }
+}
+
+class LoggedConnection extends BaseConnector {
+    protected function call(string $endpoint): Response
+    {
+        $response = parent::call($endpoint);
+        $response->
+    }
+}
+"#;
+
+    let response = {
+        let mut c = make_class("Response");
+        c.methods.push(MethodInfo {
+            is_static: false,
+            ..MethodInfo::virtual_method("status", Some("int"))
+        });
+        c.methods.push(MethodInfo {
+            is_static: false,
+            ..MethodInfo::virtual_method("body", Some("string"))
+        });
+        c
+    };
+    let base = {
+        let mut c = make_class("BaseConnector");
+        c.methods.push(MethodInfo {
+            is_static: false,
+            ..MethodInfo::virtual_method("call", Some("Response"))
+        });
+        c
+    };
+    let logged = {
+        let mut c = make_class("LoggedConnection");
+        c.parent_class = Some("BaseConnector".to_string());
+        c.methods.push(MethodInfo {
+            is_static: false,
+            ..MethodInfo::virtual_method("call", Some("Response"))
+        });
+        c
+    };
+
+    let all_classes: Vec<Arc<ClassInfo>> = vec![
+        Arc::new(response.clone()),
+        Arc::new(base.clone()),
+        Arc::new(logged.clone()),
+    ];
+    let class_loader = |name: &str| -> Option<Arc<ClassInfo>> {
+        match name {
+            "Response" => Some(Arc::new(response.clone())),
+            "BaseConnector" => Some(Arc::new(base.clone())),
+            "LoggedConnection" => Some(Arc::new(logged.clone())),
+            _ => None,
+        }
+    };
+
+    let cursor_offset = content.find("$response->").unwrap() as u32 + 11;
+
+    let results = ResolvedType::into_classes(super::resolve_variable_types(
+        "$response",
+        &logged,
+        &all_classes,
+        content,
+        cursor_offset,
+        &class_loader,
+        Loaders::default(),
+    ));
+
+    let names: Vec<&str> = results.iter().map(|c| c.name.as_str()).collect();
+    assert!(
+        names.contains(&"Response"),
+        "$response should resolve to Response via parent::call(), got: {:?}",
+        names
+    );
+}

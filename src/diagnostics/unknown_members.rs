@@ -4106,4 +4106,39 @@ function test(ServicePoint $sp): void {
             "expected no diagnostics for property chain array access on collection, got: {diags:?}",
         );
     }
+
+    #[test]
+    fn no_diagnostic_for_parent_static_call_return_type() {
+        // `parent::method()` should resolve the return type from the
+        // parent class so that member access on the result works.
+        let php = r#"<?php
+class Response {
+    public function status(): int { return 200; }
+    public function body(): string { return ''; }
+}
+
+class BaseConnector {
+    protected function call(string $endpoint): Response
+    {
+        return new Response();
+    }
+}
+
+class LoggedConnection extends BaseConnector {
+    protected function call(string $endpoint): Response
+    {
+        $response = parent::call($endpoint);
+        $response->status();
+        $response->body();
+        return $response;
+    }
+}
+"#;
+        let backend = Backend::new_test();
+        let diags = collect(&backend, "file:///test.php", php);
+        assert!(
+            diags.is_empty(),
+            "expected no diagnostics for parent::call() return type chain, got: {diags:?}",
+        );
+    }
 }
