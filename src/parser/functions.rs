@@ -61,12 +61,9 @@ fn try_extract_function_exists_guard<'a>(condition: &'a Expression<'a>) -> Optio
     if let Expression::Literal(Literal::String(lit_str)) = first_expr {
         // `value` is the unquoted content; fall back to stripping quotes
         // from `raw`.
-        let name = lit_str.value.or_else(|| {
-            let raw = lit_str.raw;
-            raw.strip_prefix('\'')
-                .and_then(|s| s.strip_suffix('\''))
-                .or_else(|| raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-        })?;
+        let name = lit_str
+            .value
+            .or_else(|| crate::util::unquote_php_string(lit_str.raw))?;
         if !name.is_empty() {
             return Some(name);
         }

@@ -24,7 +24,7 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::code_actions::{CodeActionData, make_code_action_data};
-use crate::util::{contains_php_attribute, ranges_overlap};
+use crate::util::{contains_php_attribute, offset_to_position, ranges_overlap, strip_fqn_prefix};
 
 /// PHPStan identifiers we match on.
 const METHOD_OVERRIDE_ID: &str = "method.override";
@@ -245,8 +245,8 @@ fn build_remove_override_edit(content: &str, attr_line: usize) -> Option<TextEdi
             content.len()
         };
 
-        let start_pos = byte_offset_to_lsp(content, start);
-        let end_pos = byte_offset_to_lsp(content, end);
+        let start_pos = offset_to_position(content, start);
+        let end_pos = offset_to_position(content, end);
 
         Some(TextEdit {
             range: Range {
@@ -270,8 +270,8 @@ fn build_remove_override_edit(content: &str, attr_line: usize) -> Option<TextEdi
         let start = line_byte_offset(content, attr_line);
         let end = start + line_text.len();
 
-        let start_pos = byte_offset_to_lsp(content, start);
-        let end_pos = byte_offset_to_lsp(content, end);
+        let start_pos = offset_to_position(content, start);
+        let end_pos = offset_to_position(content, end);
 
         Some(TextEdit {
             range: Range {
@@ -292,7 +292,7 @@ fn is_sole_override_attribute(trimmed: &str) -> bool {
         return false;
     };
     let inner = inner.trim();
-    let inner = inner.strip_prefix('\\').unwrap_or(inner);
+    let inner = strip_fqn_prefix(inner);
     // After stripping optional `\`, should be `Override` optionally
     // followed by `(...)`.
     if let Some(rest) = inner.strip_prefix("Override") {
@@ -316,7 +316,7 @@ fn remove_override_from_attribute_list(trimmed: &str) -> Option<String> {
 
     for part in &parts {
         let p = part.trim();
-        let without_backslash = p.strip_prefix('\\').unwrap_or(p);
+        let without_backslash = strip_fqn_prefix(p);
         // Check if this part is `Override` optionally followed by `(...)`.
         let is_override = if let Some(rest) = without_backslash.strip_prefix("Override") {
             let rest = rest.trim();
@@ -350,15 +350,6 @@ fn line_byte_offset(content: &str, line: usize) -> usize {
         offset += l.len() + 1; // +1 for newline
     }
     content.len()
-}
-
-/// Convert a byte offset to an LSP `Position`.
-fn byte_offset_to_lsp(content: &str, offset: usize) -> Position {
-    let before = &content[..offset.min(content.len())];
-    let line = before.chars().filter(|&c| c == '\n').count() as u32;
-    let last_newline = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-    let character = content[last_newline..offset].chars().count() as u32;
-    Position { line, character }
 }
 
 /// Check whether a `method.override` / `property.override` diagnostic

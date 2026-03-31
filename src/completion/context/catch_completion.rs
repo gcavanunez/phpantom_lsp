@@ -25,7 +25,7 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::types::*;
-use crate::util::short_name;
+use crate::util::{short_name, strip_fqn_prefix};
 
 use super::class_completion::{
     ClassItemCtx, ClassItemTexts, build_affinity_table, class_edit_texts, expand_alias_prefix,
@@ -515,7 +515,7 @@ impl Backend {
         let file_use_map = &ctx.use_map;
         let file_namespace = &ctx.namespace;
         let has_leading_backslash = prefix.starts_with('\\');
-        let normalized = prefix.strip_prefix('\\').unwrap_or(prefix);
+        let normalized = strip_fqn_prefix(prefix);
         let prefix_lower = normalized.to_lowercase();
         let is_fqn_prefix = has_leading_backslash || normalized.contains('\\');
 

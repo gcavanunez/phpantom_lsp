@@ -22,7 +22,7 @@
 mod conditional;
 pub(crate) mod parser;
 mod tags;
-mod templates;
+pub(crate) mod templates;
 pub(crate) mod types;
 mod virtual_members;
 

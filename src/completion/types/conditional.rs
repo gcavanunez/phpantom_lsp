@@ -175,11 +175,7 @@ pub(crate) fn resolve_conditional_with_text_args(
                 }
                 PhpType::Literal(s) => {
                     // Strip quotes from the literal to get the expected value.
-                    let expected = s
-                        .strip_prefix('\'')
-                        .and_then(|s| s.strip_suffix('\''))
-                        .or_else(|| s.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-                        .unwrap_or(s);
+                    let expected = crate::util::unquote_php_string(s).unwrap_or(s);
 
                     // Check if the argument is a quoted string literal
                     // matching the expected value (e.g. `'foo'` or `"foo"`).
@@ -387,11 +383,7 @@ pub(crate) fn resolve_conditional_with_args<'b>(
                 }
                 PhpType::Literal(s) => {
                     // Strip quotes from the literal to get the expected value.
-                    let expected = s
-                        .strip_prefix('\'')
-                        .and_then(|s| s.strip_suffix('\''))
-                        .or_else(|| s.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-                        .unwrap_or(s);
+                    let expected = crate::util::unquote_php_string(s).unwrap_or(s);
 
                     // Check if the argument is a string literal matching
                     // the expected value.
@@ -400,13 +392,8 @@ pub(crate) fn resolve_conditional_with_args<'b>(
                             // `value` is the unquoted content; fall back
                             // to stripping quotes from `raw`.
                             let inner = lit_str.value.map(|v| v.to_string()).unwrap_or_else(|| {
-                                let raw = lit_str.raw;
-                                raw.strip_prefix('\'')
-                                    .and_then(|s| s.strip_suffix('\''))
-                                    .or_else(|| {
-                                        raw.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
-                                    })
-                                    .unwrap_or(raw)
+                                crate::util::unquote_php_string(lit_str.raw)
+                                    .unwrap_or(lit_str.raw)
                                     .to_string()
                             });
                             inner == *expected

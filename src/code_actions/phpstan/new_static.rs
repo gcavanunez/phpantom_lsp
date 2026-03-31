@@ -28,7 +28,7 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::code_actions::{CodeActionData, make_code_action_data};
-use crate::util::ranges_overlap;
+use crate::util::{offset_to_position, ranges_overlap};
 
 /// The PHPStan identifier we match on.
 const NEW_STATIC_ID: &str = "new.static";
@@ -619,7 +619,7 @@ fn build_add_tag_edit(content: &str, info: &EnclosingClassInfo) -> Option<Vec<Te
         let indent = extract_docblock_indent(content, doc.start);
 
         let insert_offset = doc.start + closing;
-        let insert_pos = byte_offset_to_lsp(content, insert_offset);
+        let insert_pos = offset_to_position(content, insert_offset);
 
         // Check if there's already content on the `*/` line.
         let before_closing = &doc_content[..closing];
@@ -651,8 +651,8 @@ fn build_add_tag_edit(content: &str, info: &EnclosingClassInfo) -> Option<Vec<Te
                 )
             };
 
-            let start_pos = byte_offset_to_lsp(content, doc.start);
-            let end_pos = byte_offset_to_lsp(content, doc.end);
+            let start_pos = offset_to_position(content, doc.start);
+            let end_pos = offset_to_position(content, doc.end);
 
             return Some(vec![TextEdit {
                 range: Range {
@@ -679,7 +679,7 @@ fn build_add_tag_edit(content: &str, info: &EnclosingClassInfo) -> Option<Vec<Te
         // Insert before the class declaration line.  We need to find
         // the true start of the line, accounting for attributes above.
         let insert_offset = find_declaration_start_with_attrs(content, info.class_line_start);
-        let insert_pos = byte_offset_to_lsp(content, insert_offset);
+        let insert_pos = offset_to_position(content, insert_offset);
 
         Some(vec![TextEdit {
             range: Range {
@@ -699,7 +699,7 @@ fn build_final_class_edit(content: &str, info: &EnclosingClassInfo) -> Option<Ve
     }
 
     // Insert `final ` right before the `class` keyword.
-    let insert_pos = byte_offset_to_lsp(content, info.class_keyword_offset);
+    let insert_pos = offset_to_position(content, info.class_keyword_offset);
 
     Some(vec![TextEdit {
         range: Range {
@@ -719,7 +719,7 @@ fn build_final_constructor_edit(content: &str, info: &EnclosingClassInfo) -> Opt
         return None;
     }
 
-    let insert_pos = byte_offset_to_lsp(content, ctor.decl_start);
+    let insert_pos = offset_to_position(content, ctor.decl_start);
 
     Some(vec![TextEdit {
         range: Range {
@@ -731,15 +731,6 @@ fn build_final_constructor_edit(content: &str, info: &EnclosingClassInfo) -> Opt
 }
 
 // ── Utility helpers ─────────────────────────────────────────────────────────
-
-/// Convert a byte offset to an LSP `Position`.
-fn byte_offset_to_lsp(content: &str, offset: usize) -> Position {
-    let before = &content[..offset.min(content.len())];
-    let line = before.chars().filter(|&c| c == '\n').count() as u32;
-    let last_newline = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-    let character = content[last_newline..offset].chars().count() as u32;
-    Position { line, character }
-}
 
 /// Extract the indentation of the docblock from its position in the
 /// content.

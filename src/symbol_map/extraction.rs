@@ -16,6 +16,7 @@ use super::docblock::{
 use super::{
     CallSite, SymbolKind, SymbolMap, SymbolSpan, TemplateParamDef, VarDefKind, VarDefSite,
 };
+use crate::util::strip_fqn_prefix;
 
 // ─── Extraction context ─────────────────────────────────────────────────────
 
@@ -1317,7 +1318,7 @@ fn extract_from_use_statement(use_stmt: &Use<'_>, spans: &mut Vec<SymbolSpan>) {
         // Use statement names are always fully qualified (even without a
         // leading `\`), so force `is_fqn = true`.  `class_ref_span`
         // derives the flag from a leading `\` which use statements omit.
-        let name = raw.strip_prefix('\\').unwrap_or(&raw).to_string();
+        let name = strip_fqn_prefix(&raw).to_string();
         spans.push(SymbolSpan {
             start: item.name.span().start.offset,
             end: item.name.span().end.offset,
@@ -1366,7 +1367,7 @@ fn extract_from_hint(hint: &Hint<'_>, spans: &mut Vec<SymbolSpan>) {
     match hint {
         Hint::Identifier(ident) => {
             let raw = ident.value().to_string();
-            let name_clean = raw.strip_prefix('\\').unwrap_or(&raw).to_string();
+            let name_clean = strip_fqn_prefix(&raw).to_string();
             if is_navigable_type(&name_clean) {
                 spans.push(class_ref_span(
                     ident.span().start.offset,
@@ -1484,7 +1485,7 @@ fn extract_from_expression<'a>(
         // ── Identifiers (standalone class/constant references) ──
         Expression::Identifier(ident) => {
             let name = ident.value().to_string();
-            let name_clean = name.strip_prefix('\\').unwrap_or(&name).to_string();
+            let name_clean = strip_fqn_prefix(&name).to_string();
             if is_navigable_type(&name_clean) {
                 ctx.spans.push(class_ref_span(
                     ident.span().start.offset,
@@ -1552,7 +1553,7 @@ fn extract_from_expression<'a>(
                 match func_call.function {
                     Expression::Identifier(ident) => {
                         let name = ident.value().to_string();
-                        let name_clean = name.strip_prefix('\\').unwrap_or(&name).to_string();
+                        let name_clean = strip_fqn_prefix(&name).to_string();
                         ctx.spans.push(SymbolSpan {
                             start: ident.span().start.offset,
                             end: ident.span().end.offset,
@@ -2113,7 +2114,7 @@ fn extract_from_expression<'a>(
         // never class names, so always emit `ConstantReference`.
         Expression::ConstantAccess(ca) => {
             let name = ca.name.value().to_string();
-            let name_clean = name.strip_prefix('\\').unwrap_or(&name).to_string();
+            let name_clean = strip_fqn_prefix(&name).to_string();
             ctx.spans.push(SymbolSpan {
                 start: ca.name.span().start.offset,
                 end: ca.name.span().end.offset,
@@ -2134,7 +2135,7 @@ fn extract_from_expression<'a>(
             PartialApplication::Function(func_pa) => match func_pa.function {
                 Expression::Identifier(ident) => {
                     let name = ident.value().to_string();
-                    let name_clean = name.strip_prefix('\\').unwrap_or(&name).to_string();
+                    let name_clean = strip_fqn_prefix(&name).to_string();
                     ctx.spans.push(SymbolSpan {
                         start: ident.span().start.offset,
                         end: ident.span().end.offset,
@@ -2581,12 +2582,7 @@ fn expr_to_subject_text(expr: &Expression<'_>) -> String {
                     // `s.raw` includes surrounding quotes (e.g. `'key'`).
                     // Strip them to get the bare key, then re-wrap in
                     // single quotes for the subject format.
-                    let raw = s.raw;
-                    let inner = raw
-                        .strip_prefix('\'')
-                        .and_then(|r| r.strip_suffix('\''))
-                        .or_else(|| raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')))
-                        .unwrap_or(raw);
+                    let inner = crate::util::unquote_php_string(s.raw).unwrap_or(s.raw);
                     format!("['{}']", inner)
                 }
                 _ => "[]".to_string(),

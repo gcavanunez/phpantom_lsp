@@ -65,7 +65,7 @@ impl Backend {
         } else {
             // Not a class-like type (scalar, union, etc.) — strip leading
             // `?` as a minimal normalisation and try anyway.
-            class_name.strip_prefix('?').unwrap_or(class_name)
+            crate::util::strip_nullable(class_name)
         };
 
         // The class name stored in ClassInfo is just the short name (e.g. "Customer"),

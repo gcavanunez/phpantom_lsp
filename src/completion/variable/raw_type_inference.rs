@@ -80,11 +80,8 @@ fn extract_array_key_text<'b>(key: &'b Expression<'b>) -> String {
         Expression::Literal(Literal::String(s)) => {
             // `value` is the unquoted content; fall back to `raw` trimmed.
             s.value.map(|v| v.to_string()).unwrap_or_else(|| {
-                let raw = s.raw;
-                raw.strip_prefix('\'')
-                    .and_then(|r| r.strip_suffix('\''))
-                    .or_else(|| raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')))
-                    .unwrap_or(raw)
+                crate::util::unquote_php_string(s.raw)
+                    .unwrap_or(s.raw)
                     .to_string()
             })
         }

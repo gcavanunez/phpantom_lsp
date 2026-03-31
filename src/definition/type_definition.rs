@@ -21,7 +21,7 @@ use crate::hover::variable_type;
 use crate::php_type::PhpType;
 use crate::symbol_map::SymbolKind;
 use crate::types::*;
-use crate::util::{find_class_at_offset, position_to_offset};
+use crate::util::find_class_at_offset;
 
 impl Backend {
     /// Handle a "go to type definition" request.
@@ -37,16 +37,10 @@ impl Backend {
         content: &str,
         position: Position,
     ) -> Option<Vec<Location>> {
-        let offset = position_to_offset(content, position);
-
-        // Look up the symbol at the cursor position.
-        let symbol = self.lookup_symbol_map(uri, offset).or_else(|| {
-            if offset > 0 {
-                self.lookup_symbol_map(uri, offset - 1)
-            } else {
-                None
-            }
-        })?;
+        // Look up the symbol at the cursor position (retries one byte
+        // earlier for end-of-token edge cases).
+        let symbol = self.lookup_symbol_at_position(uri, content, position)?;
+        let offset = symbol.start;
 
         let ctx = self.file_context(uri);
         let current_class = find_class_at_offset(&ctx.classes, offset);

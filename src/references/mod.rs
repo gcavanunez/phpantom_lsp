@@ -34,7 +34,8 @@ use crate::completion::resolver::Loaders;
 use crate::symbol_map::{SymbolKind, SymbolMap};
 use crate::types::{ClassInfo, MAX_INHERITANCE_DEPTH, ResolvedType};
 use crate::util::{
-    collect_php_files_gitignore, find_class_at_offset, offset_to_position, position_to_offset,
+    build_fqn, collect_php_files_gitignore, find_class_at_offset, offset_to_position,
+    position_to_offset, strip_fqn_prefix,
 };
 
 impl Backend {
@@ -50,16 +51,9 @@ impl Backend {
         position: Position,
         include_declaration: bool,
     ) -> Option<Vec<Location>> {
-        let offset = position_to_offset(content, position);
-
-        // Consult the precomputed symbol map for the current file.
-        let symbol = self.lookup_symbol_map(uri, offset).or_else(|| {
-            if offset > 0 {
-                self.lookup_symbol_map(uri, offset - 1)
-            } else {
-                None
-            }
-        });
+        // Consult the precomputed symbol map for the current file
+        // (retries one byte earlier for end-of-token edge cases).
+        let symbol = self.lookup_symbol_at_position(uri, content, position);
 
         // When the cursor is on a symbol span, dispatch by kind.
         if let Some(ref sym) = symbol {
@@ -137,11 +131,7 @@ impl Backend {
             }
             SymbolKind::ClassDeclaration { name } => {
                 let ctx = self.file_context(uri);
-                let fqn = if let Some(ref ns) = ctx.namespace {
-                    format!("{}\\{}", ns, name)
-                } else {
-                    name.clone()
-                };
+                let fqn = build_fqn(name, &ctx.namespace);
                 self.find_class_references(&fqn, include_declaration)
             }
             SymbolKind::MemberAccess {
@@ -206,13 +196,7 @@ impl Backend {
                     "parent" => current_class
                         .and_then(|cc| cc.parent_class.as_ref())
                         .cloned(),
-                    _ => current_class.map(|cc| {
-                        if let Some(ref ns) = ctx.namespace {
-                            format!("{}\\{}", ns, &cc.name)
-                        } else {
-                            cc.name.clone()
-                        }
-                    }),
+                    _ => current_class.map(|cc| build_fqn(&cc.name, &ctx.namespace)),
                 };
                 if let Some(fqn) = fqn {
                     self.find_class_references(&fqn, include_declaration)
@@ -427,7 +411,7 @@ impl Backend {
         let mut locations = Vec::new();
 
         // Normalise: strip leading backslash if present.
-        let target = target_fqn.strip_prefix('\\').unwrap_or(target_fqn);
+        let target = strip_fqn_prefix(target_fqn);
         let target_short = crate::util::short_name(target);
 
         // Snapshot user-file symbol maps (excludes vendor and stubs).
@@ -474,7 +458,7 @@ impl Backend {
                             Self::resolve_to_fqn(name, use_map, &file_namespace)
                         };
                         // Input boundary: resolve_to_fqn may return a leading `\`.
-                        let resolved_normalized = resolved.strip_prefix('\\').unwrap_or(&resolved);
+                        let resolved_normalized = strip_fqn_prefix(&resolved);
                         if !class_names_match(resolved_normalized, target, target_short) {
                             continue;
                         }
@@ -486,11 +470,7 @@ impl Backend {
                         });
                     }
                     SymbolKind::ClassDeclaration { name } if include_declaration => {
-                        let fqn = if let Some(ref ns) = file_namespace {
-                            format!("{}\\{}", ns, name)
-                        } else {
-                            name.clone()
-                        };
+                        let fqn = build_fqn(name, &file_namespace);
                         if !class_names_match(&fqn, target, target_short) {
                             continue;
                         }
@@ -701,7 +681,7 @@ impl Backend {
         let mut locations = Vec::new();
 
         // Input boundary: callers may pass FQNs with a leading `\`.
-        let target = target_fqn.strip_prefix('\\').unwrap_or(target_fqn);
+        let target = strip_fqn_prefix(target_fqn);
 
         let snapshot = self.user_file_symbol_maps();
 
@@ -746,7 +726,7 @@ impl Backend {
                         Self::resolve_to_fqn(name, use_map, &file_namespace)
                     };
                     // Input boundary: resolve_to_fqn may return a leading `\`.
-                    let resolved_normalized = resolved.strip_prefix('\\').unwrap_or(&resolved);
+                    let resolved_normalized = strip_fqn_prefix(&resolved);
                     if resolved_normalized != target
                         && crate::util::short_name(resolved_normalized)
                             != crate::util::short_name(target)
@@ -853,11 +833,7 @@ impl Backend {
             "parent" => current_class.parent_class.clone(),
             _ => {
                 // self / static → current class FQN
-                Some(if let Some(ns) = namespace {
-                    format!("{}\\{}", ns, &current_class.name)
-                } else {
-                    current_class.name.clone()
-                })
+                Some(build_fqn(&current_class.name, namespace))
             }
         }
     }
@@ -989,10 +965,7 @@ impl Backend {
         offset: u32,
     ) -> Option<String> {
         let cc = find_class_at_offset(classes, offset)?;
-        let fqn = match namespace {
-            Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, cc.name),
-            _ => cc.name.clone(),
-        };
+        let fqn = build_fqn(&cc.name, namespace);
         Some(normalize_fqn(&fqn))
     }
 
@@ -1406,7 +1379,7 @@ impl Backend {
 
 /// Normalise a class FQN: strip leading `\` if present.
 fn normalize_fqn(fqn: &str) -> String {
-    fqn.strip_prefix('\\').unwrap_or(fqn).to_string()
+    strip_fqn_prefix(fqn).to_string()
 }
 
 /// Check whether a resolved class name matches the target FQN.

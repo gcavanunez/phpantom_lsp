@@ -36,6 +36,7 @@
 //! | `$var?->`                    | `?->`    | `$var`                  |
 
 use crate::types::AccessKind;
+use crate::util::strip_fqn_prefix;
 
 // ─── Character-level helpers ────────────────────────────────────────────────
 //
@@ -117,7 +118,7 @@ fn check_new_keyword_before(
         };
         if before_ok {
             // Strip leading `\` from FQN if present.
-            let name = class_name.strip_prefix('\\').unwrap_or(class_name);
+            let name = strip_fqn_prefix(class_name);
             return Some(name.to_string());
         }
     }
@@ -232,7 +233,7 @@ fn extract_new_expression_inside_parens(
         return None;
     }
     let class_name: String = chars[name_start..k].iter().collect();
-    let name = class_name.strip_prefix('\\').unwrap_or(&class_name);
+    let name = strip_fqn_prefix(&class_name);
     Some(name.to_string())
 }
 

@@ -33,9 +33,9 @@ use crate::code_actions::CodeActionData;
 use crate::code_actions::make_code_action_data;
 use crate::completion::use_edit::{analyze_use_block, build_use_edit, use_import_conflicts};
 use crate::parser::with_parsed_program;
-use crate::util::offset_to_position;
-use crate::util::ranges_overlap;
-use crate::util::strip_trailing_modifiers;
+use crate::util::{
+    byte_range_to_lsp_range, offset_to_position, ranges_overlap, strip_trailing_modifiers,
+};
 
 /// The PHPStan identifier we match on.
 const CHECKED_EXCEPTION_ID: &str = "missingType.checkedException";
@@ -453,7 +453,7 @@ fn insert_throws_into_existing_docblock(
         new_doc.push_str(&format!("{} */", indent));
 
         return TextEdit {
-            range: byte_range_to_lsp(content, info.start, info.end),
+            range: byte_range_to_lsp_range(content, info.start, info.end),
             new_text: new_doc,
         };
     }
@@ -481,7 +481,7 @@ fn insert_throws_into_existing_docblock(
 
     // We replace from the start of the `*/` line to the same position,
     // effectively inserting before it.
-    let lsp_pos = byte_offset_to_lsp(content, actual_insert_offset);
+    let lsp_pos = offset_to_position(content, actual_insert_offset);
 
     TextEdit {
         range: Range {
@@ -503,7 +503,7 @@ fn create_docblock_with_throws(_content: &str, info: &DocblockInfo, short_name: 
 
     // Insert at the start of the signature line.
     // We need to convert sig_line_start to an LSP position.
-    let lsp_pos = byte_offset_to_lsp(_content, info.sig_line_start);
+    let lsp_pos = offset_to_position(_content, info.sig_line_start);
 
     TextEdit {
         range: Range {
@@ -511,23 +511,6 @@ fn create_docblock_with_throws(_content: &str, info: &DocblockInfo, short_name: 
             end: lsp_pos,
         },
         new_text: new_doc,
-    }
-}
-
-/// Convert a byte offset to an LSP `Position`.
-fn byte_offset_to_lsp(content: &str, offset: usize) -> Position {
-    let before = &content[..offset.min(content.len())];
-    let line = before.chars().filter(|&c| c == '\n').count() as u32;
-    let last_newline = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-    let character = content[last_newline..offset].chars().count() as u32;
-    Position { line, character }
-}
-
-/// Convert a byte range to an LSP `Range`.
-fn byte_range_to_lsp(content: &str, start: usize, end: usize) -> Range {
-    Range {
-        start: byte_offset_to_lsp(content, start),
-        end: byte_offset_to_lsp(content, end),
     }
 }
 
@@ -827,7 +810,7 @@ mod tests {
         let edit = build_throws_edit(php, &info, "RuntimeException");
 
         // Apply the edit to the source text.
-        let start = byte_offset_to_lsp(php, 0); // unused, we apply manually
+        let start = offset_to_position(php, 0); // unused, we apply manually
         let _ = start;
         let insert_offset = {
             let mut off = 0usize;

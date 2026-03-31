@@ -24,7 +24,9 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::code_actions::{CodeActionData, make_code_action_data};
-use crate::util::{contains_function_keyword, contains_php_attribute, ranges_overlap};
+use crate::util::{
+    contains_function_keyword, contains_php_attribute, offset_to_position, ranges_overlap,
+};
 
 /// The PHPStan identifier we match on.
 const TENTATIVE_RETURN_TYPE_ID: &str = "method.tentativeReturnType";
@@ -129,7 +131,7 @@ impl Backend {
         // at the insertion point (before any existing attributes or
         // modifiers).
         let insert_text = format!("{}{}\n", insertion.indent, ATTRIBUTE_TEXT);
-        let insert_pos = byte_offset_to_lsp(content, insertion.insert_offset);
+        let insert_pos = offset_to_position(content, insertion.insert_offset);
 
         let edits = vec![TextEdit {
             range: Range {
@@ -356,15 +358,6 @@ fn line_byte_offset(content: &str, line: usize) -> usize {
         offset += l.len() + 1; // +1 for newline
     }
     content.len()
-}
-
-/// Convert a byte offset to an LSP `Position`.
-fn byte_offset_to_lsp(content: &str, offset: usize) -> Position {
-    let before = &content[..offset.min(content.len())];
-    let line = before.chars().filter(|&c| c == '\n').count() as u32;
-    let last_newline = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-    let character = content[last_newline..offset].chars().count() as u32;
-    Position { line, character }
 }
 
 /// Check whether a `method.tentativeReturnType` diagnostic is stale

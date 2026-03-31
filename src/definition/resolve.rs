@@ -37,22 +37,12 @@ impl Backend {
         content: &str,
         position: Position,
     ) -> Option<Location> {
-        let offset = position_to_offset(content, position);
-
-        // Fast path: consult precomputed symbol map.
-        let result = if let Some(symbol) = self.lookup_symbol_map(uri, offset) {
-            self.resolve_from_symbol(&symbol.kind, uri, content, position, offset)
-        } else if offset > 0
-            // When the cursor is right at the end of a token (e.g. `$o|)`
-            // where `|` is the cursor), the offset lands one past the span.
-            // Retry with offset − 1 so the symbol-map path handles it
-            // instead of returning None.
-            && let Some(symbol) = self.lookup_symbol_map(uri, offset - 1)
-        {
-            self.resolve_from_symbol(&symbol.kind, uri, content, position, offset - 1)
+        // Consult precomputed symbol map (retries one byte earlier for
+        // end-of-token edge cases).
+        let symbol = self.lookup_symbol_at_position(uri, content, position);
+        let result = if let Some(ref symbol) = symbol {
+            self.resolve_from_symbol(&symbol.kind, uri, content, position, symbol.start)
         } else {
-            // No symbol at cursor position (whitespace, string interior,
-            // comment interior, numeric literal, etc.).
             None
         };
 
@@ -105,6 +95,25 @@ impl Backend {
         let maps = self.symbol_maps.read();
         let map = maps.get(uri)?;
         map.lookup(offset).cloned()
+    }
+
+    /// Look up the symbol span at a cursor position, handling end-of-token
+    /// edge cases by retrying one byte earlier when the exact offset
+    /// produces no result.
+    pub(crate) fn lookup_symbol_at_position(
+        &self,
+        uri: &str,
+        content: &str,
+        position: Position,
+    ) -> Option<crate::symbol_map::SymbolSpan> {
+        let offset = crate::util::position_to_offset(content, position);
+        self.lookup_symbol_map(uri, offset).or_else(|| {
+            if offset > 0 {
+                self.lookup_symbol_map(uri, offset - 1)
+            } else {
+                None
+            }
+        })
     }
 
     /// Look up the most recent variable definition before `cursor_offset`

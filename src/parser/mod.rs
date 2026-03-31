@@ -24,6 +24,7 @@ use mago_syntax::ast::*;
 
 use crate::php_type::PhpType;
 use crate::types::*;
+use crate::util::strip_fqn_prefix;
 
 /// Context for resolving PHPDoc type annotations from docblock comments.
 ///
@@ -543,7 +544,7 @@ fn is_known_deprecated_attr(name: &Identifier<'_>, ctx: &DocblockCtx<'_>) -> boo
     match name {
         Identifier::FullyQualified(fq) => {
             // Input boundary: AST fully-qualified names include the leading `\`.
-            let stripped = fq.value.strip_prefix('\\').unwrap_or(fq.value);
+            let stripped = strip_fqn_prefix(fq.value);
             DEPRECATED_FQNS.contains(&stripped)
         }
         Identifier::Qualified(q) => {

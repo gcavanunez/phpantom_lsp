@@ -9,6 +9,8 @@ use crate::Backend;
 use crate::types::*;
 use std::sync::Arc;
 
+use crate::util::build_fqn;
+
 use super::MemberAccessHint;
 
 impl Backend {
@@ -47,10 +49,7 @@ impl Backend {
     ) -> Option<(ClassInfo, String)> {
         // Check if this class directly declares the member.
         if Self::classify_member(class, member_name, MemberAccessHint::Unknown).is_some() {
-            let fqn = match &class.file_namespace {
-                Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, class.name),
-                _ => class.name.clone(),
-            };
+            let fqn = build_fqn(&class.name, &class.file_namespace);
             return Some((class.clone(), fqn));
         }
 

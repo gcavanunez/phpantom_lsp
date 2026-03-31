@@ -53,7 +53,7 @@ impl Backend {
                     ctx.resolve_name_at(parent_name, span.start)
                 } else {
                     // self or static
-                    Self::build_fqn(&current_class.name, &current_class.file_namespace)
+                    crate::util::build_fqn(&current_class.name, &current_class.file_namespace)
                 }
             }
             _ => return None,
@@ -136,7 +136,7 @@ impl Backend {
 
         let mut result = Vec::new();
         for imp in &implementors {
-            let imp_fqn = Self::build_fqn(&imp.name, &imp.file_namespace);
+            let imp_fqn = crate::util::build_fqn(&imp.name, &imp.file_namespace);
             let imp_item = self.build_hierarchy_item_for_class(imp, &imp_fqn);
             result.push(imp_item);
         }

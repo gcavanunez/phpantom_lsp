@@ -25,7 +25,7 @@ use tower_lsp::lsp_types::*;
 
 use super::{CodeActionData, make_code_action_data};
 use crate::Backend;
-use crate::util::ranges_overlap;
+use crate::util::{offset_to_position, ranges_overlap};
 
 impl Backend {
     /// Collect "Remove unused import" code actions.
@@ -247,8 +247,8 @@ fn build_line_deletion_edit(content: &str, range: &Range) -> TextEdit {
         // The blank line before is already at the start_offset boundary.
     }
 
-    let start_pos = byte_offset_to_lsp(content, start_offset);
-    let end_pos = byte_offset_to_lsp(content, end_offset);
+    let start_pos = offset_to_position(content, start_offset);
+    let end_pos = offset_to_position(content, end_offset);
 
     TextEdit {
         range: Range {
@@ -359,14 +359,6 @@ fn extend_range_for_group_member(content: &str, range: &Range) -> Option<TextEdi
         },
         new_text: String::new(),
     })
-}
-
-fn byte_offset_to_lsp(content: &str, offset: usize) -> Position {
-    let before = &content[..offset.min(content.len())];
-    let line = before.chars().filter(|&c| c == '\n').count() as u32;
-    let last_nl = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-    let character = (offset - last_nl) as u32;
-    Position::new(line, character)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

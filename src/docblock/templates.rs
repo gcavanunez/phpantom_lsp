@@ -14,6 +14,7 @@ use super::parser::{DocblockInfo, collapse_newlines, parse_docblock_for_tags};
 use super::types::split_type_token;
 use crate::php_type::PhpType;
 use crate::types::{TemplateVariance, TypeAliasDef};
+use crate::util::{strip_fqn_prefix, strip_nullable};
 
 // ─── Template Parameters ────────────────────────────────────────────────────
 
@@ -86,35 +87,36 @@ pub fn extract_template_params_full(
     extract_template_params_full_from_info(&info)
 }
 
+/// Map a `TagKind` to the corresponding `TemplateVariance`.
+pub(crate) const fn variance_for(kind: TagKind) -> TemplateVariance {
+    match kind {
+        TagKind::TemplateCovariant
+        | TagKind::PhpstanTemplateCovariant
+        | TagKind::PsalmTemplateCovariant => TemplateVariance::Covariant,
+        TagKind::TemplateContravariant
+        | TagKind::PhpstanTemplateContravariant
+        | TagKind::PsalmTemplateContravariant => TemplateVariance::Contravariant,
+        _ => TemplateVariance::Invariant,
+    }
+}
+
+/// `TagKind` values that represent `@template` declarations (all variance variants).
+pub(crate) const TEMPLATE_KINDS: &[TagKind] = &[
+    TagKind::Template,
+    TagKind::TemplateCovariant,
+    TagKind::TemplateContravariant,
+    TagKind::PhpstanTemplate,
+    TagKind::PhpstanTemplateCovariant,
+    TagKind::PhpstanTemplateContravariant,
+    TagKind::PsalmTemplate,
+    TagKind::PsalmTemplateCovariant,
+    TagKind::PsalmTemplateContravariant,
+];
+
 /// Like [`extract_template_params_full`], but operates on a pre-parsed [`DocblockInfo`].
 pub fn extract_template_params_full_from_info(
     info: &DocblockInfo,
 ) -> Vec<(String, Option<String>, TemplateVariance)> {
-    /// Map a `TagKind` to the corresponding `TemplateVariance`.
-    const fn variance_for(kind: TagKind) -> TemplateVariance {
-        match kind {
-            TagKind::TemplateCovariant
-            | TagKind::PhpstanTemplateCovariant
-            | TagKind::PsalmTemplateCovariant => TemplateVariance::Covariant,
-            TagKind::TemplateContravariant
-            | TagKind::PhpstanTemplateContravariant
-            | TagKind::PsalmTemplateContravariant => TemplateVariance::Contravariant,
-            _ => TemplateVariance::Invariant,
-        }
-    }
-
-    const TEMPLATE_KINDS: &[TagKind] = &[
-        TagKind::Template,
-        TagKind::TemplateCovariant,
-        TagKind::TemplateContravariant,
-        TagKind::PhpstanTemplate,
-        TagKind::PhpstanTemplateCovariant,
-        TagKind::PhpstanTemplateContravariant,
-        TagKind::PsalmTemplate,
-        TagKind::PsalmTemplateCovariant,
-        TagKind::PsalmTemplateContravariant,
-    ];
-
     let mut results = Vec::new();
 
     for tag in info.tags_by_kinds(TEMPLATE_KINDS) {
@@ -374,7 +376,7 @@ fn parse_generics_from_description(desc: &str) -> Option<(String, Vec<String>)> 
     let parsed = PhpType::parse(type_token);
     match parsed {
         PhpType::Generic(name, args) if !args.is_empty() => {
-            let base_name = name.strip_prefix('\\').unwrap_or(&name).to_string();
+            let base_name = strip_fqn_prefix(&name).to_string();
             if base_name.is_empty() {
                 return None;
             }
@@ -382,7 +384,7 @@ fn parse_generics_from_description(desc: &str) -> Option<(String, Vec<String>)> 
                 .iter()
                 .map(|a| {
                     let s = a.to_string();
-                    s.strip_prefix('\\').unwrap_or(&s).to_string()
+                    strip_fqn_prefix(&s).to_string()
                 })
                 .collect();
             Some((base_name, arg_strings))
@@ -543,42 +545,13 @@ pub fn synthesize_template_conditional(
     return_type: Option<&str>,
     has_existing_conditional: bool,
 ) -> Option<PhpType> {
-    // Don't override an existing conditional return type.
-    if has_existing_conditional {
-        return None;
-    }
-
-    if template_params.is_empty() {
-        return None;
-    }
-
-    let ret = return_type?;
-
-    // Strip nullable prefix so that `?T` matches template param `T`.
-    let stripped = ret.strip_prefix('?').unwrap_or(ret);
-
-    // Check if the (stripped) return type is one of the template params.
-    if !template_params.iter().any(|t| t == stripped) {
-        return None;
-    }
-
-    // Find a `@param class-string<T> $paramName` annotation for this
-    // template param, and extract the parameter name (without `$`).
-    let param_name = find_class_string_param_name(docblock, stripped)?;
-
-    Some(PhpType::Conditional {
-        param: format!("${param_name}"),
-        negated: false,
-        condition: Box::new(PhpType::ClassString(None)),
-        // `then_type` is unused for ClassString — the resolver extracts
-        // the class name directly from the argument (e.g. `User::class`
-        // → `"User"`).
-        then_type: Box::new(PhpType::Named("mixed".into())),
-        // `else_type` is used when the argument is not a `::class`
-        // literal — `mixed` will produce `None` from resolution, which
-        // lets the caller fall back to the plain return type.
-        else_type: Box::new(PhpType::Named("mixed".into())),
-    })
+    let info = parse_docblock_for_tags(docblock)?;
+    synthesize_template_conditional_from_info(
+        &info,
+        template_params,
+        return_type,
+        has_existing_conditional,
+    )
 }
 
 /// Like [`synthesize_template_conditional`], but operates on a pre-parsed [`DocblockInfo`].
@@ -600,7 +573,7 @@ pub fn synthesize_template_conditional_from_info(
     let ret = return_type?;
 
     // Strip nullable prefix so that `?T` matches template param `T`.
-    let stripped = ret.strip_prefix('?').unwrap_or(ret);
+    let stripped = strip_nullable(ret);
 
     // Check if the (stripped) return type is one of the template params.
     if !template_params.iter().any(|t| t == stripped) {
@@ -620,8 +593,8 @@ pub fn synthesize_template_conditional_from_info(
     })
 }
 
-/// Search a docblock for a `@param class-string<T> $paramName` annotation
-/// where `T` matches the given `template_name`.
+/// Search a parsed docblock for a `@param class-string<T> $paramName`
+/// annotation where `T` matches the given `template_name`.
 ///
 /// Returns the parameter name **without** the `$` prefix, or `None` if no
 /// matching annotation is found.
@@ -630,13 +603,6 @@ pub fn synthesize_template_conditional_from_info(
 ///   - `class-string<T>`
 ///   - `?class-string<T>` (nullable)
 ///   - `class-string<T>|null` (union with null)
-fn find_class_string_param_name(docblock: &str, template_name: &str) -> Option<String> {
-    let info = parse_docblock_for_tags(docblock)?;
-
-    find_class_string_param_name_from_info(&info, template_name)
-}
-
-/// Like [`find_class_string_param_name`], but operates on a pre-parsed [`DocblockInfo`].
 fn find_class_string_param_name_from_info(
     info: &DocblockInfo,
     template_name: &str,

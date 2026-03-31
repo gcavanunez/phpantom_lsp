@@ -298,8 +298,7 @@ impl PhpType {
     /// namespace-qualified type name. Returns only the part after the
     /// last `\`. Non-class types pass through unchanged.
     fn short_name_of(name: &str) -> &str {
-        let t = name.trim();
-        t.rsplit('\\').next().unwrap_or(t)
+        crate::util::short_name(name.trim())
     }
 
     /// Produce a new `PhpType` with all namespace-qualified names

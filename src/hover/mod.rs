@@ -20,7 +20,7 @@ use crate::docblock::extract_template_params_full;
 use crate::php_type::PhpType;
 use crate::symbol_map::{SymbolKind, SymbolSpan, VarDefKind};
 use crate::types::*;
-use crate::util::{find_class_at_offset, position_to_offset};
+use crate::util::{find_class_at_offset, short_name, strip_fqn_prefix};
 
 use formatting::*;
 
@@ -456,10 +456,10 @@ impl Backend {
     /// resolved to a meaningful description, or `None` when resolution
     /// fails or the cursor is not on a navigable symbol.
     pub fn handle_hover(&self, uri: &str, content: &str, position: Position) -> Option<Hover> {
-        let offset = position_to_offset(content, position);
+        let offset = crate::util::position_to_offset(content, position);
 
-        // Fast path: consult precomputed symbol map.
-        if let Some(symbol) = self.lookup_symbol_map_for_hover(uri, offset)
+        // Try the exact cursor offset first.
+        if let Some(symbol) = self.lookup_symbol_map(uri, offset)
             && let Some(Some(mut hover)) =
                 crate::util::catch_panic_unwind_safe("hover", uri, Some(position), || {
                     self.hover_from_symbol(&symbol, uri, content, offset)
@@ -469,10 +469,9 @@ impl Backend {
             return Some(hover);
         }
 
-        // Retry with offset - 1 for cursor at end-of-token (same
-        // heuristic as go-to-definition).
+        // Retry one byte earlier for end-of-token edge cases.
         if offset > 0
-            && let Some(symbol) = self.lookup_symbol_map_for_hover(uri, offset - 1)
+            && let Some(symbol) = self.lookup_symbol_map(uri, offset - 1)
             && let Some(Some(mut hover)) =
                 crate::util::catch_panic_unwind_safe("hover", uri, Some(position), || {
                     self.hover_from_symbol(&symbol, uri, content, offset - 1)
@@ -483,13 +482,6 @@ impl Backend {
         }
 
         None
-    }
-
-    /// Look up the symbol at the given byte offset for hover purposes.
-    fn lookup_symbol_map_for_hover(&self, uri: &str, offset: u32) -> Option<SymbolSpan> {
-        let maps = self.symbol_maps.read();
-        let map = maps.get(uri)?;
-        map.lookup(offset).cloned()
     }
 
     /// Dispatch a symbol-map hit to the appropriate hover path.
@@ -1496,7 +1488,7 @@ fn resolve_type_namespace_structured(
     // E.g. `App\Models\User` → `App\Models`.
     // Strip leading `\` — input may be a raw docblock type like
     // `\App\Models\User` that hasn't been through resolve_type_string.
-    let canonical = base.strip_prefix('\\').unwrap_or(base);
+    let canonical = strip_fqn_prefix(base);
     if let Some(pos) = canonical.rfind('\\') {
         let ns = &canonical[..pos];
         if !ns.is_empty() {

@@ -20,7 +20,7 @@ use crate::Backend;
 use crate::completion::named_args::position_to_char_offset;
 use crate::completion::use_edit;
 use crate::types::*;
-use crate::util::short_name;
+use crate::util::{short_name, strip_fqn_prefix};
 
 use crate::completion::builder::{
     analyze_use_block, build_callable_snippet, build_use_edit, use_import_conflicts,
@@ -1462,7 +1462,7 @@ impl Backend {
         // full FQN.
         let should_shorten_via_imports = !is_use_import;
         let has_leading_backslash = prefix.starts_with('\\');
-        let normalized = prefix.strip_prefix('\\').unwrap_or(prefix);
+        let normalized = strip_fqn_prefix(prefix);
         let prefix_lower = normalized.to_lowercase();
         // In UseImport context, always treat the prefix as FQN so that
         // the full qualified name is inserted (not the short name) and

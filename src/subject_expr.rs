@@ -515,7 +515,7 @@ fn split_call_subject_raw(subject: &str) -> Option<(&str, &str)> {
 
 /// Parse a `new ClassName` or `(new ClassName(…))` expression and extract
 /// the class name.
-fn parse_new_expression_class(s: &str) -> Option<String> {
+pub(crate) fn parse_new_expression_class(s: &str) -> Option<String> {
     // Strip balanced outer parentheses.
     let inner = if s.starts_with('(') && s.ends_with(')') {
         &s[1..s.len() - 1]
@@ -553,11 +553,7 @@ fn parse_variable_array_access(subject: &str) -> Option<SubjectExpr> {
         let close = rest.find(']')?;
         let inner = rest[1..close].trim();
 
-        if let Some(key) = inner
-            .strip_prefix('\'')
-            .and_then(|s| s.strip_suffix('\''))
-            .or_else(|| inner.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-        {
+        if let Some(key) = crate::util::unquote_php_string(inner) {
             segments.push(BracketSegment::StringKey(key.to_string()));
         } else {
             segments.push(BracketSegment::ElementAccess);
@@ -620,11 +616,7 @@ fn parse_call_array_access(subject: &str) -> Option<SubjectExpr> {
     while rest.starts_with('[') {
         let close = rest.find(']')?;
         let inner = rest[1..close].trim();
-        if let Some(key) = inner
-            .strip_prefix('\'')
-            .and_then(|s| s.strip_suffix('\''))
-            .or_else(|| inner.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-        {
+        if let Some(key) = crate::util::unquote_php_string(inner) {
             segments.push(BracketSegment::StringKey(key.to_string()));
         } else {
             segments.push(BracketSegment::ElementAccess);

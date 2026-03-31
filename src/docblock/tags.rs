@@ -23,6 +23,7 @@ use mago_syntax::ast::*;
 
 use crate::symbol_map::docblock::get_docblock_text_with_offset;
 use crate::types::{AssertionKind, PhpVersion, TypeAssertion};
+use crate::util::strip_fqn_prefix;
 
 use super::parser::{DocblockInfo, collapse_newlines, parse_docblock_for_tags};
 use super::types::{clean_type, split_type_token};
@@ -214,7 +215,7 @@ pub fn extract_mixin_tags_from_info(info: &DocblockInfo) -> Vec<(String, Vec<Str
                     .iter()
                     .map(|a| {
                         let s = a.to_string();
-                        s.strip_prefix('\\').unwrap_or(&s).to_string()
+                        strip_fqn_prefix(&s).to_string()
                     })
                     .collect();
                 (name.clone(), arg_strs)
@@ -227,7 +228,7 @@ pub fn extract_mixin_tags_from_info(info: &DocblockInfo) -> Vec<(String, Vec<Str
                         .iter()
                         .map(|a| {
                             let s = a.to_string();
-                            s.strip_prefix('\\').unwrap_or(&s).to_string()
+                            strip_fqn_prefix(&s).to_string()
                         })
                         .collect();
                     (name.clone(), arg_strs)
@@ -1412,7 +1413,7 @@ pub fn resolve_effective_type(
     // back to the native type so that resolution is never blocked by a
     // malformed PHPDoc annotation.
     let sanitised_doc = docblock_type.and_then(|doc| {
-        if has_unclosed_brackets(doc) {
+        if crate::util::has_unclosed_delimiters(doc) {
             let base = recover_base_type(doc);
             if base.is_empty() {
                 None
@@ -1533,22 +1534,6 @@ fn extract_type_via_mago_from_info(info: &DocblockInfo, kinds: &[TagKind]) -> Op
     }
 
     None
-}
-
-/// Check whether a type string has unclosed `<…>` or `{…}` brackets.
-fn has_unclosed_brackets(s: &str) -> bool {
-    let mut angle: i32 = 0;
-    let mut brace: i32 = 0;
-    for c in s.chars() {
-        match c {
-            '<' => angle += 1,
-            '>' if angle > 0 => angle -= 1,
-            '{' => brace += 1,
-            '}' if brace > 0 => brace -= 1,
-            _ => {}
-        }
-    }
-    angle != 0 || brace != 0
 }
 
 /// Attempt to recover a usable base type from a type string with unclosed

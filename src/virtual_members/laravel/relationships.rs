@@ -9,7 +9,7 @@
 
 use crate::php_type::PhpType;
 use crate::types::{ClassInfo, ELOQUENT_COLLECTION_FQN};
-use crate::util::short_name;
+use crate::util::{short_name, strip_fqn_prefix};
 
 use super::helpers::{camel_to_snake, snake_to_camel};
 
@@ -291,7 +291,7 @@ fn extract_class_argument(after_paren: &str) -> Option<String> {
     }
 
     // Strip leading backslash for FQNs and extract the short name.
-    let name = before.strip_prefix('\\').unwrap_or(before);
+    let name = strip_fqn_prefix(before);
     let short_name = short_name(name);
 
     if short_name.is_empty() {

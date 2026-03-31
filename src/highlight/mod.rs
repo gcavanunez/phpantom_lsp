@@ -21,7 +21,7 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::symbol_map::{SymbolKind, SymbolMap, VarDefKind};
-use crate::util::{offset_to_position, position_to_offset};
+use crate::util::{build_fqn, byte_range_to_lsp_range};
 
 impl Backend {
     /// Collect document highlights for the symbol under the cursor.
@@ -33,17 +33,9 @@ impl Backend {
         content: &str,
         position: Position,
     ) -> Option<Vec<DocumentHighlight>> {
-        let offset = position_to_offset(content, position);
-
-        // Look up the symbol span at the cursor (try exact, then one
-        // byte back for end-of-token positions).
-        let span = self.lookup_symbol_map(uri, offset).or_else(|| {
-            if offset > 0 {
-                self.lookup_symbol_map(uri, offset - 1)
-            } else {
-                None
-            }
-        })?;
+        // Look up the symbol span at the cursor (retries one byte
+        // earlier for end-of-token edge cases).
+        let span = self.lookup_symbol_at_position(uri, content, position)?;
 
         let maps = self.symbol_maps.read();
         let symbol_map = maps.get(uri)?;
@@ -69,11 +61,7 @@ impl Backend {
             }
             SymbolKind::ClassDeclaration { name } => {
                 let ctx = self.file_context(uri);
-                let fqn = if let Some(ref ns) = ctx.namespace {
-                    format!("{}\\{}", ns, name)
-                } else {
-                    name.clone()
-                };
+                let fqn = build_fqn(name, &ctx.namespace);
                 self.highlight_class(symbol_map, content, &fqn, &ctx.use_map, &ctx.namespace)
             }
             SymbolKind::MemberAccess { member_name, .. } => {
@@ -137,7 +125,7 @@ impl Backend {
                 };
 
                 highlights.push(DocumentHighlight {
-                    range: byte_range_to_lsp(content, span.start, span.end),
+                    range: byte_range_to_lsp_range(content, span.start as usize, span.end as usize),
                     kind: Some(kind),
                 });
             }
@@ -152,7 +140,11 @@ impl Backend {
             {
                 let end_offset = def.offset + 1 + def.name.len() as u32;
                 highlights.push(DocumentHighlight {
-                    range: byte_range_to_lsp(content, def.offset, end_offset),
+                    range: byte_range_to_lsp_range(
+                        content,
+                        def.offset as usize,
+                        end_offset as usize,
+                    ),
                     kind: Some(DocumentHighlightKind::WRITE),
                 });
             }
@@ -192,7 +184,11 @@ impl Backend {
                     .is_some_and(|s| s == "$this");
                 if is_this {
                     highlights.push(DocumentHighlight {
-                        range: byte_range_to_lsp(content, span.start, span.end),
+                        range: byte_range_to_lsp_range(
+                            content,
+                            span.start as usize,
+                            span.end as usize,
+                        ),
                         kind: Some(DocumentHighlightKind::READ),
                     });
                 }
@@ -224,19 +220,13 @@ impl Backend {
                         Self::resolve_to_fqn(name, use_map, namespace)
                     }
                 }
-                SymbolKind::ClassDeclaration { name } => {
-                    if let Some(ns) = namespace {
-                        format!("{}\\{}", ns, name)
-                    } else {
-                        name.clone()
-                    }
-                }
+                SymbolKind::ClassDeclaration { name } => build_fqn(name, namespace),
                 _ => continue,
             };
 
             if fqn == target_fqn {
                 highlights.push(DocumentHighlight {
-                    range: byte_range_to_lsp(content, span.start, span.end),
+                    range: byte_range_to_lsp_range(content, span.start as usize, span.end as usize),
                     kind: Some(DocumentHighlightKind::READ),
                 });
             }
@@ -263,13 +253,21 @@ impl Backend {
             match &span.kind {
                 SymbolKind::MemberAccess { member_name, .. } if member_name == target_name => {
                     highlights.push(DocumentHighlight {
-                        range: byte_range_to_lsp(content, span.start, span.end),
+                        range: byte_range_to_lsp_range(
+                            content,
+                            span.start as usize,
+                            span.end as usize,
+                        ),
                         kind: Some(DocumentHighlightKind::READ),
                     });
                 }
                 SymbolKind::MemberDeclaration { name, .. } if name == target_name => {
                     highlights.push(DocumentHighlight {
-                        range: byte_range_to_lsp(content, span.start, span.end),
+                        range: byte_range_to_lsp_range(
+                            content,
+                            span.start as usize,
+                            span.end as usize,
+                        ),
                         kind: Some(DocumentHighlightKind::WRITE),
                     });
                 }
@@ -280,7 +278,11 @@ impl Backend {
                         .is_some_and(|k| *k == VarDefKind::Property)
                     {
                         highlights.push(DocumentHighlight {
-                            range: byte_range_to_lsp(content, span.start, span.end),
+                            range: byte_range_to_lsp_range(
+                                content,
+                                span.start as usize,
+                                span.end as usize,
+                            ),
                             kind: Some(DocumentHighlightKind::WRITE),
                         });
                     }
@@ -307,7 +309,7 @@ impl Backend {
                 && name == target_name
             {
                 highlights.push(DocumentHighlight {
-                    range: byte_range_to_lsp(content, span.start, span.end),
+                    range: byte_range_to_lsp_range(content, span.start as usize, span.end as usize),
                     kind: Some(DocumentHighlightKind::READ),
                 });
             }
@@ -331,7 +333,7 @@ impl Backend {
                 && name == target_name
             {
                 highlights.push(DocumentHighlight {
-                    range: byte_range_to_lsp(content, span.start, span.end),
+                    range: byte_range_to_lsp_range(content, span.start as usize, span.end as usize),
                     kind: Some(DocumentHighlightKind::READ),
                 });
             }
@@ -379,7 +381,7 @@ impl Backend {
                     }
                 }
                 highlights.push(DocumentHighlight {
-                    range: byte_range_to_lsp(content, span.start, span.end),
+                    range: byte_range_to_lsp_range(content, span.start as usize, span.end as usize),
                     kind: Some(DocumentHighlightKind::READ),
                 });
             }
@@ -387,16 +389,6 @@ impl Backend {
 
         highlights.sort_by(cmp_highlight_range);
         highlights
-    }
-}
-
-/// Convert a byte offset range to an LSP `Range`.
-fn byte_range_to_lsp(content: &str, start: u32, end: u32) -> Range {
-    let start_pos = offset_to_position(content, start as usize);
-    let end_pos = offset_to_position(content, end as usize);
-    Range {
-        start: start_pos,
-        end: end_pos,
     }
 }
 

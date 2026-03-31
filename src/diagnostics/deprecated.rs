@@ -465,9 +465,5 @@ fn find_enclosing_class_fqn(
                 .iter()
                 .find(|c| !c.name.starts_with("__anonymous@"))
         })?;
-    if let Some(ns) = file_namespace {
-        Some(format!("{}\\{}", ns, cls.name))
-    } else {
-        Some(cls.name.clone())
-    }
+    Some(crate::util::build_fqn(&cls.name, file_namespace))
 }

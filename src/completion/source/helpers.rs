@@ -33,36 +33,7 @@ use crate::completion::resolver::{Loaders, ResolutionCtx};
 
 // ─── Source-text helpers ────────────────────────────────────────────────────
 
-/// Parse a `new ClassName(…)` expression from a text fragment and
-/// return the class name.
-///
-/// Handles optional outer parentheses and leading backslashes:
-/// - `new Customer()` → `Some("Customer")`
-/// - `(new \App\Builder())` → `Some("App\\Builder")`
-/// - `$this->foo()`     → `None`
-pub(in crate::completion) fn extract_new_expression_class(s: &str) -> Option<String> {
-    // Strip balanced outer parentheses.
-    let inner = if s.starts_with('(') && s.ends_with(')') {
-        &s[1..s.len() - 1]
-    } else {
-        s
-    };
-    let rest = inner.trim().strip_prefix("new ")?;
-    let rest = rest.trim_start();
-    // The class name runs until `(`, whitespace, or end-of-string.
-    let end = rest
-        .find(|c: char| c == '(' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    let class_name = rest[..end].trim_start_matches('\\');
-    if class_name.is_empty()
-        || !class_name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '\\')
-    {
-        return None;
-    }
-    Some(class_name.to_string())
-}
+pub(in crate::completion) use crate::subject_expr::parse_new_expression_class as extract_new_expression_class;
 
 /// Search backward in `content` for a function definition matching
 /// `func_name` and extract its `@return` type from the docblock.

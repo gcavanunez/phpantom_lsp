@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use tower_lsp::lsp_types::*;
 
 use crate::Backend;
-use crate::util::short_name;
+use crate::util::{short_name, strip_fqn_prefix};
 
 use crate::completion::builder::{
     analyze_use_block, build_callable_label, build_callable_snippet, deprecation_tag,
@@ -174,7 +174,7 @@ impl Backend {
         file_namespace: &Option<String>,
         uri: &str,
     ) -> (Vec<CompletionItem>, bool) {
-        let prefix_lower = prefix.strip_prefix('\\').unwrap_or(prefix).to_lowercase();
+        let prefix_lower = strip_fqn_prefix(prefix).to_lowercase();
         let mut seen: HashSet<String> = HashSet::new();
         let mut items: Vec<CompletionItem> = Vec::new();
 

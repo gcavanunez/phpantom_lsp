@@ -56,14 +56,7 @@ impl Backend {
     ) -> Option<Vec<Location>> {
         // ── 1. Extract the word under the cursor ────────────────────────
         // Primary path: consult the precomputed symbol map.
-        let offset = position_to_offset(content, position);
-        let symbol = self.lookup_symbol_map(uri, offset).or_else(|| {
-            if offset > 0 {
-                self.lookup_symbol_map(uri, offset - 1)
-            } else {
-                None
-            }
-        });
+        let symbol = self.lookup_symbol_at_position(uri, content, position);
 
         if let Some(ref sym) = symbol {
             match &sym.kind {
@@ -89,7 +82,7 @@ impl Backend {
                 SymbolKind::SelfStaticParent { keyword } => {
                     let ctx = self.file_context(uri);
                     let class_loader = self.class_loader(&ctx);
-                    let current_class = find_class_at_offset(&ctx.classes, offset);
+                    let current_class = find_class_at_offset(&ctx.classes, sym.start);
                     let target = match keyword.as_str() {
                         "parent" => current_class
                             .and_then(|cc| cc.parent_class.as_ref())
@@ -107,7 +100,7 @@ impl Backend {
                 SymbolKind::MemberDeclaration { name, .. } => {
                     let ctx = self.file_context(uri);
                     let class_loader = self.class_loader(&ctx);
-                    let current_class = find_class_at_offset(&ctx.classes, offset);
+                    let current_class = find_class_at_offset(&ctx.classes, sym.start);
                     if let Some(cls) = current_class {
                         return self.resolve_reverse_implementation(
                             uri,
@@ -166,7 +159,7 @@ impl Backend {
         // reliable), then fall back to class_index, then to the FQN we
         // resolved from the use-map, and finally to the short name.
         let target_fqn = {
-            let from_class = Self::build_fqn(&target.name, &target.file_namespace);
+            let from_class = crate::util::build_fqn(&target.name, &target.file_namespace);
             if from_class.contains('\\') {
                 from_class
             } else {
@@ -638,7 +631,7 @@ impl Backend {
         };
 
         for cls in &ast_candidates {
-            let cls_fqn = Self::build_fqn(&cls.name, &cls.file_namespace);
+            let cls_fqn = crate::util::build_fqn(&cls.name, &cls.file_namespace);
             if self.class_implements_or_extends(
                 cls,
                 target_short,
@@ -674,7 +667,7 @@ impl Backend {
                     direct_only,
                 )
             {
-                let cls_fqn = Self::build_fqn(&cls.name, &cls.file_namespace);
+                let cls_fqn = crate::util::build_fqn(&cls.name, &cls.file_namespace);
                 if seen_fqns.insert(cls_fqn) {
                     result.push(Arc::unwrap_or_clone(cls));
                 }
@@ -709,7 +702,7 @@ impl Backend {
             // Parse the file, cache it, and check every class it defines.
             if let Some(classes) = self.parse_and_cache_file(path) {
                 for cls in &classes {
-                    let cls_fqn = Self::build_fqn(&cls.name, &cls.file_namespace);
+                    let cls_fqn = crate::util::build_fqn(&cls.name, &cls.file_namespace);
                     if seen_fqns.contains(&cls_fqn) {
                         continue;
                     }
@@ -753,7 +746,7 @@ impl Backend {
                     direct_only,
                 )
             {
-                let cls_fqn = Self::build_fqn(&cls.name, &cls.file_namespace);
+                let cls_fqn = crate::util::build_fqn(&cls.name, &cls.file_namespace);
                 if seen_fqns.insert(cls_fqn) {
                     result.push(Arc::unwrap_or_clone(cls));
                 }
@@ -808,7 +801,7 @@ impl Backend {
 
                     if let Some(classes) = self.parse_and_cache_file(&php_file) {
                         for cls in &classes {
-                            let cls_fqn = Self::build_fqn(&cls.name, &cls.file_namespace);
+                            let cls_fqn = crate::util::build_fqn(&cls.name, &cls.file_namespace);
                             if seen_fqns.contains(&cls_fqn) {
                                 continue;
                             }
@@ -851,7 +844,7 @@ impl Backend {
         direct_only: bool,
     ) -> bool {
         // Build the FQN of the candidate class for comparison.
-        let cls_fqn = Self::build_fqn(&cls.name, &cls.file_namespace);
+        let cls_fqn = crate::util::build_fqn(&cls.name, &cls.file_namespace);
 
         // Skip the target class itself.
         if cls_fqn == target_fqn || cls.name == target_short {
@@ -939,7 +932,8 @@ impl Backend {
                 }
 
                 // Check if the parent IS the target (for abstract class chains).
-                let parent_fqn = Self::build_fqn(&parent_cls.name, &parent_cls.file_namespace);
+                let parent_fqn =
+                    crate::util::build_fqn(&parent_cls.name, &parent_cls.file_namespace);
                 if parent_fqn == target_fqn {
                     return true;
                 }
@@ -1059,14 +1053,6 @@ impl Backend {
 
     /// Get the FQN for a class given its short name, by looking it up in
     /// the `class_index`.
-    /// Build a fully-qualified name from a short name and optional namespace.
-    pub(crate) fn build_fqn(short_name: &str, namespace: &Option<String>) -> String {
-        match namespace {
-            Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, short_name),
-            _ => short_name.to_string(),
-        }
-    }
-
     fn class_fqn_for_short(&self, target_short: &str) -> Option<String> {
         let idx = self.class_index.read();
         // Look for an entry whose short name matches.

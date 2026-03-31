@@ -39,6 +39,7 @@ use super::resolution::build_var_resolver_from_ctx;
 use crate::completion::call_resolution::MethodReturnCtx;
 use crate::completion::conditional_resolution::resolve_conditional_with_args;
 use crate::completion::resolver::{Loaders, VarResolutionCtx};
+use crate::util::strip_fqn_prefix;
 
 /// Resolve a right-hand-side expression to zero or more
 /// [`ResolvedType`] values.
@@ -236,7 +237,7 @@ pub(in crate::completion) fn resolve_rhs_expression<'b>(
         // ── Global constant access: `PHP_EOL`, `SORT_ASC`, etc. ────
         Expression::ConstantAccess(ca) => {
             let name = ca.name.value().to_string();
-            let name_clean = name.strip_prefix('\\').unwrap_or(&name);
+            let name_clean = strip_fqn_prefix(&name);
             // `true`, `false`, `null` are parsed as ConstantAccess by
             // some AST variants — handle them the same as literals.
             match name_clean.to_lowercase().as_str() {
@@ -813,11 +814,8 @@ enum ArrayBracketSegment {
 fn classify_array_index(index: &Expression<'_>) -> ArrayBracketSegment {
     if let Expression::Literal(Literal::String(s)) = index {
         let key = s.value.map(|v| v.to_string()).unwrap_or_else(|| {
-            let raw = s.raw;
-            raw.strip_prefix('\'')
-                .and_then(|r| r.strip_suffix('\''))
-                .or_else(|| raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')))
-                .unwrap_or(raw)
+            crate::util::unquote_php_string(s.raw)
+                .unwrap_or(s.raw)
                 .to_string()
         });
         ArrayBracketSegment::StringKey(key)

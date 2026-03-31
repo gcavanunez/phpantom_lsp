@@ -155,7 +155,7 @@ fn attribute_placeholder(param: &ParameterInfo) -> (String, String, String) {
         .unwrap_or("");
 
     // Strip leading `?` for nullable types (e.g. `?string` → `string`).
-    let base = hint.strip_prefix('?').unwrap_or(hint);
+    let base = crate::util::strip_nullable(hint);
 
     match base.to_lowercase().as_str() {
         "string" => {

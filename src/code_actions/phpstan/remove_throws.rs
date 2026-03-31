@@ -22,7 +22,7 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::code_actions::CodeActionData;
 use crate::code_actions::make_code_action_data;
-use crate::util::{ranges_overlap, short_name};
+use crate::util::{offset_to_position, ranges_overlap, short_name};
 
 /// PHPStan identifiers we match on.
 const UNUSED_TYPE_ID: &str = "throws.unusedType";
@@ -372,22 +372,13 @@ fn build_remove_throws_edit(
         text
     };
 
-    let start = byte_offset_to_lsp(content, docblock.start);
-    let end = byte_offset_to_lsp(content, docblock.end);
+    let start = offset_to_position(content, docblock.start);
+    let end = offset_to_position(content, docblock.end);
 
     Some(TextEdit {
         range: Range { start, end },
         new_text,
     })
-}
-
-/// Convert a byte offset to an LSP `Position`.
-fn byte_offset_to_lsp(content: &str, offset: usize) -> Position {
-    let before = &content[..offset.min(content.len())];
-    let line = before.chars().filter(|&c| c == '\n').count() as u32;
-    let last_newline = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-    let character = content[last_newline..offset].chars().count() as u32;
-    Position { line, character }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

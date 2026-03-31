@@ -2422,11 +2422,8 @@ pub(in crate::completion) fn check_expression_for_assignment<'b>(
 fn extract_array_key_for_shape(index: &Expression<'_>) -> Option<String> {
     if let Expression::Literal(Literal::String(s)) = index {
         let key = s.value.map(|v| v.to_string()).unwrap_or_else(|| {
-            let raw = s.raw;
-            raw.strip_prefix('\'')
-                .and_then(|r| r.strip_suffix('\''))
-                .or_else(|| raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')))
-                .unwrap_or(raw)
+            crate::util::unquote_php_string(s.raw)
+                .unwrap_or(s.raw)
                 .to_string()
         });
         // Skip numeric-only keys — they are positional, not shape entries.

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::php_type::PhpType;
 use crate::types::TypeAliasDef;
+use crate::util::strip_fqn_prefix;
 use mago_span::HasSpan;
 use mago_syntax::ast::attribute::AttributeList;
 use mago_syntax::ast::class_like::enum_case::EnumCaseItem;
@@ -336,7 +337,7 @@ fn extract_custom_collection_from_new_collection(methods: &[MethodInfo]) -> Opti
     // but preserve the original form so that `resolve_name` in
     // `resolve_parent_class_names` can correctly handle both FQN
     // (`\App\Collections\X`) and short names (`X`) via the use map.
-    let stripped = base.strip_prefix('\\').unwrap_or(base);
+    let stripped = strip_fqn_prefix(base);
 
     // Ignore the standard Eloquent Collection — that's the default, not
     // a custom override.
@@ -503,7 +504,7 @@ fn extract_string_literal(text: &str) -> Option<String> {
     // look for `::class` and take everything before it.
     if let Some(class_pos) = t.find("::class") {
         let before = t[..class_pos].trim();
-        let name = before.strip_prefix('\\').unwrap_or(before);
+        let name = strip_fqn_prefix(before);
         if !name.is_empty() {
             return Some(name.to_string());
         }

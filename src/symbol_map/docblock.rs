@@ -23,6 +23,7 @@ use crate::docblock::types::split_type_token;
 use crate::types::TemplateVariance;
 
 use super::{SymbolKind, SymbolSpan};
+use crate::util::strip_fqn_prefix;
 
 // ─── Navigability filter ────────────────────────────────────────────────────
 
@@ -117,7 +118,7 @@ pub(crate) fn is_navigable_type(name: &str) -> bool {
 /// `name` in all cases.
 pub(super) fn class_ref_span(start: u32, end: u32, raw_name: &str) -> SymbolSpan {
     let is_fqn = raw_name.starts_with('\\');
-    let name = raw_name.strip_prefix('\\').unwrap_or(raw_name).to_string();
+    let name = strip_fqn_prefix(raw_name).to_string();
     SymbolSpan {
         start,
         end,
@@ -201,33 +202,12 @@ const TYPE_FIRST_KINDS: &[TagKind] = &[
 /// Tag names (for `TagKind::Other`) whose description starts with a type.
 const TYPE_FIRST_OTHER_NAMES: &[&str] = &["psalm-return", "psalm-param", "psalm-var"];
 
-/// `TagKind` values for template declarations.
-const TEMPLATE_INVARIANT_KINDS: &[TagKind] = &[
-    TagKind::Template,
-    TagKind::PhpstanTemplate,
-    TagKind::PsalmTemplate,
-];
-
-const TEMPLATE_COVARIANT_KINDS: &[TagKind] = &[
-    TagKind::TemplateCovariant,
-    TagKind::PhpstanTemplateCovariant,
-    TagKind::PsalmTemplateCovariant,
-];
-
-const TEMPLATE_CONTRAVARIANT_KINDS: &[TagKind] = &[
-    TagKind::TemplateContravariant,
-    TagKind::PhpstanTemplateContravariant,
-    TagKind::PsalmTemplateContravariant,
-];
+use crate::docblock::templates::{TEMPLATE_KINDS, variance_for};
 
 /// Determine the template variance for a tag, if it is a template tag.
 fn template_variance_for_tag(tag: &TagKind) -> Option<TemplateVariance> {
-    if TEMPLATE_INVARIANT_KINDS.contains(tag) {
-        Some(TemplateVariance::Invariant)
-    } else if TEMPLATE_COVARIANT_KINDS.contains(tag) {
-        Some(TemplateVariance::Covariant)
-    } else if TEMPLATE_CONTRAVARIANT_KINDS.contains(tag) {
-        Some(TemplateVariance::Contravariant)
+    if TEMPLATE_KINDS.contains(tag) {
+        Some(variance_for(*tag))
     } else {
         None
     }
@@ -432,7 +412,7 @@ fn join_multiline_type(docblock: &str, start_in_docblock: usize) -> (String, Vec
     joined.push_str(first_chunk);
 
     // Check whether the first chunk has unclosed `<`, `(`, or `{`.
-    if !has_unclosed_delimiters(&joined) {
+    if !crate::util::has_unclosed_delimiters(&joined) {
         // Push one-past-end sentinel.
         offset_map.push(start_in_docblock + first_chunk.len());
         return (joined, offset_map);
@@ -486,7 +466,7 @@ fn join_multiline_type(docblock: &str, start_in_docblock: usize) -> (String, Vec
 
         pos = line_end;
 
-        if !has_unclosed_delimiters(&joined) {
+        if !crate::util::has_unclosed_delimiters(&joined) {
             break;
         }
     }
@@ -496,25 +476,6 @@ fn join_multiline_type(docblock: &str, start_in_docblock: usize) -> (String, Vec
     offset_map.push(last_mapped + 1);
 
     (joined, offset_map)
-}
-
-/// Returns `true` when `s` has more opening `<`, `(`, or `{` than closing.
-fn has_unclosed_delimiters(s: &str) -> bool {
-    let mut angle = 0i32;
-    let mut paren = 0i32;
-    let mut brace = 0i32;
-    for b in s.bytes() {
-        match b {
-            b'<' => angle += 1,
-            b'>' => angle -= 1,
-            b'(' => paren += 1,
-            b')' => paren -= 1,
-            b'{' => brace += 1,
-            b'}' => brace -= 1,
-            _ => {}
-        }
-    }
-    angle > 0 || paren > 0 || brace > 0
 }
 
 pub(super) fn emit_type_spans(
@@ -567,15 +528,13 @@ pub(super) fn emit_type_spans(
             // Parse failed — fall back to emitting a single span for
             // the whole token if it looks like a navigable class name.
             let trimmed = type_token.trim();
-            let base = trimmed
-                .strip_prefix('\\')
-                .unwrap_or(trimmed)
+            let base = strip_fqn_prefix(trimmed)
                 .split('<')
                 .next()
                 .unwrap_or(trimmed);
             if is_navigable_type(base) {
                 let is_fqn = trimmed.starts_with('\\');
-                let name = trimmed.strip_prefix('\\').unwrap_or(trimmed).to_string();
+                let name = strip_fqn_prefix(trimmed).to_string();
                 spans.push(SymbolSpan {
                     start: token_file_offset,
                     end: token_file_offset + trimmed.len() as u32,
@@ -940,10 +899,10 @@ fn emit_identifier_span(name: &str, start: u32, end: u32, spans: &mut Vec<Symbol
     }
 
     // Check navigability (strips leading `\` for the check).
-    let check_name = name.strip_prefix('\\').unwrap_or(name).trim();
+    let check_name = strip_fqn_prefix(name).trim();
     if is_navigable_type(check_name) {
         let is_fqn = name.starts_with('\\');
-        let display_name = name.strip_prefix('\\').unwrap_or(name).trim().to_string();
+        let display_name = strip_fqn_prefix(name).trim().to_string();
         spans.push(SymbolSpan {
             start,
             end,

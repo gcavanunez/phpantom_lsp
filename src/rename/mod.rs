@@ -31,7 +31,7 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::symbol_map::SymbolKind;
-use crate::util::{offset_to_position, position_to_offset, ranges_overlap};
+use crate::util::{build_fqn, offset_to_position, ranges_overlap, strip_fqn_prefix};
 
 /// Symbols that cannot be renamed.
 const NON_RENAMEABLE_KEYWORDS: &[&str] = &["self", "static", "parent"];
@@ -49,15 +49,7 @@ impl Backend {
         content: &str,
         position: Position,
     ) -> Option<PrepareRenameResponse> {
-        let offset = position_to_offset(content, position);
-
-        let span = self.lookup_symbol_map(uri, offset).or_else(|| {
-            if offset > 0 {
-                self.lookup_symbol_map(uri, offset - 1)
-            } else {
-                None
-            }
-        })?;
+        let span = self.lookup_symbol_at_position(uri, content, position)?;
 
         // Reject non-renameable symbols.
         if let SymbolKind::SelfStaticParent { keyword } = &span.kind {
@@ -95,15 +87,7 @@ impl Backend {
         position: Position,
         new_name: &str,
     ) -> Option<WorkspaceEdit> {
-        let offset = position_to_offset(content, position);
-
-        let span = self.lookup_symbol_map(uri, offset).or_else(|| {
-            if offset > 0 {
-                self.lookup_symbol_map(uri, offset - 1)
-            } else {
-                None
-            }
-        })?;
+        let span = self.lookup_symbol_at_position(uri, content, position)?;
 
         // Reject non-renameable symbols (same logic as prepare_rename).
         if let SymbolKind::SelfStaticParent { keyword } = &span.kind {
@@ -215,16 +199,11 @@ impl Backend {
                 } else {
                     ctx.resolve_name_at(name, offset)
                 };
-                Some(fqn.strip_prefix('\\').unwrap_or(&fqn).to_string())
+                Some(strip_fqn_prefix(&fqn).to_string())
             }
             SymbolKind::ClassDeclaration { name } => {
                 let ctx = self.file_context(uri);
-                let fqn = if let Some(ref ns) = ctx.namespace {
-                    format!("{}\\{}", ns, name)
-                } else {
-                    name.clone()
-                };
-                Some(fqn)
+                Some(build_fqn(name, &ctx.namespace))
             }
             _ => None,
         }
@@ -341,7 +320,7 @@ impl Backend {
         new_short_name: &str,
         locations: &[Location],
     ) -> Option<WorkspaceEdit> {
-        let old_fqn_normalized = old_fqn.strip_prefix('\\').unwrap_or(old_fqn);
+        let old_fqn_normalized = strip_fqn_prefix(old_fqn);
         let old_short_name = crate::util::short_name(old_fqn_normalized);
 
         // Build the new FQN by replacing the last segment of the old FQN.
@@ -625,11 +604,11 @@ struct ImportInfo {
 ///
 /// The use_map is `alias → fqn`, so we need a reverse lookup.
 fn find_import_for_fqn(use_map: &HashMap<String, String>, target_fqn: &str) -> Option<ImportInfo> {
-    let target_normalized = target_fqn.strip_prefix('\\').unwrap_or(target_fqn);
+    let target_normalized = strip_fqn_prefix(target_fqn);
     let target_short = crate::util::short_name(target_normalized);
 
     for (alias, fqn) in use_map {
-        let fqn_normalized = fqn.strip_prefix('\\').unwrap_or(fqn);
+        let fqn_normalized = strip_fqn_prefix(fqn);
         if fqn_normalized.eq_ignore_ascii_case(target_normalized) {
             let has_explicit_alias = !alias.eq_ignore_ascii_case(target_short);
             return Some(ImportInfo {
@@ -648,11 +627,11 @@ fn has_import_collision(
     old_fqn: &str,
     new_short_name: &str,
 ) -> bool {
-    let old_normalized = old_fqn.strip_prefix('\\').unwrap_or(old_fqn);
+    let old_normalized = strip_fqn_prefix(old_fqn);
     let new_lower = new_short_name.to_lowercase();
 
     for (alias, fqn) in use_map {
-        let fqn_normalized = fqn.strip_prefix('\\').unwrap_or(fqn);
+        let fqn_normalized = strip_fqn_prefix(fqn);
         // Skip the entry for the class being renamed.
         if fqn_normalized.eq_ignore_ascii_case(old_normalized) {
             continue;
@@ -684,7 +663,7 @@ fn pick_collision_alias(base_name: &str, use_map: &HashMap<String, String>) -> S
 
 /// Find the LSP range of the `use` statement line that imports `old_fqn`.
 fn find_use_line_range(content: &str, old_fqn: &str) -> Option<UseLineRange> {
-    let old_fqn_normalized = old_fqn.strip_prefix('\\').unwrap_or(old_fqn);
+    let old_fqn_normalized = strip_fqn_prefix(old_fqn);
 
     for (line_idx, line) in content.lines().enumerate() {
         let trimmed = line.trim();

@@ -332,6 +332,76 @@ pub(crate) fn short_name(name: &str) -> &str {
     name.rsplit('\\').next().unwrap_or(name)
 }
 
+/// Strip the leading fully-qualified-name backslash from a PHP name.
+///
+/// `"\\Foo\\Bar"` -> `"Foo\\Bar"`, `"Foo"` -> `"Foo"`.
+pub(crate) fn strip_fqn_prefix(name: &str) -> &str {
+    name.strip_prefix('\\').unwrap_or(name)
+}
+
+/// Strip the nullable `?` prefix from a raw PHP type string.
+///
+/// `"?string"` → `"string"`, `"string"` → `"string"`.
+pub(crate) fn strip_nullable(name: &str) -> &str {
+    name.strip_prefix('?').unwrap_or(name)
+}
+
+/// Remove surrounding single or double quotes from a PHP string literal.
+///
+/// `"'hello'"` → `Some("hello")`, `"\"world\""` → `Some("world")`,
+/// `"bare"` → `None`.
+pub(crate) fn unquote_php_string(raw: &str) -> Option<&str> {
+    raw.strip_prefix('\'')
+        .and_then(|r| r.strip_suffix('\''))
+        .or_else(|| raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')))
+}
+
+/// Build a fully-qualified name from a short name and an optional namespace.
+///
+/// `("Foo", Some("App\\Models"))` → `"App\\Models\\Foo"`,
+/// `("Foo", None)` → `"Foo"`.
+pub(crate) fn build_fqn(short_name: &str, namespace: &Option<String>) -> String {
+    match namespace {
+        Some(ns) if !ns.is_empty() => format!("{}\\{}", ns, short_name),
+        _ => short_name.to_string(),
+    }
+}
+
+/// Check whether a type string has unclosed delimiters (`<>`, `()`, `{}`).
+///
+/// Returns `true` when at least one delimiter pair is left open,
+/// indicating that the string is a fragment of a longer type.
+pub(crate) fn has_unclosed_delimiters(s: &str) -> bool {
+    let mut angle = 0i32;
+    let mut paren = 0i32;
+    let mut brace = 0i32;
+    for b in s.bytes() {
+        match b {
+            b'<' => angle += 1,
+            b'>' => angle -= 1,
+            b'(' => paren += 1,
+            b')' => paren -= 1,
+            b'{' => brace += 1,
+            b'}' => brace -= 1,
+            _ => {}
+        }
+    }
+    angle > 0 || paren > 0 || brace > 0
+}
+
+/// Convert a byte offset range to an LSP `Range`.
+///
+/// Returns a `Range` with both endpoints converted from byte offsets
+/// to `Position` (line/character).
+pub(crate) fn byte_range_to_lsp_range(content: &str, start: usize, end: usize) -> Range {
+    let start_pos = offset_to_position(content, start);
+    let end_pos = offset_to_position(content, end);
+    Range {
+        start: start_pos,
+        end: end_pos,
+    }
+}
+
 /// Strip trailing PHP visibility/modifier keywords from a string.
 ///
 /// Given a string like `"  /** ... */\n    public static"`, returns

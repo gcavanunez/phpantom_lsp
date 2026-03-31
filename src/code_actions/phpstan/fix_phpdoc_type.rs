@@ -32,7 +32,7 @@ use tower_lsp::lsp_types::*;
 
 use crate::Backend;
 use crate::code_actions::{CodeActionData, make_code_action_data};
-use crate::util::ranges_overlap;
+use crate::util::{offset_to_position, ranges_overlap};
 
 // ── PHPStan identifiers ─────────────────────────────────────────────────────
 
@@ -600,8 +600,8 @@ fn build_update_tag_edit(
         new_text.push('\n');
     }
 
-    let start = byte_offset_to_lsp(content, docblock.start);
-    let end = byte_offset_to_lsp(content, docblock.end);
+    let start = offset_to_position(content, docblock.start);
+    let end = offset_to_position(content, docblock.end);
 
     Some(TextEdit {
         range: Range { start, end },
@@ -706,8 +706,8 @@ fn build_remove_tag_edit(
         text
     };
 
-    let start = byte_offset_to_lsp(content, docblock.start);
-    let end = byte_offset_to_lsp(content, docblock.end);
+    let start = offset_to_position(content, docblock.start);
+    let end = offset_to_position(content, docblock.end);
 
     Some(TextEdit {
         range: Range { start, end },
@@ -752,17 +752,6 @@ fn build_remove_title(mismatch: &PhpDocMismatch) -> String {
         "@var" => "Remove @var tag".to_string(),
         _ => "Remove PHPDoc tag".to_string(),
     }
-}
-
-// ── Utilities ───────────────────────────────────────────────────────────────
-
-/// Convert a byte offset to an LSP `Position`.
-fn byte_offset_to_lsp(content: &str, offset: usize) -> Position {
-    let before = &content[..offset.min(content.len())];
-    let line = before.chars().filter(|&c| c == '\n').count() as u32;
-    let last_newline = before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-    let character = content[last_newline..offset].chars().count() as u32;
-    Position { line, character }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

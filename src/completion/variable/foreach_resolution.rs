@@ -865,14 +865,10 @@ fn extract_destructuring_key(key_expr: &Expression<'_>) -> Option<String> {
     match key_expr {
         Expression::Literal(Literal::String(lit_str)) => {
             // `value` strips the quotes; fall back to `raw` trimmed.
-            lit_str.value.map(|v| v.to_string()).or_else(|| {
-                let raw = lit_str.raw;
-                // Strip surrounding quotes from the raw representation.
-                raw.strip_prefix('\'')
-                    .and_then(|s| s.strip_suffix('\''))
-                    .or_else(|| raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-                    .map(|s| s.to_string())
-            })
+            lit_str
+                .value
+                .map(|v| v.to_string())
+                .or_else(|| crate::util::unquote_php_string(lit_str.raw).map(|s| s.to_string()))
         }
         Expression::Literal(Literal::Integer(lit_int)) => Some(lit_int.raw.to_string()),
         _ => None,

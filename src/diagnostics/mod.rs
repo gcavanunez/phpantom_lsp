@@ -1291,27 +1291,23 @@ fn are_related_diagnostics(full_line_code: &str, precise_code: &str) -> bool {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Build a diagnostic range from byte offsets, returning `None` if the
-/// conversion fails (e.g. invalid offset or multi-byte boundary).
+/// Build a diagnostic range from byte offsets, returning `None` if either
+/// offset is past the end of `content`.
+///
+/// This thin wrapper around [`crate::util::byte_range_to_lsp_range`] adds
+/// a bounds check so that stale byte offsets (e.g. from a previous AST
+/// after an edit) are rejected instead of silently clamped to EOF.
 pub(crate) fn offset_range_to_lsp_range(
     content: &str,
     start_byte: usize,
     end_byte: usize,
 ) -> Option<Range> {
-    let start_pos = byte_offset_to_position(content, start_byte)?;
-    let end_pos = byte_offset_to_position(content, end_byte)?;
-    Some(Range {
-        start: start_pos,
-        end: end_pos,
-    })
-}
-
-/// Convert a byte offset to an LSP `Position` (0-based line and character).
-fn byte_offset_to_position(content: &str, byte_offset: usize) -> Option<Position> {
-    if byte_offset > content.len() {
+    if start_byte > content.len() || end_byte > content.len() {
         return None;
     }
-    Some(crate::util::offset_to_position(content, byte_offset))
+    Some(crate::util::byte_range_to_lsp_range(
+        content, start_byte, end_byte,
+    ))
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

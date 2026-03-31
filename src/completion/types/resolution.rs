@@ -96,7 +96,7 @@ fn type_hint_to_classes_depth(
         return vec![];
     }
 
-    let hint = type_hint.strip_prefix('?').unwrap_or(type_hint);
+    let hint = crate::util::strip_nullable(type_hint);
 
     // Strip surrounding parentheses that appear in DNF types like `(A&B)|C`.
     let hint = hint

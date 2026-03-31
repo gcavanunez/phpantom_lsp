@@ -569,7 +569,7 @@ fn shorten_type_string_fallback(ty: &str) -> String {
             b'|' | b'&' | b'<' | b'>' | b',' | b' ' | b'?' | b'{' | b'}' | b':' | b'(' | b')'
         ) {
             if i > segment_start {
-                result.push_str(short_name(&ty[segment_start..i]));
+                result.push_str(crate::util::short_name(&ty[segment_start..i]));
             }
             result.push(b as char);
             segment_start = i + 1;
@@ -577,16 +577,7 @@ fn shorten_type_string_fallback(ty: &str) -> String {
     }
     // Flush trailing segment.
     if segment_start < ty.len() {
-        result.push_str(short_name(&ty[segment_start..]));
+        result.push_str(crate::util::short_name(&ty[segment_start..]));
     }
     result
-}
-
-/// Return the short (unqualified) class name from a potentially
-/// namespace-qualified type string.  Returns only the part after the
-/// last `\`.  Non-class types (scalars, `array`, etc.) pass through
-/// unchanged.
-pub(super) fn short_name(ty: &str) -> &str {
-    let t = ty.trim();
-    t.rsplit('\\').next().unwrap_or(t)
 }

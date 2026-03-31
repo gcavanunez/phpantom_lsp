@@ -9,6 +9,7 @@ use tower_lsp::lsp_types::*;
 use crate::Backend;
 use crate::completion::builder::deprecation_tag;
 use crate::completion::resolve::CompletionItemData;
+use crate::util::strip_fqn_prefix;
 
 /// Build a single constant `CompletionItem` with the standard layout.
 ///
@@ -81,7 +82,7 @@ impl Backend {
         uri: &str,
         position: Position,
     ) -> (Vec<CompletionItem>, bool) {
-        let prefix_lower = prefix.strip_prefix('\\').unwrap_or(prefix).to_lowercase();
+        let prefix_lower = strip_fqn_prefix(prefix).to_lowercase();
         let mut seen: HashSet<String> = HashSet::new();
         let mut items: Vec<CompletionItem> = Vec::new();
 
