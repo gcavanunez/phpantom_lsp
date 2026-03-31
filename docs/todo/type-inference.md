@@ -413,13 +413,22 @@ emits the concrete callable signature in the `@param` tag.
 ---
 
 ## T16. Closure parameter type inference from generic host method
-**Impact: Medium · Effort: Medium**
+**Impact: High · Effort: Medium**
 
 When a closure is passed to a method like
 `Collection::each(callable(TValue): void)`, PHPantom should infer
 the closure parameter type from the host method's template-bound
 parameter type.  Currently, untyped closure parameters remain
 unresolved.
+
+This is the single largest source of remaining diagnostics. It
+directly causes ~20 `unresolved_member_access` errors (variables like
+`$item`, `$data`, `$q`, `$connection` in closures passed to
+`Collection::each`, `Collection::map`, `Builder::where`, etc.) and
+indirectly causes ~15 `unknown_member` chain-resolution failures
+downstream (when the closure parameter type is unknown, any method
+called on it also returns an unknown type, breaking the rest of the
+chain).
 
 **Reproducer:**
 
@@ -440,10 +449,107 @@ closure's `$class` should be typed `CustomerDocument`.
   method's parameter type and map template arguments to the closure's
   parameter positions.
 
-**Discovered in:** analyze-triage iteration 5 (F4).  
-**Impact in shared codebase:** ~5 diagnostics.
+**Impact in shared codebase:** ~35 diagnostics (direct + downstream
+chain failures).
 
 ---
+
+## T17. Array element type extraction from generic array annotations
+**Impact: Medium · Effort: Low-Medium**
+
+When a variable is annotated as `array<string, SomeClass>` or
+`Collection<int, SomeClass>`, accessing an element by index
+(`$array[$key]`, `$collection[0]`) should yield the value type
+(`SomeClass`). Currently, the element type is lost and member access
+on the result produces `unresolved_member_access` or
+`unknown_member` diagnostics.
+
+**Reproducer:**
+
+```php
+/** @var array<string, IntCollection> */
+private array $cache = [];
+
+// later:
+$this->cache[$key]->contains($id);
+// "subject type could not be resolved" on ->contains()
+```
+
+Also affects `$model->translations[0]->name` patterns where
+`translations` is a `Collection<int, Translation>` and bracket
+access loses the element type.
+
+**Where to fix:**
+- `src/completion/variable/rhs_resolution.rs` — when resolving
+  array/collection element access, extract the value type parameter
+  from the container's generic annotation.
+- `src/completion/resolver.rs` — may need to handle bracket-access
+  subjects during chain resolution.
+
+**Impact in shared codebase:** ~10 diagnostics (SalesCampaignGroup
+cache, ProductExport translations, PurchaseFileService DB::select
+results).
+
+---
+
+## T18. Method-level template parameter resolution at call sites
+**Impact: Medium · Effort: Medium**
+
+When a method declares `@template T of SomeType` and uses `T` as both
+a parameter and return type, PHPantom should resolve `T` to the
+concrete type of the argument passed at the call site. Currently,
+the template parameter name (e.g. `T`, `TRelation`) is left as the
+resolved type string, and member access on the return value fails
+with "subject type 'T' could not be resolved".
+
+**Reproducer:**
+
+```php
+class ProductRepository
+{
+    /**
+     * @template T of Builder|QueryBuilder
+     * @param T $query
+     * @return T
+     */
+    private static function filterDisabled(BuilderContract $query, Country $code): BuilderContract
+    {
+        $query->where(...);  // "subject type 'T' could not be resolved"
+        return $query;
+    }
+}
+```
+
+```php
+trait GetMarketTrait
+{
+    /**
+     * @template TRelation of Relation
+     * @param TRelation $relation
+     * @return TRelation
+     */
+    protected function whereCurrentMarket(Relation $relation): Relation
+    {
+        $relation->getQuery()->where(...);
+        // "subject type 'TRelation' could not be resolved"
+    }
+}
+```
+
+**What should work:** Inside the method body, `$query` should be
+resolved using the `@template` bound (`Builder|QueryBuilder`) rather
+than the bare template name. At call sites, `T` should be substituted
+with the concrete argument type.
+
+**Where to fix:**
+- `src/completion/variable/resolution.rs` — when resolving a parameter
+  variable, check for `@template` annotations that bind the parameter
+  type and use the bound type (or concrete call-site type) instead of
+  the raw template name.
+- `src/completion/resolver.rs` — may need method-level template
+  substitution logic similar to class-level generic substitution.
+
+**Impact in shared codebase:** ~2 diagnostics.
 
 ---
 
