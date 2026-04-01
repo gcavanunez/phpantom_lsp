@@ -213,27 +213,6 @@ relationship. It returns a `MorphToMany` instance (the same class as
 No other changes needed since `MorphToMany` is already in
 `COLLECTION_RELATIONSHIPS`.
 
-#### L3. `$dates` array (deprecated)
-
-**Impact: Low-Medium · Effort: Low**
-
-Only affects legacy codebases that haven't migrated to `$casts`.
-Decreasing relevance over time. New `extract_dates_definitions`
-function in `parser/classes.rs` + merge logic in the provider at
-lower priority than `$casts`.
-
-Before `$casts`, Laravel used `protected $dates = [...]` to mark
-columns as Carbon instances. This was deprecated in favour of
-`casts()` with a `datetime` type, but older codebases still use it.
-Columns listed in `$dates` should be typed as `\Carbon\Carbon`.
-
-**Where to change:** Add a new `extract_dates_definitions` function in
-`parser/classes.rs` (similar to `extract_column_names` but returning
-`Vec<(String, String)>` with each column mapped to `\Carbon\Carbon`).
-Merge these into `casts_definitions` at a lower priority than explicit
-`$casts` entries, or add a separate field on `ClassInfo` and handle
-priority in the provider.
-
 #### L4. Custom Eloquent builders (`HasBuilder` / `#[UseEloquentBuilder]`)
 
 **Impact: High · Effort: Medium**

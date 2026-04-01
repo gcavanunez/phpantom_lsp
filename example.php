@@ -1629,6 +1629,7 @@ class EloquentPropertyDemo
         $bakery->baguettes;           // relationship HasMany       → Collection<Loaf>
         $bakery->baguettes_count;     // relationship count         → int
         $bakery->croissant;           // $attributes default        → string
+        $bakery->defrosted_at;        // $dates (deprecated)        → Carbon\Carbon
         $bakery->dough_temp;          // $casts 'float'             → float
         $bakery->egg_count;           // $attributes default        → int
         $bakery->flour;               // $fillable (no cast/attr)   → mixed
@@ -4669,6 +4670,8 @@ class Bakery extends \Illuminate\Database\Eloquent\Model
     protected $guarded = ['kitchen_id'];
 
     protected $hidden = ['oven_code'];
+
+    protected $dates = ['defrosted_at'];
 
     protected $visible = ['rye_blend'];
 

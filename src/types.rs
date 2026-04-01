@@ -1268,6 +1268,15 @@ pub struct LaravelMetadata {
     /// properties, mapping cast type strings to PHP types (e.g.
     /// `datetime` to `Carbon\Carbon`, `boolean` to `bool`).
     pub casts_definitions: Vec<(String, String)>,
+    /// Column names extracted from the deprecated `$dates` property
+    /// array.
+    ///
+    /// Before `$casts`, Laravel used `protected $dates = [...]` to mark
+    /// columns as Carbon instances. Each column listed here is typed as
+    /// `Carbon\Carbon`. The `LaravelModelProvider` merges these at lower
+    /// priority than `$casts`: if a column appears in both `$casts` and
+    /// `$dates`, the cast type wins.
+    pub dates_definitions: Vec<String>,
     /// Eloquent attribute defaults extracted from the `$attributes`
     /// property initializer.
     ///

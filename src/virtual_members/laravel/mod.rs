@@ -550,8 +550,22 @@ impl VirtualMemberProvider for LaravelModelProvider {
                 properties.push(PropertyInfo::virtual_property(column, Some(&php_type)));
             }
 
+            // ── $dates properties (deprecated, lower priority than $casts) ──
+            // Columns in `$dates` are typed as Carbon\Carbon unless already
+            // covered by an explicit `$casts` entry.
+            for column in &laravel.dates_definitions {
+                if !seen_props.insert(column.clone()) {
+                    continue;
+                }
+                properties.push(PropertyInfo::virtual_property(
+                    column,
+                    Some("Carbon\\Carbon"),
+                ));
+            }
+
             // ── Attribute default properties (fallback) ─────────────
-            // Only add properties for columns not already covered by $casts.
+            // Only add properties for columns not already covered by $casts
+            // or $dates.
             for (column, php_type) in &laravel.attributes_definitions {
                 if !seen_props.insert(column.clone()) {
                     continue;

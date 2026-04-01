@@ -770,6 +770,44 @@ fn extract_column_names<'a>(
     names
 }
 
+/// Extract column names from the deprecated `$dates` property array.
+///
+/// Before `$casts`, Laravel used `protected $dates = [...]` to mark
+/// columns as Carbon instances. Each column listed here should be
+/// typed as `\Carbon\Carbon` by the virtual member provider.
+fn extract_dates_definitions<'a>(
+    members: impl Iterator<Item = &'a ClassLikeMember<'a>>,
+    content: &str,
+) -> Vec<String> {
+    let mut names = Vec::new();
+
+    for member in members {
+        if let ClassLikeMember::Property(Property::Plain(plain)) = member {
+            for item in plain.items.iter() {
+                let var_name = item.variable().name.to_string();
+                let stripped = var_name.strip_prefix('$').unwrap_or(&var_name);
+                if stripped != "dates" {
+                    continue;
+                }
+                if let PropertyItem::Concrete(concrete) = item {
+                    let span = concrete.value.span();
+                    let start = span.start.offset as usize;
+                    let end = span.end.offset as usize;
+                    if let Some(text) = content.get(start..end) {
+                        for name in parse_string_list(text) {
+                            if !names.contains(&name) {
+                                names.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    names
+}
+
 /// Parse a PHP array literal containing only string values.
 ///
 /// Accepts text starting with `[` and extracts bare string values
@@ -913,6 +951,9 @@ impl Backend {
 
                     let column_names = extract_column_names(class.members.iter(), content);
 
+                    let dates_definitions =
+                        extract_dates_definitions(class.members.iter(), content);
+
                     let (timestamps, created_at_name, updated_at_name) =
                         extract_timestamp_config(class.members.iter(), content);
 
@@ -959,6 +1000,7 @@ impl Backend {
                         laravel: Some(Box::new(LaravelMetadata {
                             custom_collection,
                             casts_definitions,
+                            dates_definitions,
                             attributes_definitions,
                             column_names,
                             timestamps,

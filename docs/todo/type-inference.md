@@ -412,20 +412,6 @@ emits the concrete callable signature in the `@param` tag.
 
 ---
 
-## ~~T18. Method-level template parameter resolution at call sites~~ ✅ Resolved
-
-**Resolution:** Added `substitute_template_param_bounds()` in
-`src/completion/variable/resolution.rs` which replaces bare template
-parameter names (e.g. `T`, `TRelation`) with their `@template T of Bound`
-upper bounds before class resolution. Applied in both
-`resolve_variable_in_members` (method-level) and `try_resolve_in_function`
-(standalone function-level). Call-site substitution was already handled by
-`build_method_template_subs`; this fix addresses the **inside-the-body**
-case where `$query->where(...)` previously failed with "subject type 'T'
-could not be resolved".
-
----
-
 ## T19. Structured type representation
 **Impact: High · Effort: Very High**
 

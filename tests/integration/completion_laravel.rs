@@ -11544,3 +11544,255 @@ class User extends Model {
         props
     );
 }
+
+// ── $dates array (deprecated) ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dates_array_produces_carbon_virtual_properties() {
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $dates = [
+        'deleted_at',
+        'trial_ends_at',
+    ];
+    public function test() {
+        $user = new User();
+        $user->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
+
+    let items = complete_at(&backend, &dir, "src/Models/User.php", user_php, 10, 15).await;
+    let props = property_names(&items);
+
+    assert!(
+        props.contains(&"deleted_at"),
+        "$dates should produce deleted_at property, got: {:?}",
+        props
+    );
+    assert!(
+        props.contains(&"trial_ends_at"),
+        "$dates should produce trial_ends_at property, got: {:?}",
+        props
+    );
+}
+
+#[tokio::test]
+async fn test_dates_type_is_carbon() {
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $dates = ['deleted_at'];
+    public function test() {
+        $user = new User();
+        $user->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
+
+    let items = complete_at(&backend, &dir, "src/Models/User.php", user_php, 7, 15).await;
+    let prop = items
+        .iter()
+        .find(|i| i.kind == Some(CompletionItemKind::PROPERTY) && i.label == "deleted_at");
+    assert!(prop.is_some(), "should find deleted_at property");
+    assert!(
+        prop.unwrap()
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("Carbon"),
+        "deleted_at should show Carbon in detail, got: {:?}",
+        prop.unwrap().detail
+    );
+}
+
+#[tokio::test]
+async fn test_casts_take_priority_over_dates() {
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $casts = [
+        'deleted_at' => 'immutable_datetime',
+    ];
+    protected $dates = ['deleted_at'];
+    public function test() {
+        $user = new User();
+        $user->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
+
+    let items = complete_at(&backend, &dir, "src/Models/User.php", user_php, 10, 15).await;
+    let matching: Vec<_> = items
+        .iter()
+        .filter(|i| i.kind == Some(CompletionItemKind::PROPERTY) && i.label == "deleted_at")
+        .collect();
+    assert_eq!(matching.len(), 1, "should not duplicate the property");
+    assert!(
+        matching[0]
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("CarbonImmutable"),
+        "$casts type should win over $dates, got: {:?}",
+        matching[0].detail
+    );
+}
+
+#[tokio::test]
+async fn test_dates_coexist_with_casts_for_different_columns() {
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $casts = [
+        'is_admin' => 'boolean',
+    ];
+    protected $dates = ['deleted_at'];
+    public function test() {
+        $user = new User();
+        $user->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
+
+    let items = complete_at(&backend, &dir, "src/Models/User.php", user_php, 10, 15).await;
+    let props = property_names(&items);
+
+    assert!(
+        props.contains(&"is_admin"),
+        "should have $casts property, got: {:?}",
+        props
+    );
+    assert!(
+        props.contains(&"deleted_at"),
+        "should have $dates property, got: {:?}",
+        props
+    );
+}
+
+#[tokio::test]
+async fn test_dates_take_priority_over_fillable() {
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $dates = ['deleted_at'];
+    protected $fillable = ['deleted_at', 'name'];
+    public function test() {
+        $user = new User();
+        $user->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
+
+    let items = complete_at(&backend, &dir, "src/Models/User.php", user_php, 8, 15).await;
+
+    let matching: Vec<_> = items
+        .iter()
+        .filter(|i| i.kind == Some(CompletionItemKind::PROPERTY) && i.label == "deleted_at")
+        .collect();
+    assert_eq!(matching.len(), 1, "should not duplicate the property");
+    assert!(
+        matching[0]
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("Carbon"),
+        "$dates type should win over fillable mixed, got: {:?}",
+        matching[0].detail
+    );
+
+    // The other column from $fillable should still appear as mixed
+    let name = items
+        .iter()
+        .find(|i| i.kind == Some(CompletionItemKind::PROPERTY) && i.label == "name");
+    assert!(name.is_some(), "should still have 'name' from $fillable");
+}
+
+#[tokio::test]
+async fn test_dates_on_this_arrow() {
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $dates = ['deleted_at'];
+    public function test() {
+        $this->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
+
+    let items = complete_at(&backend, &dir, "src/Models/User.php", user_php, 6, 15).await;
+    let props = property_names(&items);
+
+    assert!(
+        props.contains(&"deleted_at"),
+        "$dates should produce property on $this->, got: {:?}",
+        props
+    );
+}
+
+#[tokio::test]
+async fn test_dates_cross_file_psr4() {
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $dates = ['deleted_at', 'trial_ends_at'];
+}
+";
+    let controller_php = "\
+<?php
+namespace App\\Models;
+class Controller {
+    public function index() {
+        $user = new User();
+        $user->
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[
+        ("src/Models/User.php", user_php),
+        ("src/Models/Controller.php", controller_php),
+    ]);
+
+    let items = complete_at(
+        &backend,
+        &dir,
+        "src/Models/Controller.php",
+        controller_php,
+        5,
+        15,
+    )
+    .await;
+    let props = property_names(&items);
+
+    assert!(
+        props.contains(&"deleted_at"),
+        "$dates should produce property cross-file, got: {:?}",
+        props
+    );
+    assert!(
+        props.contains(&"trial_ends_at"),
+        "$dates should produce trial_ends_at cross-file, got: {:?}",
+        props
+    );
+}

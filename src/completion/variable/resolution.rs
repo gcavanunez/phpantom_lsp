@@ -625,11 +625,8 @@ fn try_resolve_in_function(
             );
         }
         // Bare template param → bound (e.g. `T` → `Builder|QueryBuilder`).
-        rt.type_string = substitute_template_param_bounds(
-            rt.type_string.clone(),
-            ctx.content,
-            func_start,
-        );
+        rt.type_string =
+            substitute_template_param_bounds(rt.type_string.clone(), ctx.content, func_start);
     }
 
     walk_statements_for_assignments(func.body.statements.iter(), &body_ctx, &mut results, false);
@@ -1012,14 +1009,14 @@ fn resolve_variable_in_members<'b>(
     vec![]
 }
 
-/// Walk statements collecting variable assignment types.
-///
-/// The `conditional` flag indicates whether we are inside a conditional
-/// block (if/else, try/catch, loop).  When `conditional` is `false`,
-/// a new assignment **replaces** all previous candidates (the variable
-/// is being unconditionally reassigned).  When `conditional` is `true`,
-/// a new assignment **adds** to the list (the variable *might* be this
-/// type).
+// Walk statements collecting variable assignment types.
+//
+// The `conditional` flag indicates whether we are inside a conditional
+// block (if/else, try/catch, loop).  When `conditional` is `false`,
+// a new assignment **replaces** all previous candidates (the variable
+// is being unconditionally reassigned).  When `conditional` is `true`,
+// a new assignment **adds** to the list (the variable *might* be this
+// type).
 
 /// Substitute method/function-level template parameter names with their
 /// upper bounds from `@template T of Bound` annotations.

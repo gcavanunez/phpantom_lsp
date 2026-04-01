@@ -1233,6 +1233,217 @@ fn cast_decimal_with_precision_synthesizes_float() {
     assert_eq!(prop.type_hint_str().as_deref(), Some("float"));
 }
 
+// ── $dates property synthesis tests ─────────────────────────────────
+
+#[test]
+fn synthesizes_dates_properties_as_carbon() {
+    let provider = LaravelModelProvider;
+    let mut user = make_class(ELOQUENT_MODEL_FQN);
+    user.name = "User".to_string();
+    user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
+    user.laravel_mut().dates_definitions =
+        vec!["deleted_at".to_string(), "trial_ends_at".to_string()];
+
+    let result = provider.provide(&user, &no_loader, None);
+
+    let deleted_at = result.properties.iter().find(|p| p.name == "deleted_at");
+    assert!(deleted_at.is_some(), "should produce deleted_at property");
+    assert_eq!(
+        deleted_at.unwrap().type_hint_str().as_deref(),
+        Some("Carbon\\Carbon")
+    );
+
+    let trial = result.properties.iter().find(|p| p.name == "trial_ends_at");
+    assert!(trial.is_some(), "should produce trial_ends_at property");
+    assert_eq!(
+        trial.unwrap().type_hint_str().as_deref(),
+        Some("Carbon\\Carbon")
+    );
+}
+
+#[test]
+fn dates_properties_are_public_and_not_static() {
+    let provider = LaravelModelProvider;
+    let mut user = make_class(ELOQUENT_MODEL_FQN);
+    user.name = "User".to_string();
+    user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
+    user.laravel_mut().dates_definitions = vec!["deleted_at".to_string()];
+
+    let result = provider.provide(&user, &no_loader, None);
+    let prop = result
+        .properties
+        .iter()
+        .find(|p| p.name == "deleted_at")
+        .unwrap();
+    assert!(!prop.is_static);
+    assert_eq!(prop.visibility, Visibility::Public);
+}
+
+#[test]
+fn casts_take_priority_over_dates() {
+    let provider = LaravelModelProvider;
+    let mut user = make_class(ELOQUENT_MODEL_FQN);
+    user.name = "User".to_string();
+    user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
+    // $casts defines deleted_at as immutable_datetime, $dates also lists it
+    user.laravel_mut().casts_definitions =
+        vec![("deleted_at".to_string(), "immutable_datetime".to_string())];
+    user.laravel_mut().dates_definitions = vec!["deleted_at".to_string()];
+
+    let result = provider.provide(&user, &no_loader, None);
+
+    let matching: Vec<_> = result
+        .properties
+        .iter()
+        .filter(|p| p.name == "deleted_at")
+        .collect();
+    assert_eq!(matching.len(), 1, "should not duplicate the property");
+    assert_eq!(
+        matching[0].type_hint_str().as_deref(),
+        Some("Carbon\\CarbonImmutable"),
+        "$casts type should win over $dates"
+    );
+}
+
+#[test]
+fn dates_coexist_with_casts_for_different_columns() {
+    let provider = LaravelModelProvider;
+    let mut user = make_class(ELOQUENT_MODEL_FQN);
+    user.name = "User".to_string();
+    user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
+    user.laravel_mut().casts_definitions = vec![("is_admin".to_string(), "boolean".to_string())];
+    user.laravel_mut().dates_definitions = vec!["deleted_at".to_string()];
+
+    let result = provider.provide(&user, &no_loader, None);
+
+    assert!(
+        result.properties.iter().any(|p| p.name == "is_admin"),
+        "should have $casts property"
+    );
+    assert!(
+        result.properties.iter().any(|p| p.name == "deleted_at"),
+        "should have $dates property"
+    );
+    assert_eq!(
+        result
+            .properties
+            .iter()
+            .find(|p| p.name == "is_admin")
+            .unwrap()
+            .type_hint_str()
+            .as_deref(),
+        Some("bool")
+    );
+    assert_eq!(
+        result
+            .properties
+            .iter()
+            .find(|p| p.name == "deleted_at")
+            .unwrap()
+            .type_hint_str()
+            .as_deref(),
+        Some("Carbon\\Carbon")
+    );
+}
+
+#[test]
+fn dates_take_priority_over_attribute_defaults() {
+    let provider = LaravelModelProvider;
+    let mut user = make_class(ELOQUENT_MODEL_FQN);
+    user.name = "User".to_string();
+    user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
+    user.laravel_mut().dates_definitions = vec!["deleted_at".to_string()];
+    user.laravel_mut().attributes_definitions =
+        vec![("deleted_at".to_string(), "string".to_string())];
+
+    let result = provider.provide(&user, &no_loader, None);
+
+    let matching: Vec<_> = result
+        .properties
+        .iter()
+        .filter(|p| p.name == "deleted_at")
+        .collect();
+    assert_eq!(matching.len(), 1, "should not duplicate the property");
+    assert_eq!(
+        matching[0].type_hint_str().as_deref(),
+        Some("Carbon\\Carbon"),
+        "$dates type should win over $attributes"
+    );
+}
+
+#[test]
+fn dates_take_priority_over_column_names() {
+    let provider = LaravelModelProvider;
+    let mut user = make_class(ELOQUENT_MODEL_FQN);
+    user.name = "User".to_string();
+    user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
+    user.laravel_mut().dates_definitions = vec!["deleted_at".to_string()];
+    user.laravel_mut().column_names = vec!["deleted_at".to_string(), "name".to_string()];
+
+    let result = provider.provide(&user, &no_loader, None);
+
+    let matching: Vec<_> = result
+        .properties
+        .iter()
+        .filter(|p| p.name == "deleted_at")
+        .collect();
+    assert_eq!(matching.len(), 1, "should not duplicate the property");
+    assert_eq!(
+        matching[0].type_hint_str().as_deref(),
+        Some("Carbon\\Carbon"),
+        "$dates type should win over column_names"
+    );
+
+    // The other column should still appear as mixed
+    let name = result.properties.iter().find(|p| p.name == "name");
+    assert!(name.is_some());
+    assert_eq!(name.unwrap().type_hint_str().as_deref(), Some("mixed"));
+}
+
+#[test]
+fn empty_dates_produces_no_properties() {
+    let provider = LaravelModelProvider;
+    let mut user = make_class(ELOQUENT_MODEL_FQN);
+    user.name = "User".to_string();
+    user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
+    user.laravel_mut().dates_definitions = Vec::new();
+    user.laravel_mut().timestamps = Some(false);
+
+    let result = provider.provide(&user, &no_loader, None);
+    assert!(result.properties.is_empty());
+}
+
+#[test]
+fn dates_coexist_with_relationships_and_scopes() {
+    let provider = LaravelModelProvider;
+    let mut user = make_class(ELOQUENT_MODEL_FQN);
+    user.name = "User".to_string();
+    user.parent_class = Some(ELOQUENT_MODEL_FQN.to_string());
+    user.laravel_mut().dates_definitions = vec!["deleted_at".to_string()];
+    user.methods
+        .push(make_method("posts", Some("HasMany<Post, $this>")));
+    user.methods.push(make_method_with_params(
+        "scopeActive",
+        Some("void"),
+        vec![make_param("$query", Some("Builder<static>"), true)],
+    ));
+
+    let result = provider.provide(&user, &no_loader, None);
+
+    assert!(
+        result.properties.iter().any(|p| p.name == "deleted_at"),
+        "should have $dates property"
+    );
+    assert!(
+        result.properties.iter().any(|p| p.name == "posts"),
+        "should have relationship property"
+    );
+    assert!(
+        result.methods.iter().any(|m| m.name == "active"),
+        "should have scope method"
+    );
+}
+
 // ── Attribute default property synthesis tests ───────────────────────
 
 #[test]

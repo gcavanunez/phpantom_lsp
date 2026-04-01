@@ -7093,24 +7093,24 @@ async fn test_method_template_param_resolves_to_bound_inside_body() {
 
     let uri = Url::parse("file:///method_tpl_body_bound.php").unwrap();
     let text = concat!(
-        "<?php\n",                                                      // 0
-        "class Builder {\n",                                            // 1
-        "    public function where(string $col): static { return $this; }\n", // 2
+        "<?php\n",                                                              // 0
+        "class Builder {\n",                                                    // 1
+        "    public function where(string $col): static { return $this; }\n",   // 2
         "    public function orderBy(string $col): static { return $this; }\n", // 3
-        "}\n",                                                          // 4
-        "\n",                                                           // 5
-        "class Country {}\n",                                           // 6
-        "\n",                                                           // 7
-        "class ProductRepository {\n",                                  // 8
-        "    /**\n",                                                    // 9
-        "     * @template T of Builder\n",                              // 10
-        "     * @param T $query\n",                                     // 11
-        "     * @return T\n",                                           // 12
-        "     */\n",                                                    // 13
+        "}\n",                                                                  // 4
+        "\n",                                                                   // 5
+        "class Country {}\n",                                                   // 6
+        "\n",                                                                   // 7
+        "class ProductRepository {\n",                                          // 8
+        "    /**\n",                                                            // 9
+        "     * @template T of Builder\n",                                      // 10
+        "     * @param T $query\n",                                             // 11
+        "     * @return T\n",                                                   // 12
+        "     */\n",                                                            // 13
         "    private static function filterDisabled(Builder $query, Country $code): Builder {\n", // 14
-        "        $query->\n",                                           // 15
-        "    }\n",                                                      // 16
-        "}\n",                                                          // 17
+        "        $query->\n", // 15
+        "    }\n",            // 16
+        "}\n",                // 17
     );
 
     let open_params = DidOpenTextDocumentParams {
@@ -7170,28 +7170,28 @@ async fn test_method_template_union_bound_resolves_inside_body() {
 
     let uri = Url::parse("file:///method_tpl_union_body.php").unwrap();
     let text = concat!(
-        "<?php\n",                                                      // 0
-        "class Builder {\n",                                            // 1
-        "    public function where(string $col): static { return $this; }\n", // 2
-        "}\n",                                                          // 3
-        "\n",                                                           // 4
-        "class QueryBuilder {\n",                                       // 5
+        "<?php\n",                                                              // 0
+        "class Builder {\n",                                                    // 1
+        "    public function where(string $col): static { return $this; }\n",   // 2
+        "}\n",                                                                  // 3
+        "\n",                                                                   // 4
+        "class QueryBuilder {\n",                                               // 5
         "    public function orderBy(string $col): static { return $this; }\n", // 6
-        "    public function where(string $col): static { return $this; }\n", // 7
-        "}\n",                                                          // 8
-        "\n",                                                           // 9
-        "class Country {}\n",                                           // 10
-        "\n",                                                           // 11
-        "class ProductRepository {\n",                                  // 12
-        "    /**\n",                                                    // 13
-        "     * @template T of Builder|QueryBuilder\n",                 // 14
-        "     * @param T $query\n",                                     // 15
-        "     * @return T\n",                                           // 16
-        "     */\n",                                                    // 17
+        "    public function where(string $col): static { return $this; }\n",   // 7
+        "}\n",                                                                  // 8
+        "\n",                                                                   // 9
+        "class Country {}\n",                                                   // 10
+        "\n",                                                                   // 11
+        "class ProductRepository {\n",                                          // 12
+        "    /**\n",                                                            // 13
+        "     * @template T of Builder|QueryBuilder\n",                         // 14
+        "     * @param T $query\n",                                             // 15
+        "     * @return T\n",                                                   // 16
+        "     */\n",                                                            // 17
         "    private static function filterDisabled(Builder $query, Country $code): Builder {\n", // 18
-        "        $query->\n",                                           // 19
-        "    }\n",                                                      // 20
-        "}\n",                                                          // 21
+        "        $query->\n", // 19
+        "    }\n",            // 20
+        "}\n",                // 21
     );
 
     let open_params = DidOpenTextDocumentParams {
@@ -7252,25 +7252,25 @@ async fn test_trait_method_template_param_resolves_inside_body() {
 
     let uri = Url::parse("file:///trait_tpl_body.php").unwrap();
     let text = concat!(
-        "<?php\n",                                                      // 0
-        "class QueryBuilder {\n",                                       // 1
-        "    public function where(string $col): static { return $this; }\n", // 2
-        "}\n",                                                          // 3
-        "\n",                                                           // 4
-        "class Relation {\n",                                           // 5
-        "    public function getQuery(): QueryBuilder {}\n",            // 6
-        "}\n",                                                          // 7
-        "\n",                                                           // 8
-        "trait GetMarketTrait {\n",                                     // 9
-        "    /**\n",                                                    // 10
-        "     * @template TRelation of Relation\n",                     // 11
-        "     * @param TRelation $relation\n",                          // 12
-        "     * @return TRelation\n",                                   // 13
-        "     */\n",                                                    // 14
+        "<?php\n",                                                                     // 0
+        "class QueryBuilder {\n",                                                      // 1
+        "    public function where(string $col): static { return $this; }\n",          // 2
+        "}\n",                                                                         // 3
+        "\n",                                                                          // 4
+        "class Relation {\n",                                                          // 5
+        "    public function getQuery(): QueryBuilder {}\n",                           // 6
+        "}\n",                                                                         // 7
+        "\n",                                                                          // 8
+        "trait GetMarketTrait {\n",                                                    // 9
+        "    /**\n",                                                                   // 10
+        "     * @template TRelation of Relation\n",                                    // 11
+        "     * @param TRelation $relation\n",                                         // 12
+        "     * @return TRelation\n",                                                  // 13
+        "     */\n",                                                                   // 14
         "    protected function whereCurrentMarket(Relation $relation): Relation {\n", // 15
-        "        $relation->\n",                                        // 16
-        "    }\n",                                                      // 17
-        "}\n",                                                          // 18
+        "        $relation->\n",                                                       // 16
+        "    }\n",                                                                     // 17
+        "}\n",                                                                         // 18
     );
 
     let open_params = DidOpenTextDocumentParams {
@@ -7325,20 +7325,20 @@ async fn test_function_template_param_resolves_to_bound_inside_body() {
 
     let uri = Url::parse("file:///func_tpl_body_bound.php").unwrap();
     let text = concat!(
-        "<?php\n",                                                      // 0
-        "class Model {\n",                                              // 1
-        "    public function save(): bool {}\n",                        // 2
-        "    public function delete(): bool {}\n",                      // 3
-        "}\n",                                                          // 4
-        "\n",                                                           // 5
-        "/**\n",                                                        // 6
-        " * @template T of Model\n",                                    // 7
-        " * @param T $entity\n",                                        // 8
-        " * @return T\n",                                               // 9
-        " */\n",                                                        // 10
-        "function persist(Model $entity): Model {\n",                   // 11
-        "    $entity->\n",                                              // 12
-        "}\n",                                                          // 13
+        "<?php\n",                                    // 0
+        "class Model {\n",                            // 1
+        "    public function save(): bool {}\n",      // 2
+        "    public function delete(): bool {}\n",    // 3
+        "}\n",                                        // 4
+        "\n",                                         // 5
+        "/**\n",                                      // 6
+        " * @template T of Model\n",                  // 7
+        " * @param T $entity\n",                      // 8
+        " * @return T\n",                             // 9
+        " */\n",                                      // 10
+        "function persist(Model $entity): Model {\n", // 11
+        "    $entity->\n",                            // 12
+        "}\n",                                        // 13
     );
 
     let open_params = DidOpenTextDocumentParams {
