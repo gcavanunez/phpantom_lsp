@@ -107,6 +107,7 @@ pub mod diagnostics;
 pub mod docblock;
 mod document_links;
 mod document_symbols;
+pub mod fix;
 mod folding;
 mod formatting;
 mod highlight;

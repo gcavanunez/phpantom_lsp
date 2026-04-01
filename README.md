@@ -81,6 +81,7 @@ PHPantom understands Composer projects out of the box, but works without setup o
 ## Documentation
 
 - **[Installation](docs/SETUP.md).** Editor-specific setup for Zed, Neovim, PHPStorm, and others.
+- **[CLI Reference](docs/CLI.md).** Batch diagnostics (`analyze`), automated fixes (`fix`), and CI integration.
 - **[Building from Source](docs/BUILDING.md).** Build, test, and debug instructions.
 - **[Architecture](docs/ARCHITECTURE.md).** Symbol resolution, stub loading, and inheritance merging.
 - **[Contributing](docs/CONTRIBUTING.md)**

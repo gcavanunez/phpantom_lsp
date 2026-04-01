@@ -20,10 +20,6 @@ const STYLES: Styles = Styles::styled()
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
-
-    /// Create a default .phpantom.toml configuration file in the current directory and exit.
-    #[arg(long, global = true)]
-    init: bool,
 }
 
 #[derive(clap::Subcommand)]
@@ -54,6 +50,45 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         project_root: Option<std::path::PathBuf>,
     },
+
+    /// Apply automated code fixes across PHP files.
+    ///
+    /// Works like php-cs-fixer: specify which rules (fixers) to run and
+    /// PHPantom applies them across the codebase. Rules correspond to
+    /// diagnostic codes (e.g. "unused_import"). When no rules are
+    /// specified, all preferred native fixers run.
+    ///
+    /// PHPStan-based rules (prefixed with "phpstan.") require the
+    /// --with-phpstan flag.
+    Fix {
+        /// Path to fix (file or directory). Defaults to the entire project.
+        #[arg(value_name = "PATH")]
+        path: Option<std::path::PathBuf>,
+
+        /// Rules to apply. Can be specified multiple times. Omit to run all
+        /// preferred native fixers.
+        #[arg(long = "rule", value_name = "RULE")]
+        rules: Vec<String>,
+
+        /// Show what would change without writing files.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Enable PHPStan-based fixers (runs PHPStan to collect diagnostics).
+        #[arg(long)]
+        with_phpstan: bool,
+
+        /// Disable coloured output.
+        #[arg(long)]
+        no_colour: bool,
+
+        /// Project root directory. Defaults to the current working directory.
+        #[arg(long, value_name = "DIR")]
+        project_root: Option<std::path::PathBuf>,
+    },
+
+    /// Create a default .phpantom.toml configuration file in the current directory.
+    Init,
 }
 
 /// Minimum severity level for the analyze command.
@@ -81,33 +116,30 @@ impl From<SeverityArg> for phpantom_lsp::analyse::SeverityFilter {
 async fn main() {
     let cli = Cli::parse();
 
-    if cli.init {
-        let cwd = std::env::current_dir().unwrap_or_else(|e| {
-            eprintln!("Error: cannot determine current directory: {}", e);
-            std::process::exit(1);
-        });
-
-        match config::create_default_config(&cwd) {
-            Ok(true) => {
-                println!("Created {} in {}", config::CONFIG_FILE_NAME, cwd.display());
-            }
-            Ok(false) => {
-                println!(
-                    "{} already exists in {}",
-                    config::CONFIG_FILE_NAME,
-                    cwd.display()
-                );
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
+    match cli.command {
+        Some(Command::Init) => {
+            let cwd = std::env::current_dir().unwrap_or_else(|e| {
+                eprintln!("Error: cannot determine current directory: {}", e);
                 std::process::exit(1);
+            });
+
+            match config::create_default_config(&cwd) {
+                Ok(true) => {
+                    println!("Created {} in {}", config::CONFIG_FILE_NAME, cwd.display());
+                }
+                Ok(false) => {
+                    println!(
+                        "{} already exists in {}",
+                        config::CONFIG_FILE_NAME,
+                        cwd.display()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
-
-        return;
-    }
-
-    match cli.command {
         Some(Command::Analyze {
             path,
             severity,
@@ -133,6 +165,35 @@ async fn main() {
             };
 
             let exit_code = phpantom_lsp::analyse::run(options).await;
+            std::process::exit(exit_code);
+        }
+        Some(Command::Fix {
+            path,
+            rules,
+            dry_run,
+            with_phpstan,
+            no_colour,
+            project_root,
+        }) => {
+            let workspace_root = project_root
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| {
+                    eprintln!("Error: cannot determine project root directory");
+                    std::process::exit(1);
+                });
+
+            let use_colour = !no_colour && atty_stdout();
+
+            let options = phpantom_lsp::fix::FixOptions {
+                workspace_root,
+                path_filter: path,
+                rules,
+                dry_run,
+                use_colour,
+                with_phpstan,
+            };
+
+            let exit_code = phpantom_lsp::fix::run(options).await;
             std::process::exit(exit_code);
         }
         None => {

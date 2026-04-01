@@ -84,6 +84,7 @@ mod inline_variable;
 pub(crate) mod phpstan;
 mod promote_constructor_param;
 mod remove_unused_import;
+pub(crate) use remove_unused_import::build_line_deletion_edit;
 mod replace_deprecated;
 mod simplify_null;
 mod update_docblock;

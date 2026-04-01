@@ -425,7 +425,7 @@ pub async fn run(options: AnalyseOptions) -> i32 {
 /// Walks each PSR-4 source directory from `composer.json` (these only
 /// cover the project's own code, not vendor).  When `path_filter` is
 /// provided the results are cropped to that file or directory.
-fn discover_user_files(
+pub(crate) fn discover_user_files(
     backend: &Backend,
     workspace_root: &Path,
     path_filter: Option<&Path>,

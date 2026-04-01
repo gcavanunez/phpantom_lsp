@@ -25,6 +25,8 @@ within the same impact tier.
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ---------- |
 | T18 | [Method-level template parameter resolution at call sites](todo/type-inference.md#t18-method-level-template-parameter-resolution-at-call-sites) | Medium | Medium     |
 | B21 | [Builder `__call` return type drops chain type for dynamic `where{Column}` calls](todo/bugs.md#b21-builder-__call-return-type-drops-chain-type-for-dynamic-wherecolumn-calls) | Medium | Medium     |
+| H17 | [`missingType.iterableValue` — add `@return` with inferred element type](todo/phpstan-actions.md#h17-missingtype-iterablevalue-return-type--add-return-with-iterable-type) | Medium | High       |
+| H10 | [`return.unusedType` — remove unused type from return union](todo/phpstan-actions.md#h10-returnunusedtype--remove-unused-type-from-return-union) | Medium | Medium     |
 |     | **Release 0.7.0**                                                                                                                          |        |            |
 
 ## Sprint 5 — Polish for office adoption
@@ -112,15 +114,20 @@ unlikely to move the needle for most users.
 | A3   | Switch → match conversion                                                                                                                                                   | Low         | Medium         |
 |      | **[PHPStan Code Actions](todo/phpstan-actions.md)**                                                                                                                         |             |                |
 | H4   | `assign.byRefForeachExpr` — unset by-reference foreach variable                                                                                                             | Medium      | Medium         |
-| H10  | `return.unusedType` — remove unused type from return union                                                                                                                  | Medium      | Medium         |
 | H13  | `property.notFound` — declare missing property (same-class)                                                                                                                 | Medium      | Medium         |
 | H15  | Template bound from tip — add `@template T of X`                                                                                                                            | Medium      | Medium         |
 | H16  | `match.unhandled` — add missing match arms                                                                                                                                  | Medium      | Medium         |
-| H17  | `missingType.iterableValue` — add `@return` with inferred element type                                                                                                      | Medium      | High           |
 | H19  | `property.unused` / `method.unused` — remove unused member                                                                                                                  | Low         | Low            |
 | H20  | `generics.callSiteVarianceRedundant` — remove redundant variance annotation                                                                                                 | Low         | Low            |
 | H23  | `instanceof.alwaysTrue` — remove redundant instanceof check                                                                                                                 | Low         | Low            |
 | H24  | `catch.neverThrown` — remove unnecessary catch clause                                                                                                                       | Low         | Low            |
+|      | **[CLI Fix Rules](todo/fix-cli.md)**                                                                                                                                        |             |                |
+| FX1  | [`deprecated` — replace deprecated symbol usage](todo/fix-cli.md#fx1-deprecated--replace-deprecated-symbol-usage)                                                           | Medium      | Medium         |
+| FX2  | [`unused_variable` — remove unused variables](todo/fix-cli.md#fx2-unused_variable--remove-unused-variables)                                                                 | Medium      | Medium         |
+| FX3  | [`phpstan.return.unusedType` — remove unused type from return union](todo/fix-cli.md#fx3-phpstanreturnunusedtype--remove-unused-type-from-return-union)                      | Medium      | Medium         |
+| FX4  | [`phpstan.missingType.iterableValue` — add `@return` with iterable type](todo/fix-cli.md#fx4-phpstanmissingtypeiterablevalue--add-return-with-iterable-type)                | Medium      | Medium         |
+| FX5  | [`phpstan.property.unused` / `phpstan.method.unused` — remove unused member](todo/fix-cli.md#fx5-phpstanpropertyunused--phpstanmethodunused--remove-unused-member)          | Low         | Low            |
+| FX6  | [`phpstan.generics.callSiteVarianceRedundant` — remove redundant variance](todo/fix-cli.md#fx6-phpstangenericscallsitevarianceredundant--remove-redundant-variance)         | Low         | Low            |
 |      | **[LSP Features](todo/lsp-features.md)**                                                                                                                                    |             |                |
 | F2   | [Partial result streaming via `$/progress`](todo/lsp-features.md#f2-partial-result-streaming-via-progress)                                                                  | Medium      | Medium-High    |
 | F3   | Incremental text sync                                                                                                                                                       | Low-Medium  | Medium         |

@@ -221,7 +221,7 @@ fn cursor_on_use_import_line(content: &str, line: u32) -> bool {
 /// When the diagnostic targets a single member inside a group `use`
 /// statement (e.g. `use Foo\{Bar, Baz};` where only `Bar` is unused),
 /// the edit removes just the member entry rather than the whole line.
-fn build_line_deletion_edit(
+pub(crate) fn build_line_deletion_edit(
     content: &str,
     range: &Range,
     removed_import_lines: &HashSet<usize>,
@@ -288,7 +288,7 @@ fn build_line_deletion_edit(
 ///   collapsing a gap between two import groups) OR there is no
 ///   surviving import before the deletion (the entire leading block is
 ///   being removed, so the separator to the class body should go too).
-fn should_consume_following_blank_line(
+pub(crate) fn should_consume_following_blank_line(
     lines: &[&str],
     start_line: usize,
     end_line: usize,
@@ -309,7 +309,7 @@ fn should_consume_following_blank_line(
 /// - There IS a blank line immediately before `start_line`.
 /// - AND there are surviving imports on BOTH sides (we're collapsing a
 ///   gap that would otherwise be doubled).
-fn should_consume_previous_blank_line(
+pub(crate) fn should_consume_previous_blank_line(
     lines: &[&str],
     start_line: usize,
     end_line: usize,
@@ -333,7 +333,7 @@ fn should_consume_previous_blank_line(
 /// nearest `use` import line that is NOT in `removed_import_lines`.
 /// Blank lines are skipped; any non-blank, non-`use` line stops the
 /// search and returns `None`.
-fn nearest_surviving_import_line(
+pub(crate) fn nearest_surviving_import_line(
     lines: &[&str],
     mut line: isize,
     direction: isize,
@@ -366,7 +366,7 @@ fn nearest_surviving_import_line(
 /// When the diagnostic range falls inside a group `use` statement
 /// (`use Foo\{Bar, Baz};`), build an edit that removes only the
 /// identified member rather than the entire line.
-fn extend_range_for_group_member(content: &str, range: &Range) -> Option<TextEdit> {
+pub(crate) fn extend_range_for_group_member(content: &str, range: &Range) -> Option<TextEdit> {
     let lines: Vec<&str> = content.lines().collect();
     let line_idx = range.start.line as usize;
     if line_idx >= lines.len() {
@@ -383,6 +383,12 @@ fn extend_range_for_group_member(content: &str, range: &Range) -> Option<TextEdi
         let mut start = line_idx;
         while start > 0 && !lines[start].trim_start().starts_with("use ") {
             start -= 1;
+        }
+        // The opening `use ... {` line must contain a `{`.  If the
+        // `use` line we found doesn't have one, this isn't a group
+        // import at all.
+        if !lines[start].contains('{') {
+            return None;
         }
         let mut end = line_idx;
         while end < lines.len() && !lines[end].contains('}') {
@@ -1159,6 +1165,69 @@ class Demo extends UsedBravo
         assert_eq!(
             result,
             "<?php\nuse Foo\\Bar;\nuse Quux\\Quuz;\n\nclass Test extends Bar\n{\n    public function make(): Quuz\n    {\n        return new Quuz();\n    }\n}\n"
+        );
+    }
+
+    // ── Contiguous block blank-line regression ──────────────────────
+
+    #[test]
+    fn removing_middle_import_from_contiguous_block_leaves_no_blank_line() {
+        // Reproduces: removing `use PHPMD\Rule;` from a contiguous block
+        // left a blank line between the surviving imports.
+        let content = "\
+<?php
+use PHPMD\\Node\\AbstractCallableNode;
+use PHPMD\\Node\\MethodNode;
+use PHPMD\\Rule;
+use PHPMD\\Rule\\Design\\CouplingBetweenObjects;
+";
+        // Line 3 is `use PHPMD\Rule;` — the only removed import.
+        let removed = HashSet::from([3usize]);
+        let range = Range::new(Position::new(3, 4), Position::new(3, 14));
+        let edit = build_line_deletion_edit(content, &range, &removed);
+
+        let start = lsp_position_to_byte_offset(content, edit.range.start);
+        let end = lsp_position_to_byte_offset(content, edit.range.end);
+        let mut result = content.to_string();
+        result.replace_range(start..end, &edit.new_text);
+
+        assert_eq!(
+            result,
+            "\
+<?php
+use PHPMD\\Node\\AbstractCallableNode;
+use PHPMD\\Node\\MethodNode;
+use PHPMD\\Rule\\Design\\CouplingBetweenObjects;
+",
+            "Removing a middle import should not leave a blank line"
+        );
+    }
+
+    #[test]
+    fn removing_first_import_from_contiguous_block_leaves_no_blank_line() {
+        let content = "\
+<?php
+use PHPMD\\Node\\AbstractCallableNode;
+use PHPMD\\Node\\MethodNode;
+use PHPMD\\Rule;
+";
+        let removed = HashSet::from([1usize]);
+        let range = Range::new(Position::new(1, 4), Position::new(1, 34));
+        let edit = build_line_deletion_edit(content, &range, &removed);
+
+        let start = lsp_position_to_byte_offset(content, edit.range.start);
+        let end = lsp_position_to_byte_offset(content, edit.range.end);
+        let mut result = content.to_string();
+        result.replace_range(start..end, &edit.new_text);
+
+        assert_eq!(
+            result,
+            "\
+<?php
+use PHPMD\\Node\\MethodNode;
+use PHPMD\\Rule;
+",
+            "Removing the first import should not leave a blank line"
         );
     }
 }
