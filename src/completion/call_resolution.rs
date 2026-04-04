@@ -1226,6 +1226,17 @@ impl Backend {
                         subs.insert(tpl_name.clone(), PhpType::parse(&ret_type));
                     }
                 }
+                TemplateBindingMode::CallableParamType(position) => {
+                    // `@param Closure(T): void $cb` — extract the closure's
+                    // parameter type annotation at the given position.
+                    if let Some(param_type) =
+                        super::source::helpers::extract_closure_param_type_from_text(
+                            arg_text, position,
+                        )
+                    {
+                        subs.insert(tpl_name.clone(), PhpType::parse(&param_type));
+                    }
+                }
                 TemplateBindingMode::ArrayElement => {
                     if let Some(type_name) = Self::resolve_arg_text_to_type(arg_text, ctx) {
                         subs.insert(tpl_name.clone(), PhpType::parse(&type_name));

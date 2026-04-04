@@ -7504,3 +7504,397 @@ class KlaviyoClient {
         _ => panic!("Expected CompletionResponse::Array"),
     }
 }
+
+/// When `@param Closure(T): void $cb` receives `fn(User $u) => ...`,
+/// the template param `T` should be inferred from the closure's parameter
+/// type (contravariant position).
+#[tokio::test]
+async fn test_template_inferred_from_closure_param_type() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///closure_param_template.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                        // 0
+        "class User {\n",                                                 // 1
+        "    public function getName(): string {}\n",                     // 2
+        "    public function getEmail(): string {}\n",                    // 3
+        "}\n",                                                            // 4
+        "\n",                                                             // 5
+        "class EventBus {\n",                                             // 6
+        "    /**\n",                                                      // 7
+        "     * @template T\n",                                           // 8
+        "     * @param Closure(T): void $callback\n",                     // 9
+        "     * @return T\n",                                             // 10
+        "     */\n",                                                      // 11
+        "    public function listen(Closure $callback): mixed {}\n",      // 12
+        "}\n",                                                            // 13
+        "\n",                                                             // 14
+        "function test() {\n",                                            // 15
+        "    $bus = new EventBus();\n",                                   // 16
+        "    $result = $bus->listen(fn(User $u): void => $u->save());\n", // 17
+        "    $result->\n",                                                // 18
+        "}\n",                                                            // 19
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 18,
+                character: 13,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getName"),
+                "T should be inferred as User from closure param type, showing 'getName', got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"getEmail"),
+                "T should be inferred as User from closure param type, showing 'getEmail', got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// When `@param callable(TCarry, TValue): TCarry $cb` receives a closure
+/// with a typed return, `TCarry` should be inferred from both the return
+/// type *and* the first parameter type.  This models `Collection::reduce`.
+#[tokio::test]
+async fn test_template_inferred_from_closure_return_type_reduce_pattern() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///closure_reduce_template.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                                     // 0
+        "class Decimal {\n",                                                           // 1
+        "    public function add(Decimal $other): Decimal {}\n",                       // 2
+        "    public function getValue(): string {}\n",                                 // 3
+        "}\n",                                                                         // 4
+        "\n",                                                                          // 5
+        "class Collection {\n",                                                        // 6
+        "    /**\n",                                                                   // 7
+        "     * @template TReduceReturnType\n",                                        // 8
+        "     * @param callable(TReduceReturnType, mixed): TReduceReturnType $cb\n",   // 9
+        "     * @param TReduceReturnType $initial\n",                                  // 10
+        "     * @return TReduceReturnType\n",                                          // 11
+        "     */\n",                                                                   // 12
+        "    public function reduce(callable $cb, mixed $initial = null): mixed {}\n", // 13
+        "}\n",                                                                         // 14
+        "\n",                                                                          // 15
+        "function test() {\n",                                                         // 16
+        "    $c = new Collection();\n",                                                // 17
+        "    $total = $c->reduce(fn(Decimal $carry, $item): Decimal => $carry, new Decimal());\n", // 18
+        "    $total->\n", // 19
+        "}\n",            // 20
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 19,
+                character: 12,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"add"),
+                "TReduceReturnType should resolve to Decimal showing 'add', got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"getValue"),
+                "TReduceReturnType should resolve to Decimal showing 'getValue', got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// Template param inferred from the second closure parameter position.
+/// `@param Closure(int, T): void $cb` with `fn(int $i, Order $o) => ...`
+/// should infer `T` = `Order`.
+#[tokio::test]
+async fn test_template_inferred_from_closure_second_param() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///closure_second_param_template.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                           // 0
+        "class Order {\n",                                                   // 1
+        "    public function getTotal(): float {}\n",                        // 2
+        "    public function getStatus(): string {}\n",                      // 3
+        "}\n",                                                               // 4
+        "\n",                                                                // 5
+        "class Processor {\n",                                               // 6
+        "    /**\n",                                                         // 7
+        "     * @template T\n",                                              // 8
+        "     * @param Closure(int, T): void $cb\n",                         // 9
+        "     * @return T\n",                                                // 10
+        "     */\n",                                                         // 11
+        "    public function process(Closure $cb): mixed {}\n",              // 12
+        "}\n",                                                               // 13
+        "\n",                                                                // 14
+        "function test() {\n",                                               // 15
+        "    $proc = new Processor();\n",                                    // 16
+        "    $item = $proc->process(fn(int $i, Order $o): void => null);\n", // 17
+        "    $item->\n",                                                     // 18
+        "}\n",                                                               // 19
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 18,
+                character: 11,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getTotal"),
+                "T should be inferred as Order from second closure param, showing 'getTotal', got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"getStatus"),
+                "T should be inferred as Order from second closure param, showing 'getStatus', got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// Function-level template inferred from closure param (contravariant).
+/// `@param Closure(T): void $cb` on a standalone function.
+#[tokio::test]
+async fn test_function_template_inferred_from_closure_param_type() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///func_closure_param_template.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                              // 0
+        "class Product {\n",                                    // 1
+        "    public function getPrice(): float {}\n",           // 2
+        "    public function getSku(): string {}\n",            // 3
+        "}\n",                                                  // 4
+        "\n",                                                   // 5
+        "/**\n",                                                // 6
+        " * @template T\n",                                     // 7
+        " * @param Closure(T): void $cb\n",                     // 8
+        " * @return T\n",                                       // 9
+        " */\n",                                                // 10
+        "function tap(Closure $cb): mixed {}\n",                // 11
+        "\n",                                                   // 12
+        "$result = tap(fn(Product $p): void => $p->save());\n", // 13
+        "$result->\n",                                          // 14
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 14,
+                character: 9,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getPrice"),
+                "T should be inferred as Product from closure param, showing 'getPrice', got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"getSku"),
+                "T should be inferred as Product from closure param, showing 'getSku', got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// Closure with full `function` keyword (not arrow fn) should also have
+/// its parameter type extracted for template inference.
+#[tokio::test]
+async fn test_template_inferred_from_full_closure_param_type() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///full_closure_param_template.php").unwrap();
+    let text = concat!(
+        "<?php\n",                                                                    // 0
+        "class Invoice {\n",                                                          // 1
+        "    public function getAmount(): float {}\n",                                // 2
+        "    public function isPaid(): bool {}\n",                                    // 3
+        "}\n",                                                                        // 4
+        "\n",                                                                         // 5
+        "class Pipeline {\n",                                                         // 6
+        "    /**\n",                                                                  // 7
+        "     * @template T\n",                                                       // 8
+        "     * @param Closure(T): void $handler\n",                                  // 9
+        "     * @return T\n",                                                         // 10
+        "     */\n",                                                                  // 11
+        "    public function handle(Closure $handler): mixed {}\n",                   // 12
+        "}\n",                                                                        // 13
+        "\n",                                                                         // 14
+        "function test() {\n",                                                        // 15
+        "    $pipe = new Pipeline();\n",                                              // 16
+        "    $inv = $pipe->handle(function(Invoice $i): void { $i->process(); });\n", // 17
+        "    $inv->\n",                                                               // 18
+        "}\n",                                                                        // 19
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 18,
+                character: 10,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getAmount"),
+                "T should be inferred as Invoice from full closure param, showing 'getAmount', got: {:?}",
+                method_names
+            );
+            assert!(
+                method_names.contains(&"isPaid"),
+                "T should be inferred as Invoice from full closure param, showing 'isPaid', got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}

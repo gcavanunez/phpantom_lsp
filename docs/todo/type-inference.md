@@ -515,40 +515,6 @@ and resolve the method on that class. When the return type contains
 
 ---
 
-## T21. Bidirectional template inference (upper/lower bounds)
-**Impact: Medium · Effort: Medium-High**
-
-PHPantom's template resolution only tracks one direction: matching
-template parameters against concrete types from extends clauses and
-direct argument positions. PHPStan and Psalm track both upper bounds
-(covariant positions like return types) and lower bounds (contravariant
-positions like parameter types).
-
-Key gaps:
-
-1. When `@param Closure(T): void $callback` receives a closure, `T`
-   should be inferred from the closure's parameter type
-   (contravariant).
-2. When multiple bounds exist for the same template, the most specific
-   one should win. Psalm uses `appearance_depth` to prefer direct
-   bindings over nested ones.
-3. No variance tracking. `@template-covariant T` vs `@template T`
-   affects whether `Container<Cat>` is assignable to
-   `Container<Animal>`.
-4. Template parameters not instantiated from closure return type at
-   call sites. Example: `Collection::reduce(fn(Decimal $c, ...):
-   Decimal => ..., new Decimal('0'))` — `TReduceReturnType` should
-   be inferred as `Decimal` from the callback return type, and
-   `TReduceInitial` as `Decimal` from the `$initial` argument.
-   Currently the return type of `reduce()` is unresolved.
-   (Triage: `FlowService:517`.)
-
-**Implementation:** add a `TemplateResolution` struct that accumulates
-lower and upper bounds during call-site analysis, with a `resolve()`
-method that picks the most specific bound.
-
----
-
 ## T24. `stdClass` dynamic property access
 **Impact: Low-Medium · Effort: Low**
 

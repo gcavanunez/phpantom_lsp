@@ -246,6 +246,123 @@ pub(in crate::completion) fn extract_closure_return_type_from_text(text: &str) -
     Some(ret_type.to_string())
 }
 
+/// Extract the type annotation of the Nth parameter from a closure or
+/// arrow-function literal.
+///
+/// Given `fn(User $u, int $count): void => ...` and `position = 0`,
+/// returns `Some("User")`.  Given `position = 1`, returns `Some("int")`.
+///
+/// This is the contravariant counterpart of
+/// [`extract_closure_return_type_from_text`]: when a docblock declares
+/// `@param Closure(T): void $cb`, the template param `T` appears in the
+/// callable's *parameter* list rather than its return type, so we need to
+/// read the closure argument's parameter type hints to infer `T`.
+///
+/// Returns `None` if the text is not a closure/arrow-function, the
+/// parameter at `position` does not exist, or the parameter has no type
+/// hint.
+pub(in crate::completion) fn extract_closure_param_type_from_text(
+    text: &str,
+    position: usize,
+) -> Option<String> {
+    let trimmed = text.trim();
+
+    let is_arrow = trimmed.starts_with("fn")
+        && trimmed
+            .get(2..2 + 1)
+            .is_some_and(|c| c.starts_with('(') || c.starts_with(' ') || c.starts_with('\t'));
+    let is_closure = trimmed.starts_with("function")
+        && trimmed
+            .get(8..)
+            .is_some_and(|rest| rest.trim_start().starts_with('('));
+
+    if !is_arrow && !is_closure {
+        return None;
+    }
+
+    // Find the opening `(` of the parameter list.
+    let paren_open = trimmed.find('(')?;
+    // Find the matching `)` by tracking depth.
+    let mut depth = 0i32;
+    let mut paren_close = None;
+    for (i, c) in trimmed[paren_open..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    paren_close = Some(paren_open + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let paren_close = paren_close?;
+
+    // Extract the parameter list text between the parens.
+    let params_text = trimmed.get(paren_open + 1..paren_close)?.trim();
+    if params_text.is_empty() {
+        return None;
+    }
+
+    // Split by commas at depth 0 (respecting nested parens/generics).
+    let params = split_params_at_depth_zero(params_text);
+    let param = params.get(position)?;
+    let param = param.trim();
+    if param.is_empty() {
+        return None;
+    }
+
+    // A typed parameter looks like `TypeHint $name` or `?TypeHint $name`
+    // or `TypeHint &$name` or `TypeHint ...$name`.
+    // An untyped parameter is just `$name` or `&$name` or `...$name`.
+    // We need to find the type hint, which is everything before the `$`
+    // (or `&$` or `...$`).
+
+    // Find the `$` that starts the variable name.
+    let dollar = param.rfind('$')?;
+    if dollar == 0 {
+        // No type hint — the parameter is untyped.
+        return None;
+    }
+
+    let before_dollar = param[..dollar].trim_end();
+    // Strip trailing `&` or `...` (pass-by-reference or variadic).
+    let before_dollar = before_dollar
+        .strip_suffix("...")
+        .or_else(|| before_dollar.strip_suffix('&'))
+        .unwrap_or(before_dollar)
+        .trim_end();
+
+    if before_dollar.is_empty() {
+        return None;
+    }
+
+    Some(before_dollar.to_string())
+}
+
+/// Split a parameter list string by commas at depth zero, respecting
+/// nested parentheses and angle brackets.
+fn split_params_at_depth_zero(text: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' | '<' | '[' => depth += 1,
+            ')' | '>' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(&text[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    result.push(&text[start..]);
+    result
+}
+
 /// Resolve the return type of a first-class callable assigned to
 /// `var_name`.
 ///
@@ -750,6 +867,133 @@ mod tests {
         let text = "  fn(int $x): string => ''  ";
         assert_eq!(
             extract_closure_return_type_from_text(text),
+            Some("string".to_string())
+        );
+    }
+
+    // ── extract_closure_param_type_from_text tests ──────────────
+
+    #[test]
+    fn param_type_arrow_fn_first_param() {
+        let text = "fn(User $u, int $count): void => doSomething($u)";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some("User".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_arrow_fn_second_param() {
+        let text = "fn(User $u, int $count): void => doSomething($u)";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 1),
+            Some("int".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_closure_first_param() {
+        let text = "function(Order $order): void { $order->process(); }";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some("Order".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_untyped_param() {
+        let text = "fn($item) => $item->process()";
+        assert_eq!(extract_closure_param_type_from_text(text, 0), None);
+    }
+
+    #[test]
+    fn param_type_out_of_bounds() {
+        let text = "fn(User $u): void => doSomething($u)";
+        assert_eq!(extract_closure_param_type_from_text(text, 5), None);
+    }
+
+    #[test]
+    fn param_type_nullable() {
+        let text = "fn(?string $name): void => trim($name)";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some("?string".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_fqn() {
+        let text = r"fn(\App\Models\User $u): void => $u->save()";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some(r"\App\Models\User".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_by_reference() {
+        let text = "fn(int &$count): void => $count++";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some("int".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_variadic() {
+        let text = "fn(string ...$items): void => implode($items)";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some("string".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_not_a_closure() {
+        let text = "new Decimal('0')";
+        assert_eq!(extract_closure_param_type_from_text(text, 0), None);
+    }
+
+    #[test]
+    fn param_type_empty_params() {
+        let text = "fn(): void => null";
+        assert_eq!(extract_closure_param_type_from_text(text, 0), None);
+    }
+
+    #[test]
+    fn param_type_closure_with_use_clause() {
+        let text = "function(Product $p) use ($factor): void { $p->scale($factor); }";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some("Product".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_whitespace_around() {
+        let text = "  fn( User $u ): void => $u->save()  ";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some("User".to_string())
+        );
+    }
+
+    #[test]
+    fn param_type_variable_is_not_a_closure() {
+        let text = "$someVar";
+        assert_eq!(extract_closure_param_type_from_text(text, 0), None);
+    }
+
+    #[test]
+    fn param_type_mixed_typed_and_untyped() {
+        let text = "fn(User $u, $count, string $label): void => null";
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 0),
+            Some("User".to_string())
+        );
+        assert_eq!(extract_closure_param_type_from_text(text, 1), None);
+        assert_eq!(
+            extract_closure_param_type_from_text(text, 2),
             Some("string".to_string())
         );
     }

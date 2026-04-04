@@ -573,6 +573,35 @@ class ClosureReturnTemplateDemo
     }
 }
 
+// ── Closure Param → Template Inference (Contravariant) ─────────────────────
+
+class ClosureParamTemplateDemo
+{
+    public function demo(): void
+    {
+        // When a method declares @param Closure(T): void $cb, the template
+        // param T is inferred from the closure's *parameter* type annotation
+        // (contravariant position), not the return type.
+
+        $bus = new ScaffoldingEventBus();
+
+        // Arrow function: T inferred as Pen from fn(Pen $p)
+        $result = $bus->listen(function(Pen $p): void { $p->write(); });
+        $result->write();       // T = Pen
+        $result->color();       // completions for Pen
+
+        // Full closure: T inferred as User from function(User $u)
+        $user = $bus->listen(function(User $u): void { $u->getEmail(); });
+        $user->getName();       // T = User
+
+        // Second param position: @param Closure(int, T): void
+        $proc = new ScaffoldingBatchProcessor();
+        $item = $proc->process(function(int $i, Pencil $p): void { $p->sketch(); });
+        $item->sketch();        // T = Pencil (from position 1)
+        $item->sharpen();
+    }
+}
+
 
 // ── Trait Generic Substitution ──────────────────────────────────────────────
 
@@ -3625,6 +3654,38 @@ class ScaffoldingClosureParamInference
     public function __construct() { $this->items = new FluentCollection([new Pen('red'), new Pen('blue')]); }
 }
 
+class ScaffoldingEventBus
+{
+    /**
+     * @template T
+     * @param Closure(T): void $callback
+     * @return T
+     */
+    public function listen(Closure $callback): mixed
+    {
+        $params = (new \ReflectionFunction($callback))->getParameters();
+        $type = $params[0]->getType();
+        $class = $type ? $type->getName() : 'stdClass';
+        return (new \ReflectionClass($class))->newInstanceWithoutConstructor();
+    }
+}
+
+class ScaffoldingBatchProcessor
+{
+    /**
+     * @template T
+     * @param Closure(int, T): void $handler
+     * @return T
+     */
+    public function process(Closure $handler): mixed
+    {
+        $params = (new \ReflectionFunction($handler))->getParameters();
+        $type = $params[1]->getType();
+        $class = $type ? $type->getName() : 'stdClass';
+        return (new \ReflectionClass($class))->newInstanceWithoutConstructor();
+    }
+}
+
 class ScaffoldingTemplateCallableHolder
 {
     /** @var array<int, Pen> */
@@ -5162,6 +5223,19 @@ function runDemoAssertions(): void
         new Pen('starter')
     );
     assert($reduced instanceof Pen, 'reduce() with fn(): Pen must return Pen');
+
+    // ── ScaffoldingEventBus::listen() — closure param type binding ──────
+    $bus = new ScaffoldingEventBus();
+    $listened = $bus->listen(function(Pen $p): void { $p->write(); });
+    assert($listened instanceof Pen, 'listen(fn(Pen $p)) must return Pen (T inferred from closure param)');
+
+    $listenedUser = $bus->listen(function(User $u): void { $u->getEmail(); });
+    assert($listenedUser instanceof User, 'listen(function(User $u)) must return User');
+
+    // ── ScaffoldingBatchProcessor::process() — second closure param ─────
+    $proc = new ScaffoldingBatchProcessor();
+    $processed = $proc->process(function(int $i, Pencil $p): void { $p->sketch(); });
+    assert($processed instanceof Pencil, 'process(fn(int, Pencil)) must return Pencil (T from position 1)');
 
     // ── Nested generic: ServiceLocator::wrap → Box::unwrap ──────────────
     $boxed = $locator->wrap(Pen::class);

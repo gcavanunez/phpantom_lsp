@@ -589,6 +589,17 @@ fn build_constructor_template_subs(
                     subs.insert(tpl_name.clone(), PhpType::parse(&ret_type));
                 }
             }
+            TemplateBindingMode::CallableParamType(position) => {
+                // `@param Closure(T): void $cb` — extract the closure's
+                // parameter type annotation at the given position.
+                if let Some(param_type) =
+                    crate::completion::source::helpers::extract_closure_param_type_from_text(
+                        arg_text, position,
+                    )
+                {
+                    subs.insert(tpl_name.clone(), PhpType::parse(&param_type));
+                }
+            }
             TemplateBindingMode::ArrayElement => {
                 // `@param T[] $items` — resolve individual array elements.
                 if arg_text.starts_with('[') && arg_text.ends_with(']') {
@@ -641,6 +652,11 @@ pub(crate) enum TemplateBindingMode {
     /// callable's return type.  The binding is resolved by extracting the
     /// return type annotation from the closure/arrow-function argument.
     CallableReturnType,
+    /// `@param Closure(T): void $cb` — the template param appears in the
+    /// callable's parameter list at the given position (0-based).  The
+    /// binding is resolved by extracting the closure's parameter type
+    /// annotation at that index from the argument text.
+    CallableParamType(usize),
 }
 
 /// Classify how a template parameter name appears in a `@param` type hint.
@@ -696,11 +712,20 @@ fn classify_from_php_type(tpl_name: &str, ty: &PhpType) -> TemplateBindingMode {
             }
             TemplateBindingMode::Direct
         }
-        PhpType::Callable { return_type, .. } => {
+        PhpType::Callable {
+            params,
+            return_type,
+            ..
+        } => {
             if let Some(rt) = return_type
                 && type_contains_name(rt, tpl_name)
             {
                 return TemplateBindingMode::CallableReturnType;
+            }
+            for (i, p) in params.iter().enumerate() {
+                if type_contains_name(&p.type_hint, tpl_name) {
+                    return TemplateBindingMode::CallableParamType(i);
+                }
             }
             TemplateBindingMode::Direct
         }
@@ -998,6 +1023,17 @@ pub(crate) fn build_function_template_subs(
                     )
                 {
                     subs.insert(tpl_name.clone(), PhpType::parse(&ret_type));
+                }
+            }
+            TemplateBindingMode::CallableParamType(position) => {
+                // `@param Closure(T): void $cb` — extract the closure's
+                // parameter type annotation at the given position.
+                if let Some(param_type) =
+                    crate::completion::source::helpers::extract_closure_param_type_from_text(
+                        arg_text, position,
+                    )
+                {
+                    subs.insert(tpl_name.clone(), PhpType::parse(&param_type));
                 }
             }
             TemplateBindingMode::ArrayElement => {
@@ -2128,10 +2164,23 @@ mod tests {
     }
 
     #[test]
-    fn classify_callable_no_return_type() {
-        // Template appears only in params, not in return type — should be Direct.
+    fn classify_callable_param_type() {
+        // Template appears only in params, not in return type — should be CallableParamType.
         let mode = classify_template_binding("T", Some("callable(T): void"));
-        assert!(matches!(mode, TemplateBindingMode::Direct));
+        assert!(matches!(mode, TemplateBindingMode::CallableParamType(0)));
+    }
+
+    #[test]
+    fn classify_callable_param_type_second_position() {
+        let mode = classify_template_binding("T", Some("Closure(int, T): void"));
+        assert!(matches!(mode, TemplateBindingMode::CallableParamType(1)));
+    }
+
+    #[test]
+    fn classify_callable_return_type_preferred_over_param() {
+        // When T appears in both params and return type, return type wins.
+        let mode = classify_template_binding("T", Some("callable(T): T"));
+        assert!(matches!(mode, TemplateBindingMode::CallableReturnType));
     }
 
     #[test]
