@@ -744,9 +744,11 @@ fn resolve_variable_in_members<'b>(
             // We no longer return early here so that the method body
             // can be scanned for instanceof narrowing / reassignments.
             let mut param_results: Vec<ResolvedType> = Vec::new();
+            let mut matched_param_is_variadic = false;
             for param in method.parameter_list.parameters.iter() {
                 let pname = param.variable.name.to_string();
                 if pname == ctx.var_name {
+                    matched_param_is_variadic = param.ellipsis.is_some();
                     // Try the native AST type hint first.
                     let native_type_str = param.hint.as_ref().map(|h| extract_hint_string(h));
 
@@ -924,6 +926,23 @@ fn resolve_variable_in_members<'b>(
 
                         param_results = vec![ResolvedType::from_type_string(parsed)];
                     }
+                }
+            }
+
+            // ── Variadic parameter wrapping ─────────────────────────
+            // When the matched parameter is variadic (e.g.
+            // `HtmlString|int|string ...$placeholders`), the native
+            // type hint describes the *element* type, but the variable
+            // itself holds `list<ElementType>`.  Wrap the resolved
+            // types so that foreach iteration can extract the element
+            // type via `PhpType::extract_value_type`.
+            if matched_param_is_variadic && !param_results.is_empty() {
+                for rt in &mut param_results {
+                    rt.type_string =
+                        PhpType::Generic("list".to_string(), vec![rt.type_string.clone()]);
+                    // The variable is now an array, not a class instance,
+                    // so clear the class_info.
+                    rt.class_info = None;
                 }
             }
 

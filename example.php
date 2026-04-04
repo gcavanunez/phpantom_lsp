@@ -1284,6 +1284,30 @@ class IterationDemo
 }
 
 
+// ── Variadic Parameter Foreach ──────────────────────────────────────────────
+
+class VariadicForeachDemo
+{
+    public function demo(Pen ...$pens): void
+    {
+        // Variadic parameters are arrays: foreach extracts the element type
+        foreach ($pens as $pen) {
+            $pen->write();                // element type from variadic Pen ...$pens
+        }
+    }
+
+    public function unionVariadic(Pen|Pencil ...$tools): void
+    {
+        // Union variadic: foreach value is Pen|Pencil
+        foreach ($tools as $tool) {
+            if ($tool instanceof Pen) {
+                $tool->write();           // narrowed to Pen via instanceof
+            }
+        }
+    }
+}
+
+
 // ── Array Function Type Preservation ────────────────────────────────────────
 
 class ArrayFuncDemo
@@ -5667,6 +5691,22 @@ function runDemoAssertions(): void
     assert(ConstantTypeDemo::ENABLED === true, 'ConstantTypeDemo::ENABLED must be true');
     assert(CT_ALLOWED_HOSTS === ['localhost', '127.0.0.1'], 'CT_ALLOWED_HOSTS must match');
     assert(CT_APP_VERSION === '2.0.0', 'CT_APP_VERSION must be "2.0.0"');
+
+    // ── Variadic foreach ────────────────────────────────────────────────
+    $vfDemo = new VariadicForeachDemo();
+    $vfPens = [new Pen('a'), new Pen('b')];
+    // demo() accepts Pen ...$pens — foreach inside should see Pen elements
+    $vfDemo->demo(...$vfPens);
+    foreach ($vfPens as $vfPen) {
+        assert($vfPen instanceof Pen, 'Variadic Pen element must be Pen');
+    }
+    $vfTools = [new Pen('x'), new Pencil()];
+    foreach ($vfTools as $vfTool) {
+        assert(
+            $vfTool instanceof Pen || $vfTool instanceof Pencil,
+            'Variadic union element must be Pen or Pencil'
+        );
+    }
 
     echo "All assertions passed.\n";
 }

@@ -1269,9 +1269,11 @@ fn resolve_closure_params_with_inferred(
     results: &mut Vec<ResolvedType>,
     inferred_types: &[String],
 ) {
+    let mut matched_param_is_variadic = false;
     for (idx, param) in parameter_list.parameters.iter().enumerate() {
         let pname = param.variable.name.to_string();
         if pname == ctx.var_name {
+            matched_param_is_variadic = param.ellipsis.is_some();
             // 1. Try the explicit type hint first.
             if let Some(hint) = &param.hint {
                 let type_str = extract_hint_string(hint);
@@ -1388,6 +1390,22 @@ fn resolve_closure_params_with_inferred(
                 }
             }
             break;
+        }
+    }
+
+    // ── Variadic parameter wrapping ─────────────────────────────
+    // When the matched parameter is variadic (e.g.
+    // `HtmlString|int|string ...$placeholders`), the native type
+    // hint describes the *element* type, but the variable itself
+    // holds `list<ElementType>`.  Wrap the resolved types so that
+    // foreach iteration can extract the element type via
+    // `PhpType::extract_value_type`.
+    if matched_param_is_variadic && !results.is_empty() {
+        for rt in results.iter_mut() {
+            rt.type_string = PhpType::Generic("list".to_string(), vec![rt.type_string.clone()]);
+            // The variable is now an array, not a class instance,
+            // so clear the class_info.
+            rt.class_info = None;
         }
     }
 }

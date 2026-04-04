@@ -70,38 +70,6 @@ native `array` with the docblock's `list<Request>`.
 **Impact:** 1 diagnostic in the shared project
 (`MobilePayConnection:76`).
 
-## B8: Variadic parameter element type lost in `foreach`
-
-When a method declares a variadic parameter with a union type like
-`HtmlString|int|string ...$placeholders`, iterating with
-`foreach ($placeholders as $value)` should give `$value` the element
-type `HtmlString|int|string`. Instead, the LSP resolves `$value` as
-untyped (hover returns nothing).
-
-Real-world example — `ShortTexts.php`:
-
-```php
-public static function get(int $id, Country $lang, HtmlString|int|string ...$placeholders): HtmlString|string
-{
-    // ...
-    foreach ($placeholders as $value) {
-        $isHTMLValue = $value instanceof HtmlString;
-        if ($isHTML) {
-            $replace[] = $isHTMLValue ? $value->toHtml() : htmlentities((string)$value);
-            //                          ^^^^^^ unresolved
-        }
-    }
-}
-```
-
-The variadic `...$placeholders` is internally `array<int, HtmlString|int|string>`,
-but the LSP doesn't propagate the element type into the `foreach` loop
-variable. This is a prerequisite for the `instanceof` narrowing (which
-would further narrow `$value` to `HtmlString` in the truthy ternary
-branch), but the primary failure is the missing element type.
-
-**Impact:** 1 diagnostic in the shared project (`ShortTexts:79`).
-
 ## B9: Eloquent relationship property lookup is case-sensitive
 
 Laravel normalises property names via `Str::snake()` at runtime, so

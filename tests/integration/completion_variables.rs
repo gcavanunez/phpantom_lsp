@@ -20283,3 +20283,199 @@ async fn test_completion_magic_call_static_fallback() {
         _ => panic!("Expected CompletionResponse::Array"),
     }
 }
+
+/// Foreach over a variadic parameter with a class type resolves the
+/// loop variable to the element type.
+#[tokio::test]
+async fn test_completion_foreach_variadic_param_class_type() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///variadic_foreach.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class HtmlString {\n",
+        "    public function toHtml(): string { return ''; }\n",
+        "}\n",
+        "class Formatter {\n",
+        "    public function format(HtmlString ...$items): void {\n",
+        "        foreach ($items as $value) {\n",
+        "            $value->\n",
+        "        }\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 7,
+                character: 20,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Completion should return results for foreach value from variadic param"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+            assert!(
+                labels.iter().any(|l| l.starts_with("toHtml")),
+                "Should include toHtml method from HtmlString, got: {:?}",
+                labels
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// Foreach over a variadic parameter with a union type containing a
+/// class resolves the loop variable so that instanceof narrowing can
+/// work on it.
+#[tokio::test]
+async fn test_completion_foreach_variadic_param_union_type() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///variadic_union_foreach.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class HtmlString {\n",
+        "    public function toHtml(): string { return ''; }\n",
+        "}\n",
+        "class ShortTexts {\n",
+        "    public static function get(int $id, HtmlString|int|string ...$placeholders): void {\n",
+        "        foreach ($placeholders as $value) {\n",
+        "            if ($value instanceof HtmlString) {\n",
+        "                $value->\n",
+        "            }\n",
+        "        }\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 8,
+                character: 24,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Completion should return results after instanceof narrowing on variadic foreach value"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+            assert!(
+                labels.iter().any(|l| l.starts_with("toHtml")),
+                "Should include toHtml from HtmlString after instanceof narrowing, got: {:?}",
+                labels
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// Foreach over a variadic parameter in a standalone function (not a
+/// method) resolves the loop variable to the element type.
+#[tokio::test]
+async fn test_completion_foreach_variadic_param_standalone_function() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///variadic_func_foreach.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "class Widget {\n",
+        "    public string $name;\n",
+        "    public function render(): string { return ''; }\n",
+        "}\n",
+        "function processWidgets(Widget ...$widgets): void {\n",
+        "    foreach ($widgets as $w) {\n",
+        "        $w->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 7,
+                character: 12,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(
+        result.is_some(),
+        "Completion should return results for foreach value from variadic function param"
+    );
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+            assert!(
+                labels.iter().any(|l| l.starts_with("name")),
+                "Should include name property from Widget, got: {:?}",
+                labels
+            );
+            assert!(
+                labels.iter().any(|l| l.starts_with("render")),
+                "Should include render method from Widget, got: {:?}",
+                labels
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
