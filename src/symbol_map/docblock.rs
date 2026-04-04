@@ -494,7 +494,14 @@ pub(super) fn emit_type_spans(
     // before parsing and build an offset map so that spans emitted
     // from the cleaned string can be translated back to the original.
     let (cleaned, variance_offset_map) = strip_variance_annotations(type_token);
-    let effective_token: &str = &cleaned;
+
+    // ── Replace PHPStan `*` wildcards in generic positions ──────────
+    // PHPStan supports `*` as a bivariant wildcard in generic args,
+    // e.g. `Relation<TRelatedModel, *, *>`.  `mago-type-syntax` does
+    // not recognise this.  Replace with `mixed` and build an offset
+    // map that accounts for the 1→5 character expansion.
+    let (effective_cleaned, wildcard_offset_map) = replace_star_wildcards_with_offset_map(&cleaned);
+    let effective_token: &str = &effective_cleaned;
 
     // Parse the type string using mago-type-syntax.  The span we
     // provide starts at 0 so that all AST node offsets are relative
@@ -511,7 +518,19 @@ pub(super) fn emit_type_spans(
             emit_type_spans_from_ast(&ty, 0, &mut local_spans);
             // Map cleaned-string offsets back to original-string
             // offsets, then shift by token_file_offset.
+            //
+            // Two offset maps may be active:
+            // 1. wildcard_offset_map: effective_token → cleaned (after
+            //    variance stripping but before wildcard replacement)
+            // 2. variance_offset_map: cleaned → original type_token
             for mut sp in local_spans {
+                if let Some(ref map) = wildcard_offset_map {
+                    sp.start = map
+                        .get(sp.start as usize)
+                        .copied()
+                        .unwrap_or(sp.start as usize) as u32;
+                    sp.end = map.get(sp.end as usize).copied().unwrap_or(sp.end as usize) as u32;
+                }
                 if let Some(ref map) = variance_offset_map {
                     sp.start = map
                         .get(sp.start as usize)
@@ -554,6 +573,57 @@ pub(super) fn emit_type_spans(
 /// `offset_map[i]` gives the byte offset in the original string that
 /// corresponds to byte `i` in the cleaned string, plus a one-past-end
 /// sentinel.
+/// Replace PHPStan `*` wildcards in generic type argument positions with
+/// `mixed`, returning the cleaned string and an offset map.
+///
+/// The offset map translates positions in the cleaned string back to
+/// positions in the input string.  When `*` (1 byte) is replaced with
+/// `mixed` (5 bytes), all 5 positions in the output map back to the
+/// single `*` position in the input.
+///
+/// Returns `(cleaned, None)` when no wildcards are found (no allocation
+/// for the offset map).
+fn replace_star_wildcards_with_offset_map(s: &str) -> (String, Option<Vec<usize>>) {
+    use crate::php_type::is_generic_wildcard;
+
+    if !s.contains('*') {
+        return (s.to_owned(), None);
+    }
+
+    let bytes = s.as_bytes();
+    let has_generic_wildcard =
+        (0..bytes.len()).any(|i| bytes[i] == b'*' && is_generic_wildcard(bytes, i));
+
+    if !has_generic_wildcard {
+        return (s.to_owned(), None);
+    }
+
+    let mut cleaned = String::with_capacity(s.len() + 16);
+    let mut offset_map: Vec<usize> = Vec::with_capacity(s.len() + 32);
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == b'*' && is_generic_wildcard(bytes, i) {
+            // Replace `*` with `mixed` — all 5 output positions map
+            // back to the original `*` position.
+            for _ in 0.."mixed".len() {
+                offset_map.push(i);
+            }
+            cleaned.push_str("mixed");
+            i += 1;
+        } else {
+            offset_map.push(i);
+            cleaned.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    // One-past-end sentinel.
+    offset_map.push(i);
+
+    (cleaned, Some(offset_map))
+}
+
 fn strip_variance_annotations(s: &str) -> (String, Option<Vec<usize>>) {
     // Fast path: no variance annotations at all.
     if !s.contains("covariant ") && !s.contains("contravariant ") {

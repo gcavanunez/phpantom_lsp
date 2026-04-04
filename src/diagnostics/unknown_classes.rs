@@ -982,4 +982,37 @@ mod tests {
             diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn no_false_positive_for_star_wildcard_in_generic() {
+        // PHPStan `*` wildcards in generic positions (e.g.
+        // `Relation<TRelatedModel, *, *>`) must not cause the entire
+        // type string to be reported as an unknown class.
+        let backend = Backend::new_test();
+        let uri = "file:///test.php";
+        let content = concat!(
+            "<?php\n",
+            "namespace App;\n",
+            "\n",
+            "class Relation {}\n",
+            "\n",
+            "class Foo {\n",
+            "    /**\n",
+            "     * @param Relation<string, *, *>|string \\$relation\n",
+            "     * @return void\n",
+            "     */\n",
+            "    public function bar($relation): void {}\n",
+            "}\n",
+        );
+
+        let diags = collect(&backend, uri, content);
+        // The `Relation` class is defined locally — no diagnostic expected.
+        // Before the fix, the entire `Relation<string, *, *>|string` was
+        // emitted as a single ClassReference and flagged as unknown.
+        assert!(
+            diags.is_empty(),
+            "Star wildcards in generic positions must not cause false unknown_class diagnostics, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
 }

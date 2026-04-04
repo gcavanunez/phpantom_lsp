@@ -3554,3 +3554,68 @@ fn multiple_property_attributes() {
         panic!("Expected ClassReference for second attribute");
     }
 }
+
+#[test]
+fn docblock_star_wildcard_in_generic_produces_correct_spans() {
+    // PHPStan `*` wildcards in generic positions must not cause the
+    // entire type string to become a single broken ClassReference.
+    // Instead, the base class and other named generic args should
+    // produce individual navigable spans.
+    let php = concat!(
+        "<?php\n",
+        "class Foo {\n",
+        "    /**\n",
+        "     * @param Relation<Model, *, *>|string $rel\n",
+        "     */\n",
+        "    public function bar($rel): void {}\n",
+        "}\n",
+    );
+    let map = parse_and_extract(php);
+
+    // Find the `Relation` class reference span.
+    let relation_offset = php.find("Relation<").unwrap() as u32;
+    let hit = map.lookup(relation_offset);
+    assert!(
+        hit.is_some(),
+        "Should find ClassReference for Relation at offset {}",
+        relation_offset
+    );
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "Relation", "Base class name should be 'Relation'");
+    } else {
+        panic!(
+            "Expected ClassReference for Relation, got {:?}",
+            hit.unwrap().kind
+        );
+    }
+
+    // Find the `Model` class reference inside the generic args.
+    let model_offset = php.find("Model, *").unwrap() as u32;
+    let hit = map.lookup(model_offset);
+    assert!(
+        hit.is_some(),
+        "Should find ClassReference for Model at offset {}",
+        model_offset
+    );
+    if let SymbolKind::ClassReference { ref name, .. } = hit.unwrap().kind {
+        assert_eq!(name, "Model", "Generic arg should be 'Model'");
+    } else {
+        panic!(
+            "Expected ClassReference for Model, got {:?}",
+            hit.unwrap().kind
+        );
+    }
+
+    // Verify that no span has the full unparsed type string as its name
+    // (this was the bug: the entire "Relation<Model, *, *>|string" was
+    // emitted as one ClassReference).
+    for span in &map.spans {
+        if let SymbolKind::ClassReference { ref name, .. } = span.kind {
+            assert!(
+                !name.contains('<') && !name.contains('*'),
+                "ClassReference name must not contain raw generic syntax or wildcards, got: {}",
+                name
+            );
+        }
+    }
+}

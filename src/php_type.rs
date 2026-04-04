@@ -150,6 +150,8 @@ impl PhpType {
 
         // Strip variance annotations that mago_type_syntax cannot parse.
         let cleaned = strip_variance_annotations_from_type(input);
+        // Replace PHPStan `*` wildcards in generic positions with `mixed`.
+        let cleaned = replace_star_wildcards(&cleaned);
         let effective: &str = &cleaned;
 
         let span = Span::new(
@@ -1501,11 +1503,90 @@ impl PhpType {
     }
 }
 
-/// Whether a type name is a keyword that should never be resolved as a
-/// class name.
+/// Replace PHPStan `*` wildcards in generic type argument positions with
+/// `mixed`.
 ///
-/// This is a superset of [`is_scalar_name`] that also includes PHPDoc-only
-/// pseudo-types and special names that `resolve_type_string` skips.
+/// PHPStan's phpdoc-parser supports `*` as a bivariant wildcard inside
+/// generic angle brackets, e.g. `Relation<TRelatedModel, *, *>`.  The
+/// `*` simply means "any type" and is equivalent to `mixed`.
+/// `mago-type-syntax` does not support this syntax, so we pre-process it.
+///
+/// Only replaces `*` tokens that appear inside angle brackets at generic
+/// argument boundaries: preceded (ignoring whitespace) by `<` or `,` and
+/// followed (ignoring whitespace) by `,` or `>`.  This avoids mangling:
+/// - `Foo::*` — member references (preceded by `::`)
+/// - `int-mask-of<self::FOO_*>` — constant wildcard patterns (preceded
+///   by `_` or identifier chars)
+///
+/// Returns the input unchanged (no allocation) when no wildcards are found.
+pub(crate) fn replace_star_wildcards(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.contains('*') {
+        return std::borrow::Cow::Borrowed(s);
+    }
+
+    let bytes = s.as_bytes();
+
+    // First pass: check if any `*` is actually a generic wildcard.
+    let has_generic_wildcard =
+        (0..bytes.len()).any(|i| bytes[i] == b'*' && is_generic_wildcard(bytes, i));
+
+    if !has_generic_wildcard {
+        return std::borrow::Cow::Borrowed(s);
+    }
+
+    let mut result = String::with_capacity(s.len() + 16);
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == b'*' && is_generic_wildcard(bytes, i) {
+            result.push_str("mixed");
+            i += 1;
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    std::borrow::Cow::Owned(result)
+}
+
+/// Check whether the `*` at position `pos` in `bytes` is a PHPStan
+/// generic wildcard (as opposed to a member reference like `Foo::*`
+/// or a constant pattern like `self::FOO_*`).
+///
+/// A generic wildcard `*` is preceded (ignoring whitespace) by `<` or
+/// `,` and followed (ignoring whitespace) by `,` or `>`.
+pub(crate) fn is_generic_wildcard(bytes: &[u8], pos: usize) -> bool {
+    // Check preceding non-whitespace character.
+    let prev_ok = {
+        let mut j = pos;
+        loop {
+            if j == 0 {
+                break false;
+            }
+            j -= 1;
+            if !bytes[j].is_ascii_whitespace() {
+                break bytes[j] == b'<' || bytes[j] == b',';
+            }
+        }
+    };
+
+    if !prev_ok {
+        return false;
+    }
+
+    // Check following non-whitespace character.
+    let mut k = pos + 1;
+    while k < bytes.len() {
+        if !bytes[k].is_ascii_whitespace() {
+            return bytes[k] == b',' || bytes[k] == b'>';
+        }
+        k += 1;
+    }
+
+    false
+}
+
 /// Strip `covariant ` and `contravariant ` prefixes from generic type
 /// arguments so that `mago_type_syntax` can parse the type.
 ///
@@ -1556,6 +1637,11 @@ fn strip_variance_annotations_from_type(s: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(cleaned)
 }
 
+/// Whether a type name is a keyword that should never be resolved as a
+/// class name.
+///
+/// This is a superset of [`is_scalar_name`] that also includes PHPDoc-only
+/// pseudo-types and special names that `resolve_type_string` skips.
 fn is_keyword_type(name: &str) -> bool {
     if is_scalar_name(name) {
         return true;
@@ -2465,6 +2551,116 @@ mod tests {
     fn round_trip_member_reference() {
         assert_round_trip("Foo::BAR");
         assert_round_trip("Foo::*");
+    }
+
+    #[test]
+    fn parse_generic_with_star_wildcard() {
+        let ty = PhpType::parse("Relation<TRelatedModel, *, *>");
+        match &ty {
+            PhpType::Generic(name, args) => {
+                assert_eq!(name, "Relation");
+                assert_eq!(args.len(), 3);
+                assert_eq!(args[0], PhpType::Named("TRelatedModel".to_owned()));
+                assert_eq!(args[1], PhpType::Named("mixed".to_owned()));
+                assert_eq!(args[2], PhpType::Named("mixed".to_owned()));
+            }
+            other => panic!("Expected Generic, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_generic_with_star_wildcard_union() {
+        // `Relation<TRelatedModel, *, *>|string` should parse as a union
+        let ty = PhpType::parse("Relation<TRelatedModel, *, *>|string");
+        match &ty {
+            PhpType::Union(members) => {
+                assert_eq!(members.len(), 2);
+                match &members[0] {
+                    PhpType::Generic(name, args) => {
+                        assert_eq!(name, "Relation");
+                        assert_eq!(args.len(), 3);
+                    }
+                    other => panic!("Expected Generic, got {:?}", other),
+                }
+                assert_eq!(members[1], PhpType::Named("string".to_owned()));
+            }
+            other => panic!("Expected Union, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_generic_star_does_not_mangle_member_reference() {
+        // `Foo::*` is a member reference, not a generic wildcard
+        assert_round_trip("Foo::*");
+    }
+
+    #[test]
+    fn replace_star_wildcards_does_not_mangle_constant_pattern() {
+        // `int-mask-of<self::FOO_*>` — the `*` is part of a constant
+        // pattern, not a generic wildcard (preceded by `_`, not `<`/`,`).
+        // Our pre-processing must leave it untouched.  (mago itself may
+        // or may not parse the result, but that's a separate issue.)
+        use super::replace_star_wildcards;
+        let result = replace_star_wildcards("int-mask-of<self::FOO_*>");
+        assert_eq!(result.as_ref(), "int-mask-of<self::FOO_*>");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn parse_generic_star_with_spaces() {
+        // Spaces around the `*` wildcard
+        let ty = PhpType::parse("BelongsTo< * , * >");
+        match &ty {
+            PhpType::Generic(name, args) => {
+                assert_eq!(name, "BelongsTo");
+                assert_eq!(args.len(), 2);
+                assert_eq!(args[0], PhpType::Named("mixed".to_owned()));
+                assert_eq!(args[1], PhpType::Named("mixed".to_owned()));
+            }
+            other => panic!("Expected Generic, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn replace_star_wildcards_no_star() {
+        use super::replace_star_wildcards;
+        let result = replace_star_wildcards("Collection<int, User>");
+        assert_eq!(result.as_ref(), "Collection<int, User>");
+        // Should borrow, not allocate
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn replace_star_wildcards_member_ref() {
+        use super::replace_star_wildcards;
+        let result = replace_star_wildcards("Foo::*");
+        assert_eq!(result.as_ref(), "Foo::*");
+        // Should borrow, not allocate
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn replace_star_wildcards_constant_pattern() {
+        use super::replace_star_wildcards;
+        let result = replace_star_wildcards("int-mask-of<self::FOO_*>");
+        assert_eq!(result.as_ref(), "int-mask-of<self::FOO_*>");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn replace_star_wildcards_generic() {
+        use super::replace_star_wildcards;
+        let result = replace_star_wildcards("Relation<TRelatedModel, *, *>");
+        assert_eq!(result.as_ref(), "Relation<TRelatedModel, mixed, mixed>");
+    }
+
+    #[test]
+    fn replace_star_wildcards_single_star() {
+        use super::replace_star_wildcards;
+        let result = replace_star_wildcards("Voter<self::*>");
+        // `self::*` — the `*` is preceded by `::`, not `<` or `,`
+        assert_eq!(result.as_ref(), "Voter<self::*>");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
     }
 
     #[test]
