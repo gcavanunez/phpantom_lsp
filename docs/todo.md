@@ -23,8 +23,6 @@ within the same impact tier.
 
 | #   | Item                                                                                                                                                      | Impact | Effort     |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------- |
-| H10 | [`return.unusedType` — remove unused type from return union](todo/phpstan-actions.md#h10-returnunusedtype--remove-unused-type-from-return-union)          | Medium | Medium     |
-| H6  | `return.type` — update return type to match actual returns                                                                                                | Medium | Medium     |
 |     | **Release 0.7.0**                                                                                                                                         |        |            |
 
 ## Sprint 5 — Polish for office adoption

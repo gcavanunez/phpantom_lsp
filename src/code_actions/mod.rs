@@ -281,7 +281,14 @@ impl Backend {
             "phpstan.fixReturnType.stripExpr"
             | "phpstan.fixReturnType.changeTypeToActual"
             | "phpstan.fixReturnType.changeType"
-            | "phpstan.fixReturnType.addType" => self.resolve_fix_return_type(&data, &content),
+            | "phpstan.fixReturnType.addType"
+            | "phpstan.fixReturnType.updateReturnType" => {
+                self.resolve_fix_return_type(&data, &content)
+            }
+            // ── Remove unused return type ────────────────────────────
+            "phpstan.removeUnusedReturnType" => {
+                self.resolve_remove_unused_return_type(&data, &content)
+            }
             // ── Add iterable return type ────────────────────────────
             "phpstan.addIterableType" => self.resolve_add_iterable_type(&data, &content),
             // ── Remove unreachable statement ────────────────────────

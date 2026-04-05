@@ -9192,7 +9192,7 @@ class Test {
     );
 }
 
-// ── B18: Assignment inside if-condition ─────────────────────────────────────
+// ── Assignment inside if-condition ─────────────────────────────────────
 
 #[test]
 fn hover_variable_assigned_in_if_condition() {
@@ -9214,7 +9214,7 @@ function test(string $role): void {
     let hover = hover_at(&backend, uri, php, 8, 9);
     assert!(hover.is_some(), "should produce hover for $admin");
     let text = hover_text(hover.as_ref().unwrap());
-    eprintln!("B18 hover text: {}", text);
+    eprintln!("if-condition assignment hover text: {}", text);
     assert!(
         text.contains("AdminUser"),
         "hover should resolve $admin to AdminUser inside if-body, got: {}",
@@ -9227,7 +9227,7 @@ function test(string $role): void {
     );
 }
 
-/// B19: When a method returns `TValue|null` and `TValue` is substituted with
+/// When a method returns `TValue|null` and `TValue` is substituted with
 /// a concrete class, the `|null` component must be preserved in hover output.
 #[test]
 fn hover_nullable_template_return_type_preserves_null() {
@@ -9263,7 +9263,7 @@ function test(): void {
     let hover = hover_at(&backend, uri, content, 22, 5);
     assert!(hover.is_some(), "should produce hover for $admin");
     let text = hover_text(hover.as_ref().unwrap());
-    eprintln!("B19 hover text: {}", text);
+    eprintln!("nullable template hover text: {}", text);
     assert!(
         text.contains("AdminUser"),
         "hover should resolve $admin to AdminUser, got: {}",
@@ -9276,7 +9276,7 @@ function test(): void {
     );
 }
 
-/// B19 variant: nullable shorthand `?TValue` should also preserve nullability.
+/// Nullable shorthand `?TValue` should also preserve nullability after template substitution.
 #[test]
 fn hover_nullable_shorthand_template_return_type_preserves_null() {
     let backend = create_test_backend();
@@ -9309,7 +9309,7 @@ function test2(): void {
     let hover = hover_at(&backend, uri, content, 20, 5);
     assert!(hover.is_some(), "should produce hover for $admin");
     let text = hover_text(hover.as_ref().unwrap());
-    eprintln!("B19 ?TValue hover text: {}", text);
+    eprintln!("nullable ?TValue hover text: {}", text);
     assert!(
         text.contains("AdminUser2"),
         "hover should resolve $admin to AdminUser2, got: {}",
@@ -9322,7 +9322,7 @@ function test2(): void {
     );
 }
 
-/// B19 variant: non-generic `@return Foo|null` should preserve `|null`.
+/// Non-generic `@return Foo|null` should preserve `|null`.
 #[test]
 fn hover_non_generic_nullable_return_type_preserves_null() {
     let backend = create_test_backend();
@@ -9348,7 +9348,7 @@ function test3(): void {
     let hover = hover_at(&backend, uri, content, 13, 5);
     assert!(hover.is_some(), "should produce hover for $w");
     let text = hover_text(hover.as_ref().unwrap());
-    eprintln!("B19 non-generic hover text: {}", text);
+    eprintln!("non-generic nullable hover text: {}", text);
     assert!(
         text.contains("Widget"),
         "hover should resolve $w to Widget, got: {}",

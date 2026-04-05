@@ -10,6 +10,7 @@ mod code_action_generate_constructor;
 mod code_action_implement_methods;
 mod code_action_promote_constructor_param;
 mod code_action_remove_unreachable;
+mod code_action_remove_unused_return_type;
 mod code_action_simplify_null;
 mod code_action_update_docblock;
 mod code_lens;

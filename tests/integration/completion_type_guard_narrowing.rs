@@ -55,7 +55,7 @@ fn method_names(items: &[CompletionItem]) -> Vec<&str> {
 async fn test_is_array_narrows_to_generic_list_element_in_foreach() {
     let backend = create_test_backend();
     let uri = Url::parse("file:///is_array_generic.php").unwrap();
-    // Reproduces the exact pattern from B7: a native union `null|array|Request`
+    // Reproduces a pattern where a native union `null|array|Request`
     // with a PHPDoc `@param null|list<Request>|Request`.  After `is_array()`,
     // `$request` should narrow to `list<Request>`, so iterating yields `Request`.
     let text = concat!(

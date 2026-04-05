@@ -3099,7 +3099,7 @@ class KlaviyoService {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// B6: Scope methods not found on Builder in analyzer chains
+// Scope methods not found on Builder in analyzer chains
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -3580,7 +3580,7 @@ function filterProducts(Builder $query): void {
     );
 }
 
-/// Cross-file variant of B12: `Collection::reduce()` loaded via PSR-4 with
+/// Cross-file variant: `Collection::reduce()` loaded via PSR-4 with
 /// two method-level `@template` params and a `callable(TReduceInitial|TReduceReturnType, TValue, TKey): TReduceReturnType`
 /// parameter.  The return type `TReduceReturnType` must be inferred from the
 /// closure's return type annotation even when the Collection class lives in
@@ -3687,7 +3687,7 @@ class FlowService {
 /// so the template substitution must handle both template params in the
 /// return type union.
 ///
-/// Regression test for B12.
+/// Regression test for template inference through trait + interface + collection reduce.
 #[test]
 fn no_false_positive_on_reduce_trait_interface_pattern() {
     let composer = r#"{"autoload":{"psr-4":{"App\\":"src/","Illuminate\\Support\\":"vendor/illuminate/support/src/"}}}"#;
@@ -3832,11 +3832,11 @@ class FlowService {
 /// the closure's return type annotation.  Chaining `.add()` on the
 /// result must not produce a diagnostic.
 ///
-/// Regression test for B12.
+/// Regression test for reduce with two template parameters.
 #[test]
 fn no_false_positive_on_reduce_with_two_template_params() {
     let backend = create_test_backend();
-    let uri = "file:///test_reduce_b12.php";
+    let uri = "file:///test_reduce_two_tpl.php";
     let text = r#"<?php
 class Decimal {
     public function add(Decimal $other): Decimal { return $this; }

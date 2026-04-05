@@ -352,6 +352,15 @@ fn is_stale_phpstan_diagnostic(diag: &Diagnostic, content: &str) -> bool {
         );
     }
 
+    // ── return.unusedType — unused type removed from return type ─────
+    if identifier == "return.unusedType" {
+        return crate::code_actions::phpstan::remove_unused_return_type::is_remove_unused_return_type_stale(
+            content,
+            diag.range.start.line as usize,
+            &diag.message,
+        );
+    }
+
     false
 }
 

@@ -7083,7 +7083,7 @@ async fn test_inherited_property_bracket_access_template_substitution() {
     }
 }
 
-/// T18: Method-level template parameter resolution inside method body.
+/// Method-level template parameter resolution inside method body.
 /// When `@template T of Builder` and `@param T $query`, accessing
 /// `$query->` inside the method body should resolve T to its bound
 /// (`Builder`) and offer Builder's methods.
@@ -7162,7 +7162,7 @@ async fn test_method_template_param_resolves_to_bound_inside_body() {
     }
 }
 
-/// T18: Method-level template with union bound inside method body.
+/// Method-level template with union bound inside method body.
 /// `@template T of Builder|QueryBuilder` should resolve to both types.
 #[tokio::test]
 async fn test_method_template_union_bound_resolves_inside_body() {
@@ -7243,7 +7243,7 @@ async fn test_method_template_union_bound_resolves_inside_body() {
     }
 }
 
-/// T18: Trait method-level template inside body.
+/// Trait method-level template inside body.
 /// `@template TRelation of Relation` — `$relation->getQuery()` should
 /// resolve via the Relation bound.
 #[tokio::test]
@@ -7317,7 +7317,7 @@ async fn test_trait_method_template_param_resolves_inside_body() {
     }
 }
 
-/// T18: Function-level template parameter resolution inside body.
+/// Function-level template parameter resolution inside body.
 /// Standalone function with `@template T of SomeClass` and `@param T $item`.
 #[tokio::test]
 async fn test_function_template_param_resolves_to_bound_inside_body() {

@@ -14,16 +14,15 @@ editor, so results are consistent.
 | `phpantom_lsp init`      | Generate a default `.phpantom.toml` config file      |
 
 Running with no subcommand starts the language server. Editors launch
-this automatically; you never need to run it by hand.
+this automatically.
 
 ---
 
-## `analyze` — Batch diagnostics
+## `analyze`
 
-Scans PHP files and reports PHPantom's own diagnostics (no PHPStan, no
-external tools) in a PHPStan-style table format. Use it to find spots
-where the LSP cannot resolve a symbol, so you can achieve full
-completion coverage.
+Scans PHP files and reports PHPantom diagnostics in a PHPStan-style
+table format. Use it to find spots where the LSP cannot resolve a
+symbol, so you can achieve full completion coverage.
 
 ```sh
 phpantom_lsp analyze                             # scan entire project
@@ -83,11 +82,10 @@ Each has a rule identifier shown below the message.
 
 ---
 
-## `fix` — Automated code fixes
+## `fix`
 
-Applies code fixes across the project, modeled after
-[php-cs-fixer](https://github.com/PHP-CS-Fixer/PHP-CS-Fixer). Specify
-which rules to run, or omit `--rule` to run all preferred native fixers.
+Applies code fixes across the project. Specify which rules to run, or
+omit `--rule` to run all preferred native fixers.
 
 ```sh
 phpantom_lsp fix                                  # apply all preferred fixers
@@ -106,7 +104,7 @@ phpantom_lsp fix --project-root /path/to/app      # explicit project root
 | `[PATH]`                   | File or directory to fix. Defaults to the entire project.            |
 | `--rule <RULE>`            | Rule to apply (repeatable). Omit to run all preferred native rules.  |
 | `--dry-run`                | Report what would change without writing files.                      |
-| `--with-phpstan`           | Enable PHPStan-based fixers (runs PHPStan to collect diagnostics).   |
+| `--with-phpstan`           | Enable PHPStan-based fixers (future feature).                        |
 | `--project-root <DIR>`     | Project root directory. Defaults to the current working directory.    |
 | `--no-colour`              | Disable ANSI colour output.                                         |
 
@@ -120,28 +118,11 @@ phpantom_lsp fix --project-root /path/to/app      # explicit project root
 
 ### Available rules
 
-Rules correspond to diagnostic identifiers. Native rules run without
-external tools. PHPStan rules require `--with-phpstan` and are prefixed
-with `phpstan.`.
+Rules correspond to diagnostic identifiers.
 
-**Native rules (shipped):**
-
-| Rule               | Description                                               |
-| ------------------ | --------------------------------------------------------- |
-| `unused_import`    | Remove unused `use` statements. Handles simple imports, group imports (removes individual members), and collapses leftover blank lines. |
-
-**PHPStan rules (planned, requires `--with-phpstan`):**
-
-These are not yet implemented. See the [fix CLI roadmap](todo/fix-cli.md)
-for details.
-
-| Rule                                         | Description                                         |
-| -------------------------------------------- | --------------------------------------------------- |
-| `phpstan.return.unusedType`                   | Remove unused type from a return union              |
-| `phpstan.missingType.iterableValue`           | Add `@return array<mixed>` for untyped iterables    |
-| `phpstan.property.unused`                     | Remove unused property declarations                 |
-| `phpstan.method.unused`                       | Remove unused method declarations                   |
-| `phpstan.generics.callSiteVarianceRedundant`  | Remove redundant variance annotations in docblocks  |
+| Rule               | Description                    |
+| ------------------ | ------------------------------ |
+| `unused_import`    | Remove unused `use` statements |
 
 ### Example output
 
@@ -179,7 +160,7 @@ Use `--dry-run` in CI to enforce that imports stay clean:
 
 ```sh
 phpantom_lsp fix --dry-run --rule unused_import --project-root .
-# Exit code 2 means fixable issues exist → fail the build.
+# Exit code 2 means fixable issues exist. Fail the build.
 ```
 
 ### Idempotency
@@ -190,7 +171,7 @@ writes nothing.
 
 ---
 
-## `init` — Generate config file
+## `init`
 
 Creates a default `.phpantom.toml` in the current directory with all
 options documented and commented out. Safe to run if the file already

@@ -4615,9 +4615,9 @@ class Svc {
         );
     }
 
-    // ── B18: Assignment inside `if` condition ───────────────────────
+    // ── Assignment inside `if` condition ───────────────────────
 
-    /// B18: `if ($x = Foo::first())` should resolve `$x` inside the body.
+    /// Variables assigned inside `if` conditions should resolve in the body.
     #[test]
     fn assignment_in_if_condition_resolves_in_body() {
         let php = r#"<?php
@@ -4644,7 +4644,7 @@ function test(string $role): void {
         );
     }
 
-    /// B18 variant: assignment inside comparison `if (($x = expr()) !== null)`.
+    /// Assignment inside comparison `if (($x = expr()) !== null)` should resolve.
     #[test]
     fn assignment_in_if_condition_with_comparison() {
         let php = r#"<?php
@@ -4764,7 +4764,7 @@ class TestCase
         );
     }
 
-    /// B18 variant: assignment in while condition `while ($line = fgets($fp))`.
+    /// Assignment in `while` condition should resolve in the loop body.
     #[test]
     fn assignment_in_while_condition_resolves_in_body() {
         let php = r#"<?php
@@ -5065,7 +5065,7 @@ class Handler {
 
     #[test]
     fn no_diagnostic_for_this_items_on_generic_collection_subclass() {
-        // B5: When a class extends `Collection<int, T>` via `@extends`,
+        // When a class extends `Collection<int, T>` via `@extends`,
         // accessing `$this->items` should yield `array<int, T>` with the
         // generic substitution applied.  Iterating `$this->items` in a
         // `foreach` or passing it to `array_any()` should resolve the
@@ -5128,7 +5128,7 @@ final class PurchaseFileProductCollection extends Collection {
 
     #[test]
     fn no_false_positive_when_variable_reassigned_inside_try_inside_foreach() {
-        // B3 follow-up: when a variable is assigned before a foreach,
+        // When a variable is assigned before a foreach,
         // then reassigned inside a try block nested inside the foreach
         // body, the type should still resolve for accesses after the
         // reassignment (still inside the try).
