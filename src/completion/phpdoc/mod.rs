@@ -42,6 +42,7 @@ use tower_lsp::lsp_types::*;
 
 use crate::completion::source::throws_analysis::{self, ThrowsContext};
 use crate::completion::use_edit::{analyze_use_block, build_use_edit};
+use crate::php_type::PhpType;
 use crate::types::ClassInfo;
 
 /// Callback signature for resolving a class name to its [`ClassInfo`].
@@ -640,15 +641,16 @@ pub fn build_phpdoc_completions(
 
                         let (insert, label, fmt) = if let Some(th) = type_hint {
                             // Plain label for display.
+                            let parsed = PhpType::parse(th);
                             let label_type = smart
                                 .class_loader
-                                .and_then(|cl| generation::enrichment_plain(&Some(th.clone()), cl))
+                                .and_then(|cl| generation::enrichment_plain(Some(&parsed), cl))
                                 .unwrap_or_else(|| th.clone());
 
                             // Snippet insert text with tab stops on template params.
                             let mut tab_stop = 1u32;
                             let snippet_type = smart.class_loader.and_then(|cl| {
-                                generation::enrichment_snippet(&Some(th.clone()), &mut tab_stop, cl)
+                                generation::enrichment_snippet(Some(&parsed), &mut tab_stop, cl)
                             });
 
                             if let Some(snippet) = snippet_type {
@@ -700,15 +702,16 @@ pub fn build_phpdoc_completions(
                     && ret != "void"
                 {
                     // Plain label for display.
+                    let parsed_ret = PhpType::parse(ret);
                     let label_type = smart
                         .class_loader
-                        .and_then(|cl| generation::enrichment_plain(&Some(ret.clone()), cl))
+                        .and_then(|cl| generation::enrichment_plain(Some(&parsed_ret), cl))
                         .unwrap_or_else(|| ret.clone());
 
                     // Snippet insert text with tab stops on template params.
                     let mut tab_stop = 1u32;
                     let snippet_type = smart.class_loader.and_then(|cl| {
-                        generation::enrichment_snippet(&Some(ret.clone()), &mut tab_stop, cl)
+                        generation::enrichment_snippet(Some(&parsed_ret), &mut tab_stop, cl)
                     });
 
                     let (insert, fmt) = if let Some(snippet) = snippet_type {
@@ -803,15 +806,16 @@ pub fn build_phpdoc_completions(
                 && let Some(ref th) = sym.type_hint
             {
                 // Plain label for display.
+                let parsed_th = PhpType::parse(th);
                 let label_type = smart
                     .class_loader
-                    .and_then(|cl| generation::enrichment_plain(&Some(th.clone()), cl))
+                    .and_then(|cl| generation::enrichment_plain(Some(&parsed_th), cl))
                     .unwrap_or_else(|| th.clone());
 
                 // Snippet insert text with tab stops on template params.
                 let mut tab_stop = 1u32;
                 let snippet_type = smart.class_loader.and_then(|cl| {
-                    generation::enrichment_snippet(&Some(th.clone()), &mut tab_stop, cl)
+                    generation::enrichment_snippet(Some(&parsed_th), &mut tab_stop, cl)
                 });
 
                 let (insert, fmt) = if let Some(snippet) = snippet_type {
@@ -842,16 +846,17 @@ pub fn build_phpdoc_completions(
                 if let Some(ty) = smart.inferred_inline_var_type {
                     // Build both a display label (plain) and insert text
                     // (snippet with tab stops on template parameters).
+                    let parsed_ty = PhpType::parse(ty);
                     let label_type = smart
                         .class_loader
-                        .and_then(|cl| generation::enrichment_plain(&Some(ty.to_string()), cl))
+                        .and_then(|cl| generation::enrichment_plain(Some(&parsed_ty), cl))
                         .unwrap_or_else(|| ty.to_string());
 
                     let mut tab_stop = 1u32;
                     let snippet_type = smart
                         .class_loader
                         .and_then(|cl| {
-                            generation::enrichment_snippet(&Some(ty.to_string()), &mut tab_stop, cl)
+                            generation::enrichment_snippet(Some(&parsed_ty), &mut tab_stop, cl)
                         })
                         .unwrap_or_else(|| format!("${{1:{}}}", ty));
 

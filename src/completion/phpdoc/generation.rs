@@ -939,18 +939,21 @@ const CALLABLE_TYPES: &[&str] = &["callable", "Closure"];
 /// - `array` → `"${N:array}"` (snippet) or `"array"` (plain)
 /// - Class with templates → `"ClassName<${N:T1}, ${N+1:T2}>"` or plain equivalent
 pub(crate) fn enrichment_snippet(
-    type_hint: &Option<String>,
+    type_hint: Option<&PhpType>,
     tab_stop: &mut u32,
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
 ) -> Option<String> {
-    let th = match type_hint {
+    let pt = match type_hint {
         None => {
             let s = format!("${{{}:mixed}}", *tab_stop);
             *tab_stop += 1;
             return Some(s);
         }
-        Some(t) => t.as_str(),
+        Some(t) => t,
     };
+
+    let th = pt.to_string();
+    let th = th.as_str();
 
     // `void` is never enriched for return types (caller handles skip).
     // `array` always needs enrichment.
@@ -969,10 +972,9 @@ pub(crate) fn enrichment_snippet(
     }
 
     // Union types — enrich individual callable / array parts.
-    // Use PhpType::parse + union_members to correctly handle generic nesting
+    // Use union_members to correctly handle generic nesting
     // (e.g. `Collection<int|string, User>|null` must not be split on the inner `|`).
-    let parsed = PhpType::parse(th);
-    let members = parsed.union_members();
+    let members = pt.union_members();
     if members.len() > 1 {
         let needs = members.iter().any(|member| {
             let s = member.to_string();
@@ -1007,7 +1009,7 @@ pub(crate) fn enrichment_snippet(
     }
 
     // Intersection types (&), nullable (?Type) — skip.
-    if matches!(parsed, PhpType::Intersection(_) | PhpType::Nullable(_)) {
+    if matches!(pt, PhpType::Intersection(_) | PhpType::Nullable(_)) {
         return None;
     }
 
@@ -1039,13 +1041,16 @@ pub(crate) fn enrichment_snippet(
 /// Also used by tag completion (`build_phpdoc_completions`) to enrich
 /// `@param`, `@return`, and `@var` type hints with template parameters.
 pub(crate) fn enrichment_plain(
-    type_hint: &Option<String>,
+    type_hint: Option<&PhpType>,
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
 ) -> Option<String> {
-    let th = match type_hint {
+    let pt = match type_hint {
         None => return Some("mixed".to_string()),
-        Some(t) => t.as_str(),
+        Some(t) => t,
     };
+
+    let th = pt.to_string();
+    let th = th.as_str();
 
     if th == "array" {
         return Some("array<mixed>".to_string());
@@ -1057,10 +1062,9 @@ pub(crate) fn enrichment_plain(
     }
 
     // Union types — enrich individual callable / array parts.
-    // Use PhpType::parse + union_members to correctly handle generic nesting
+    // Use union_members to correctly handle generic nesting
     // (e.g. `Collection<int|string, User>|null` must not be split on the inner `|`).
-    let parsed = PhpType::parse(th);
-    let members = parsed.union_members();
+    let members = pt.union_members();
     if members.len() > 1 {
         let needs = members.iter().any(|member| {
             let s = member.to_string();
@@ -1088,7 +1092,7 @@ pub(crate) fn enrichment_plain(
         return None;
     }
 
-    if matches!(parsed, PhpType::Intersection(_) | PhpType::Nullable(_)) {
+    if matches!(pt, PhpType::Intersection(_) | PhpType::Nullable(_)) {
         return None;
     }
 
@@ -1227,11 +1231,14 @@ fn build_function_snippet(
     // Each entry is (snippet_type, display_len, escaped_name).
     let mut param_tags: Vec<(String, usize, String)> = Vec::new();
     for (type_hint, name) in &sym.params {
-        if let Some(enriched) = enrichment_snippet(type_hint, &mut tab_stop, class_loader) {
+        let parsed_hint = type_hint.as_ref().map(|s| PhpType::parse(s));
+        if let Some(enriched) =
+            enrichment_snippet(parsed_hint.as_ref(), &mut tab_stop, class_loader)
+        {
             // Use the plain-text version to measure the rendered width for
             // alignment.  The snippet version contains `${N:...}` markers
             // that inflate its length.
-            let display_len = enrichment_plain(type_hint, class_loader)
+            let display_len = enrichment_plain(parsed_hint.as_ref(), class_loader)
                 .map(|p| p.len())
                 .unwrap_or(enriched.len());
             // Escape `$` in PHP parameter names so the snippet parser
@@ -1271,7 +1278,8 @@ fn build_function_snippet(
         if let Some(t) = inferred {
             Some(t)
         } else {
-            enrichment_snippet(&sym.return_type, &mut tab_stop, class_loader)
+            let parsed_ret = sym.return_type.as_ref().map(|s| PhpType::parse(s));
+            enrichment_snippet(parsed_ret.as_ref(), &mut tab_stop, class_loader)
         }
     };
 
@@ -1346,7 +1354,8 @@ fn build_function_plain(
     // Collect @param tags that need enrichment.
     let mut param_tags: Vec<(String, String)> = Vec::new();
     for (type_hint, name) in &sym.params {
-        if let Some(enriched) = enrichment_plain(type_hint, class_loader) {
+        let parsed_hint = type_hint.as_ref().map(|s| PhpType::parse(s));
+        if let Some(enriched) = enrichment_plain(parsed_hint.as_ref(), class_loader) {
             param_tags.push((enriched, name.clone()));
         }
     }
@@ -1380,7 +1389,10 @@ fn build_function_plain(
         });
         // Fall back to signature-based enrichment when body inference
         // doesn't produce anything useful.
-        inferred.or_else(|| enrichment_plain(&sym.return_type, class_loader))
+        inferred.or_else(|| {
+            let parsed_ret = sym.return_type.as_ref().map(|s| PhpType::parse(s));
+            enrichment_plain(parsed_ret.as_ref(), class_loader)
+        })
     };
 
     let has_throws = !uncaught.is_empty();
@@ -2145,7 +2157,7 @@ mod tests {
     #[test]
     fn enrichment_missing_type_produces_mixed() {
         let mut ts = 1;
-        let result = enrichment_snippet(&None, &mut ts, &no_classes);
+        let result = enrichment_snippet(None, &mut ts, &no_classes);
         assert_eq!(result, Some("${1:mixed}".to_string()));
         assert_eq!(ts, 2);
     }
@@ -2153,7 +2165,8 @@ mod tests {
     #[test]
     fn enrichment_array_produces_array_tabstop() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("array".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("array");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert_eq!(result, Some("array<${1:mixed}>".to_string()));
         assert_eq!(ts, 2);
     }
@@ -2161,7 +2174,8 @@ mod tests {
     #[test]
     fn enrichment_scalar_returns_none() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("string".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("string");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert!(result.is_none());
         assert_eq!(ts, 1, "tab stop should not advance for skipped types");
     }
@@ -2169,42 +2183,48 @@ mod tests {
     #[test]
     fn enrichment_union_without_array_returns_none() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("string|int".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("string|int");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert!(result.is_none());
     }
 
     #[test]
     fn enrichment_union_with_array_enriches_parts() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("array|string".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("array|string");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert_eq!(result, Some("array<${1:mixed}>|string".to_string()));
     }
 
     #[test]
     fn enrichment_union_with_closure_enriches_parts() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("Closure|null".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("Closure|null");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert_eq!(result, Some("(Closure(): ${1:mixed})|null".to_string()));
     }
 
     #[test]
     fn enrichment_nullable_returns_none() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("?string".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("?string");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert!(result.is_none());
     }
 
     #[test]
     fn enrichment_void_returns_none() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("void".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("void");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert!(result.is_none());
     }
 
     #[test]
     fn enrichment_closure_produces_callable_placeholder() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("Closure".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("Closure");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert_eq!(result, Some("(Closure(): ${1:mixed})".to_string()));
         assert_eq!(ts, 2);
     }
@@ -2212,7 +2232,8 @@ mod tests {
     #[test]
     fn enrichment_callable_produces_callable_placeholder() {
         let mut ts = 1;
-        let result = enrichment_snippet(&Some("callable".to_string()), &mut ts, &no_classes);
+        let hint = PhpType::parse("callable");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &no_classes);
         assert_eq!(result, Some("(callable(): ${1:mixed})".to_string()));
         assert_eq!(ts, 2);
     }
@@ -2231,7 +2252,8 @@ mod tests {
                 None
             }
         };
-        let result = enrichment_snippet(&Some("User".to_string()), &mut ts, &loader);
+        let hint = PhpType::parse("User");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &loader);
         assert!(result.is_none());
     }
 
@@ -2249,7 +2271,8 @@ mod tests {
                 None
             }
         };
-        let result = enrichment_snippet(&Some("Collection".to_string()), &mut ts, &loader);
+        let hint = PhpType::parse("Collection");
+        let result = enrichment_snippet(Some(&hint), &mut ts, &loader);
         assert_eq!(
             result,
             Some("Collection<${1:TKey}, ${2:TValue}>".to_string())

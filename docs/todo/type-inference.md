@@ -447,39 +447,6 @@ pipeline to produce cleaner hover/completion output.
 
 ---
 
-## T28. Migrate enrichment functions to accept `PhpType`
-**Impact: Low · Effort: Low**
-
-`enrichment_snippet()` and `enrichment_plain()` in
-`completion/phpdoc/generation.rs` accept `&Option<String>`, then
-immediately parse via `PhpType::parse()` and match on the result.
-All callers could provide a `PhpType` directly.
-
-**Task:** Change the signatures to accept `Option<&PhpType>` (or
-`&Option<PhpType>`), remove the internal `PhpType::parse()` calls,
-and update all call sites.
-
-**Files:** `src/completion/phpdoc/generation.rs` and its callers
-
----
-
-## T30. Migrate `inline_use_generics` to `PhpType`
-**Impact: Low · Effort: Low**
-
-`ExtractedMembers::inline_use_generics` is typed
-`Vec<(String, Vec<String>)>`, storing generic type arguments as raw
-strings. The analogous fields on `ClassInfo` (`extends_generics`,
-`implements_generics`, `use_generics`) all use
-`Vec<(String, Vec<PhpType>)>`. This inconsistency forces a parse step
-when the inline generics are merged into `ClassInfo`.
-
-**Task:** Change the type to `Vec<(String, Vec<PhpType>)>` and update
-the extraction code in `parser/classes.rs` to parse at extraction time.
-
-**Files:** `src/types.rs`, `src/parser/classes.rs`
-
----
-
 ## T31. Migrate `throws` fields to `Vec<PhpType>`
 **Impact: Low · Effort: Low**
 

@@ -927,9 +927,7 @@ impl Backend {
                     );
 
                     let mut use_generics = doc_info.use_generics;
-                    use_generics.extend(inline_use_generics.into_iter().map(|(name, args)| {
-                        (name, args.into_iter().map(|a| PhpType::parse(&a)).collect())
-                    }));
+                    use_generics.extend(inline_use_generics);
 
                     let keyword_offset = class.class.span.start.offset;
                     let start_offset = class.left_brace.start.offset;
@@ -1094,9 +1092,7 @@ impl Backend {
                         implements_generics: doc_info.implements_generics,
                         use_generics: {
                             let mut ug = doc_info.use_generics;
-                            ug.extend(inline_use_generics.into_iter().map(|(name, args)| {
-                                (name, args.into_iter().map(|a| PhpType::parse(&a)).collect())
-                            }));
+                            ug.extend(inline_use_generics);
                             ug
                         },
                         type_aliases: doc_info.type_aliases,
@@ -1176,9 +1172,7 @@ impl Backend {
                         implements_generics: vec![],
                         use_generics: {
                             let mut ug: Vec<(String, Vec<PhpType>)> = vec![];
-                            ug.extend(inline_use_generics.into_iter().map(|(name, args)| {
-                                (name, args.into_iter().map(|a| PhpType::parse(&a)).collect())
-                            }));
+                            ug.extend(inline_use_generics);
                             ug
                         },
                         type_aliases: HashMap::new(),
@@ -1814,7 +1808,7 @@ impl Backend {
         let mut used_traits = Vec::new();
         let mut trait_precedences = Vec::new();
         let mut trait_aliases = Vec::new();
-        let mut inline_use_generics: Vec<(String, Vec<String>)> = Vec::new();
+        let mut inline_use_generics: Vec<(String, Vec<PhpType>)> = Vec::new();
 
         for member in members {
             match member {
@@ -2426,7 +2420,9 @@ impl Backend {
                         )
                     {
                         let tags = docblock::extract_generics_tag(doc_text, "@use");
-                        inline_use_generics.extend(tags);
+                        inline_use_generics.extend(tags.into_iter().map(|(name, args)| {
+                            (name, args.into_iter().map(|a| PhpType::parse(&a)).collect())
+                        }));
                     }
 
                     // Parse trait adaptation block (`{ ... }`) if present.

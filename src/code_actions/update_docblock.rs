@@ -578,10 +578,10 @@ fn check_needs_update(
         }
     } else {
         // No @param tags at all — only flag if a param needs enrichment.
-        let needs_enrichment = info
-            .sig_params
-            .iter()
-            .any(|sp| enrichment_plain(&sp.type_hint, class_loader).is_some());
+        let needs_enrichment = info.sig_params.iter().any(|sp| {
+            let parsed = sp.type_hint.as_ref().map(|s| PhpType::parse(s));
+            enrichment_plain(parsed.as_ref(), class_loader).is_some()
+        });
         if needs_enrichment {
             return true;
         }
@@ -615,7 +615,8 @@ fn check_needs_update(
             if PhpType::parse(&doc_param.type_str).has_type_structure() {
                 continue;
             }
-            if let Some(enriched) = enrichment_plain(&sig_param.type_hint, class_loader)
+            let parsed_hint = sig_param.type_hint.as_ref().map(|s| PhpType::parse(s));
+            if let Some(enriched) = enrichment_plain(parsed_hint.as_ref(), class_loader)
                 && enriched != doc_param.type_str
             {
                 return true;
@@ -813,15 +814,21 @@ fn build_updated_docblock(
                     if is_type_contradiction(&existing.type_str, native) {
                         // Type is contradicted — try enrichment first, fall
                         // back to the raw native hint.
-                        enrichment_plain(&sig.type_hint, class_loader)
-                            .unwrap_or_else(|| native.clone())
+                        {
+                            let parsed = sig.type_hint.as_ref().map(|s| PhpType::parse(s));
+                            enrichment_plain(parsed.as_ref(), class_loader)
+                                .unwrap_or_else(|| native.clone())
+                        }
                     } else if PhpType::parse(&existing.type_str).has_type_structure() {
                         // Doc already has generics / callable / shape — keep it.
                         existing.type_str.clone()
                     } else {
                         // Check if enrichment would upgrade the type (e.g.
                         // bare `Closure` → `(Closure(): mixed)`).
-                        if let Some(enriched) = enrichment_plain(&sig.type_hint, class_loader) {
+                        let parsed_hint2 = sig.type_hint.as_ref().map(|s| PhpType::parse(s));
+                        if let Some(enriched) =
+                            enrichment_plain(parsed_hint2.as_ref(), class_loader)
+                        {
                             if enriched != existing.type_str {
                                 enriched
                             } else {
@@ -837,12 +844,19 @@ fn build_updated_docblock(
             } else if has_any_doc_params {
                 // The docblock already documents some params, so add this
                 // missing one — use enrichment or fall back to raw hint / mixed.
-                enrichment_plain(&sig.type_hint, class_loader)
-                    .unwrap_or_else(|| sig.type_hint.clone().unwrap_or_else(|| "mixed".to_string()))
+                {
+                    let parsed = sig.type_hint.as_ref().map(|s| PhpType::parse(s));
+                    enrichment_plain(parsed.as_ref(), class_loader).unwrap_or_else(|| {
+                        sig.type_hint.clone().unwrap_or_else(|| "mixed".to_string())
+                    })
+                }
             } else {
                 // No @param tags at all — only add a tag when the native
                 // type needs enrichment, matching generate-docblock behaviour.
-                enrichment_plain(&sig.type_hint, class_loader)?
+                {
+                    let parsed = sig.type_hint.as_ref().map(|s| PhpType::parse(s));
+                    enrichment_plain(parsed.as_ref(), class_loader)?
+                }
             };
 
             let description = existing.map(|e| e.description.clone()).unwrap_or_default();

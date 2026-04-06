@@ -269,7 +269,7 @@ pub struct ExtractedMembers {
     /// `@use` generics extracted from docblocks on trait `use` statements
     /// inside the class body (e.g. `/** @use BuildsQueries<TModel> */`).
     /// Each entry is `(trait_name, vec_of_type_args)`.
-    pub inline_use_generics: Vec<(String, Vec<String>)>,
+    pub inline_use_generics: Vec<(String, Vec<PhpType>)>,
 }
 
 /// A type alias definition, either locally defined or imported from another class.

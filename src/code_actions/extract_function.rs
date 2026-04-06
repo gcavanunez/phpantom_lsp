@@ -1045,8 +1045,8 @@ fn build_docblock_for_extraction(
             continue;
         }
         let hint = if type_hint.is_empty() { raw } else { type_hint };
-        let opt = Some(hint.clone());
-        if let Some(enriched) = enrichment_plain(&opt, class_loader) {
+        let parsed = PhpType::parse(hint);
+        if let Some(enriched) = enrichment_plain(Some(&parsed), class_loader) {
             tags.push(format!("@param {} {}", enriched, name));
         }
     }
@@ -1061,8 +1061,8 @@ fn build_docblock_for_extraction(
             } else {
                 return_type_hint
             };
-            let opt = Some(hint.to_string());
-            if let Some(enriched) = enrichment_plain(&opt, class_loader) {
+            let parsed = PhpType::parse(hint);
+            if let Some(enriched) = enrichment_plain(Some(&parsed), class_loader) {
                 tags.push(format!("@return {}", enriched));
             }
         }
