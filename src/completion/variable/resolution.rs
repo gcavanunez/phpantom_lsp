@@ -3106,7 +3106,7 @@ pub(in crate::completion) fn check_expression_for_assignment<'b>(
                 let resolved =
                     super::rhs_resolution::resolve_rhs_expression(assignment.rhs, &rhs_ctx);
                 let value_type = if !resolved.is_empty() {
-                    ResolvedType::type_strings_joined(&resolved)
+                    ResolvedType::types_joined(&resolved).to_string()
                 } else {
                     "mixed".to_string()
                 };
@@ -3135,7 +3135,7 @@ pub(in crate::completion) fn check_expression_for_assignment<'b>(
                 let resolved =
                     super::rhs_resolution::resolve_rhs_expression(assignment.rhs, &rhs_ctx);
                 let value_type = if !resolved.is_empty() {
-                    ResolvedType::type_strings_joined(&resolved)
+                    ResolvedType::types_joined(&resolved).to_string()
                 } else {
                     "mixed".to_string()
                 };
@@ -3175,7 +3175,7 @@ pub(in crate::completion) fn check_expression_for_assignment<'b>(
             let rhs_ctx = ctx.with_cursor_offset(assignment.span().start.offset);
             let resolved = super::rhs_resolution::resolve_rhs_expression(assignment.rhs, &rhs_ctx);
             let value_type = if !resolved.is_empty() {
-                ResolvedType::type_strings_joined(&resolved)
+                ResolvedType::types_joined(&resolved).to_string()
             } else {
                 "mixed".to_string()
             };
@@ -3428,7 +3428,7 @@ fn infer_array_key_type(index: &Expression<'_>, ctx: &VarResolutionCtx<'_>) -> S
     // Resolve the expression type through the standard pipeline.
     let resolved = super::rhs_resolution::resolve_rhs_expression(index, ctx);
     if !resolved.is_empty() {
-        let joined = ResolvedType::type_strings_joined(&resolved);
+        let joined = ResolvedType::types_joined(&resolved);
         let key_str = joined.to_string();
         // Normalise the resolved type to a valid array key type.
         // PHP array keys are always int or string; bool and null are

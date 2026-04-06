@@ -1402,7 +1402,7 @@ impl Backend {
                 Loaders::with_function(ctx.function_loader),
             );
             if !resolved.is_empty() {
-                return Some(ResolvedType::type_strings_joined(&resolved));
+                return Some(ResolvedType::types_joined(&resolved).to_string());
             }
             return None;
         }

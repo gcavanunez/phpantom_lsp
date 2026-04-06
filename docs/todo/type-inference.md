@@ -350,10 +350,12 @@ function measure(Countable&Serializable $thing): void {
 // `Countable&Serializable $thing`.
 ```
 
-**No longer blocked.** `PhpType::Intersection` already exists.
-`ResolvedType::types_joined()` returns a `PhpType` that preserves
-intersection structure. This will be naturally fixed when T29 migrates
-all `type_strings_joined` call sites to `types_joined`.
+**Remaining work.** `PhpType::Intersection` already exists and
+`ResolvedType::types_joined()` returns a structured `PhpType`, but
+the resolution pipeline still produces separate `ResolvedType` entries
+for each part of an intersection. The fix is to make the pipeline emit
+a single `ResolvedType` with `PhpType::Intersection` when the source
+type is an intersection.
 
 **After fixing:** verify that extract function docblock generation
 preserves intersection types in both the native hint and the `@param`
@@ -591,52 +593,6 @@ hover, diagnostics) once the forward walker covers enough cases.
 statement analyzers. Both converge on the same architecture: the
 scope is the single source of truth, populated eagerly as the walk
 progresses.
-
----
-
-## T29. Migrate `type_strings_joined` call sites to `types_joined`
-**Impact: Medium · Effort: Low**
-
-`ResolvedType::types_joined()` returns a structured `PhpType` and was
-created as the replacement for `type_strings_joined()`, which joins
-types into a `String` with `|` separators. The string variant is still
-called in ~12 places across the resolution pipeline:
-
-- `resolver.rs` (2 call sites)
-- `resolution.rs` / variable resolution (3 call sites)
-- `rhs_resolution.rs` (1 call site)
-- `call_resolution.rs` (1 call site)
-- `foreach_resolution.rs` (1 call site)
-- `array_shape.rs` (1 call site)
-- `fix_return_type.rs` (1 call site)
-
-Each produces a `String` that is later re-parsed by downstream
-consumers.
-
-**What to change:**
-
-1. At each call site, replace `type_strings_joined` with
-   `types_joined` and thread the resulting `PhpType` through to the
-   consumer.
-
-2. Where the consumer is a function that accepts `&str` (e.g.
-   `check_unresolvable_class_name`), change that function to accept
-   `&PhpType`.
-
-3. Once all call sites are migrated, remove `type_strings_joined`
-   entirely (or mark it `#[deprecated]` first if external tests use
-   it).
-
-**Files:** `src/completion/resolver.rs`,
-`src/completion/variable/resolution.rs`,
-`src/completion/variable/rhs_resolution.rs`,
-`src/completion/call_resolution.rs`,
-`src/completion/variable/foreach_resolution.rs`,
-`src/completion/array_shape.rs`,
-`src/code_actions/phpstan/fix_return_type.rs`,
-`src/types.rs`.
-
-**Part of:** T19.
 
 ---
 

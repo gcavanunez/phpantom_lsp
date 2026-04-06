@@ -24,7 +24,7 @@ use crate::completion::resolver::{Loaders, VarResolutionCtx};
 
 /// Resolve an expression's type string via the unified pipeline.
 ///
-/// Wraps `resolve_rhs_expression` + `type_strings_joined` into a single
+/// Wraps `resolve_rhs_expression` + `types_joined` into a single
 /// `Option<String>` suitable for callers that previously used
 /// `extract_rhs_iterable_raw_type`.  Returns `None` when the unified
 /// pipeline produces no results or an empty type string.
@@ -36,7 +36,7 @@ pub(in crate::completion) fn resolve_expression_type_string<'b>(
     if resolved.is_empty() {
         return None;
     }
-    let ts = ResolvedType::type_strings_joined(&resolved);
+    let ts = ResolvedType::types_joined(&resolved).to_string();
     if ts.is_empty() { None } else { Some(ts) }
 }
 

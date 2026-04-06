@@ -1153,7 +1153,7 @@ fn resolve_arg_variable_raw_type(
     if resolved.is_empty() {
         None
     } else {
-        Some(ResolvedType::type_strings_joined(&resolved))
+        Some(ResolvedType::types_joined(&resolved).to_string())
     }
 }
 

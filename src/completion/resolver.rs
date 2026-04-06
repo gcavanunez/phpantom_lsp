@@ -1137,8 +1137,7 @@ pub(crate) fn resolve_subject_outcome(
         }
 
         // Non-scalar, non-class type — check for unresolvable class.
-        let raw_type = ResolvedType::type_strings_joined(&resolved);
-        if let Some(unresolved) = check_unresolvable_class_name(&raw_type, ctx.class_loader) {
+        if let Some(unresolved) = check_unresolvable_class_name(&joined, ctx.class_loader) {
             return SubjectOutcome::UnresolvableClass(unresolved);
         }
         return SubjectOutcome::Untyped;
@@ -1161,7 +1160,8 @@ pub(crate) fn resolve_subject_outcome(
             && let Some(fl) = ctx.function_loader
             && let Some(func_info) = fl(fn_name.as_str())
             && let Some(raw_type) = func_info.return_type_str()
-            && let Some(unresolved) = check_unresolvable_class_name(&raw_type, ctx.class_loader)
+            && let Some(unresolved) =
+                check_unresolvable_class_name(&PhpType::parse(&raw_type), ctx.class_loader)
         {
             return SubjectOutcome::UnresolvableClass(unresolved);
         }
@@ -1197,7 +1197,8 @@ pub(crate) fn resolve_subject_outcome(
             ctx.class_loader,
             Loaders::with_function(ctx.function_loader),
         )
-        && let Some(unresolved) = check_unresolvable_class_name(&raw_type, ctx.class_loader)
+        && let Some(unresolved) =
+            check_unresolvable_class_name(&PhpType::parse(&raw_type), ctx.class_loader)
     {
         return SubjectOutcome::UnresolvableClass(unresolved);
     }
@@ -1289,15 +1290,14 @@ fn resolve_call_scalar_return(
 /// find it.  Returns `None` for scalars, unions, shapes, and types
 /// that resolve successfully.
 fn check_unresolvable_class_name(
-    raw_type: &str,
+    raw_type: &PhpType,
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
 ) -> Option<String> {
-    let parsed = PhpType::parse(raw_type);
-    if parsed.all_members_scalar() {
+    if raw_type.all_members_scalar() {
         return None;
     }
 
-    let effective = parsed.non_null_type().unwrap_or_else(|| parsed.clone());
+    let effective = raw_type.non_null_type().unwrap_or_else(|| raw_type.clone());
     let base = effective.base_name()?;
 
     if class_loader(base).is_none() {

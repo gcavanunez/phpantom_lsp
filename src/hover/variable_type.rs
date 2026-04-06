@@ -173,7 +173,7 @@ pub(crate) fn resolve_variable_type_string(
         loaders,
     );
     if !resolved.is_empty() {
-        let joined = ResolvedType::type_strings_joined(&resolved);
+        let joined = ResolvedType::types_joined(&resolved).to_string();
         if !joined.is_empty() {
             // When the AST-based result (step 2–4) carries richer type
             // information than the unified pipeline (e.g. the docblock

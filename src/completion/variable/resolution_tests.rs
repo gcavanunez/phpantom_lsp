@@ -408,7 +408,7 @@ function test() {
     );
 
     assert!(!results.is_empty(), "Should resolve $data to a type");
-    let ts = ResolvedType::type_strings_joined(&results);
+    let ts = ResolvedType::types_joined(&results).to_string();
     assert!(
         ts.contains("name: string"),
         "Shape should contain 'name: string', got: {ts}"
@@ -443,7 +443,7 @@ function test() {
     );
 
     assert!(!results.is_empty(), "Should resolve $config to a type");
-    let ts = ResolvedType::type_strings_joined(&results);
+    let ts = ResolvedType::types_joined(&results).to_string();
     // The base array{host: string} should be merged with the new key.
     assert!(
         ts.contains("port: int"),
@@ -475,7 +475,7 @@ function test() {
     );
 
     assert!(!results.is_empty(), "Should resolve $data to a type");
-    let ts = ResolvedType::type_strings_joined(&results);
+    let ts = ResolvedType::types_joined(&results).to_string();
     assert!(
         ts.contains("value: int"),
         "Shape key 'value' should be overridden to int, got: {ts}"
@@ -523,7 +523,7 @@ function test() {
     );
 
     assert!(!results.is_empty(), "Should resolve $items to a type");
-    let ts = ResolvedType::type_strings_joined(&results);
+    let ts = ResolvedType::types_joined(&results).to_string();
     assert!(
         ts.contains("User"),
         "List element type should contain User, got: {ts}"
@@ -558,7 +558,7 @@ function test() {
     );
 
     assert!(!results.is_empty(), "Should resolve $items to a type");
-    let ts = ResolvedType::type_strings_joined(&results);
+    let ts = ResolvedType::types_joined(&results).to_string();
     assert!(
         ts.contains("string") && ts.contains("int"),
         "List should contain string|int union, got: {ts}"
@@ -589,7 +589,7 @@ function test() {
     );
 
     assert!(!results.is_empty(), "Should resolve $items to a type");
-    let ts = ResolvedType::type_strings_joined(&results);
+    let ts = ResolvedType::types_joined(&results).to_string();
     assert_eq!(
         ts, "list<string>",
         "Duplicate pushes of same type should not duplicate, got: {ts}"
@@ -622,7 +622,7 @@ function test() {
     );
 
     assert!(!results.is_empty(), "Should resolve $x to a type");
-    let ts = ResolvedType::type_strings_joined(&results);
+    let ts = ResolvedType::types_joined(&results).to_string();
     assert_eq!(
         ts, "list<string>",
         "Reassignment should reset; only 'string' push should remain, got: {ts}"
@@ -658,7 +658,7 @@ function test() {
     let ts = if results.is_empty() {
         "array".to_string()
     } else {
-        ResolvedType::type_strings_joined(&results)
+        ResolvedType::types_joined(&results).to_string()
     };
     assert!(
         !ts.contains('{'),

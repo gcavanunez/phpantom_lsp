@@ -465,7 +465,7 @@ pub(crate) fn infer_return_type(
                     class_loader,
                     Loaders::with_function(function_loader),
                 );
-                let type_str = ResolvedType::type_strings_joined(&results);
+                let type_str = ResolvedType::types_joined(&results).to_string();
                 if !type_str.is_empty() {
                     return_types.push(type_str);
                     continue;

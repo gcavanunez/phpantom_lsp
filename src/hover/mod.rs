@@ -967,7 +967,7 @@ impl Backend {
             return Some(make_hover(format!("```php\n<?php\n{}\n```", var_name)));
         }
 
-        let type_str = ResolvedType::type_strings_joined(&resolved);
+        let type_str = ResolvedType::types_joined(&resolved).to_string();
 
         let hover_body = build_variable_hover_body(&var_name, &type_str, &class_loader, None);
         Some(make_hover(hover_body))

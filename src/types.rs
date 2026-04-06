@@ -1910,18 +1910,6 @@ impl ResolvedType {
         }
     }
 
-    /// Join the type strings of all entries with `|`.
-    ///
-    /// Useful for hover display and other consumers that need a single
-    /// union type string from the resolved types.
-    pub(crate) fn type_strings_joined(resolved: &[ResolvedType]) -> String {
-        resolved
-            .iter()
-            .map(|rt| rt.type_string.to_string())
-            .collect::<Vec<_>>()
-            .join("|")
-    }
-
     /// Combine the type strings of all entries into a single [`PhpType`].
     ///
     /// When there is exactly one entry, returns its `type_string` directly.
@@ -1929,9 +1917,10 @@ impl ResolvedType {
     /// When the slice is empty, returns `PhpType::Named("mixed")` as a
     /// safe fallback (callers should check emptiness beforehand).
     ///
-    /// This is the structured counterpart of [`type_strings_joined`] and
-    /// avoids the `PhpType → String → PhpType` round-trip that occurs
-    /// when callers join types into a string and then re-parse them.
+    /// Callers that need a display string can use `.to_string()` on the
+    /// result, which produces the same `|`-joined output that the former
+    /// `type_strings_joined` helper returned, but preserves the structured
+    /// [`PhpType`] for any intermediate consumers that benefit from it.
     pub(crate) fn types_joined(resolved: &[ResolvedType]) -> PhpType {
         match resolved.len() {
             0 => PhpType::Named("mixed".to_owned()),
