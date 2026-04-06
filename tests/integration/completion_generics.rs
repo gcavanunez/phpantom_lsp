@@ -1189,67 +1189,88 @@ fn test_extract_template_params_empty() {
 #[test]
 fn test_extract_generics_tag_extends_basic() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @extends Collection<int, Language>\n */";
     let result = extract_generics_tag(docblock, "@extends");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "Collection");
-    assert_eq!(result[0].1, vec!["int", "Language"]);
+    assert_eq!(
+        result[0].1,
+        vec![PhpType::parse("int"), PhpType::parse("Language")]
+    );
 }
 
 #[test]
 fn test_extract_generics_tag_extends_single_param() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @extends Box<Apple>\n */";
     let result = extract_generics_tag(docblock, "@extends");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "Box");
-    assert_eq!(result[0].1, vec!["Apple"]);
+    assert_eq!(result[0].1, vec![PhpType::parse("Apple")]);
 }
 
 #[test]
 fn test_extract_generics_tag_phpstan_extends() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @phpstan-extends Collection<int, User>\n */";
     let result = extract_generics_tag(docblock, "@extends");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "Collection");
-    assert_eq!(result[0].1, vec!["int", "User"]);
+    assert_eq!(
+        result[0].1,
+        vec![PhpType::parse("int"), PhpType::parse("User")]
+    );
 }
 
 #[test]
 fn test_extract_generics_tag_implements() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @implements ArrayAccess<string, User>\n */";
     let result = extract_generics_tag(docblock, "@implements");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "ArrayAccess");
-    assert_eq!(result[0].1, vec!["string", "User"]);
+    assert_eq!(
+        result[0].1,
+        vec![PhpType::parse("string"), PhpType::parse("User")]
+    );
 }
 
 #[test]
 fn test_extract_generics_tag_with_fqn() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @extends \\Illuminate\\Support\\Collection<int, \\App\\Model>\n */";
     let result = extract_generics_tag(docblock, "@extends");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "Illuminate\\Support\\Collection");
-    assert_eq!(result[0].1, vec!["int", "App\\Model"]);
+    assert_eq!(
+        result[0].1,
+        vec![PhpType::parse("int"), PhpType::parse("\\App\\Model")]
+    );
 }
 
 #[test]
 fn test_extract_generics_tag_nested_generic() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @extends Base<array<int, string>, User>\n */";
     let result = extract_generics_tag(docblock, "@extends");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "Base");
-    assert_eq!(result[0].1, vec!["array<int, string>", "User"]);
+    assert_eq!(
+        result[0].1,
+        vec![PhpType::parse("array<int, string>"), PhpType::parse("User")]
+    );
 }
 
 #[test]
@@ -1274,6 +1295,7 @@ fn test_extract_generics_tag_extends_without_angle_brackets() {
 #[test]
 fn test_extract_generics_tag_multiple_implements() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = concat!(
         "/**\n",
@@ -1286,9 +1308,15 @@ fn test_extract_generics_tag_multiple_implements() {
     // Only entries with generics are returned
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].0, "ArrayAccess");
-    assert_eq!(result[0].1, vec!["int", "User"]);
+    assert_eq!(
+        result[0].1,
+        vec![PhpType::parse("int"), PhpType::parse("User")]
+    );
     assert_eq!(result[1].0, "IteratorAggregate");
-    assert_eq!(result[1].1, vec!["int", "User"]);
+    assert_eq!(
+        result[1].1,
+        vec![PhpType::parse("int"), PhpType::parse("User")]
+    );
 }
 
 // ─── Method-level @template tests ───────────────────────────────────────────
@@ -3805,48 +3833,58 @@ async fn test_trait_use_generic_this_context() {
 #[test]
 fn test_extract_generics_tag_use_basic() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @use HasFactory<UserFactory>\n */";
     let result = extract_generics_tag(docblock, "@use");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "HasFactory");
-    assert_eq!(result[0].1, vec!["UserFactory"]);
+    assert_eq!(result[0].1, vec![PhpType::parse("UserFactory")]);
 }
 
 /// Test that @phpstan-use variant is parsed by extract_generics_tag.
 #[test]
 fn test_extract_generics_tag_phpstan_use() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @phpstan-use HasFactory<UserFactory>\n */";
     let result = extract_generics_tag(docblock, "@use");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "HasFactory");
-    assert_eq!(result[0].1, vec!["UserFactory"]);
+    assert_eq!(result[0].1, vec![PhpType::parse("UserFactory")]);
 }
 
 /// Test @use with multiple template parameters.
 #[test]
 fn test_extract_generics_tag_use_multiple_params() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @use Indexable<int, User>\n */";
     let result = extract_generics_tag(docblock, "@use");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "Indexable");
-    assert_eq!(result[0].1, vec!["int", "User"]);
+    assert_eq!(
+        result[0].1,
+        vec![PhpType::parse("int"), PhpType::parse("User")]
+    );
 }
 
 /// Test @use with fully-qualified trait name.
 #[test]
 fn test_extract_generics_tag_use_fqn() {
     use phpantom_lsp::docblock::extract_generics_tag;
+    use phpantom_lsp::php_type::PhpType;
 
     let docblock = "/**\n * @use \\App\\Concerns\\HasFactory<\\App\\Factories\\UserFactory>\n */";
     let result = extract_generics_tag(docblock, "@use");
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, "App\\Concerns\\HasFactory");
-    assert_eq!(result[0].1, vec!["App\\Factories\\UserFactory"]);
+    assert_eq!(
+        result[0].1,
+        vec![PhpType::parse("\\App\\Factories\\UserFactory")]
+    );
 }
 
 // ─── Method-level @template general case tests ──────────────────────────────

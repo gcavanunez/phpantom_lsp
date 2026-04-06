@@ -237,7 +237,7 @@ pub fn extract_template_param_bindings_from_info(
 ///   - `@phpstan-extends Collection<int, Language>`
 ///   - `@implements ArrayAccess<string, User>`
 ///   - Nested generics: `@extends Base<array<int, string>, User>`
-pub fn extract_generics_tag(docblock: &str, tag: &str) -> Vec<(String, Vec<String>)> {
+pub fn extract_generics_tag(docblock: &str, tag: &str) -> Vec<(String, Vec<PhpType>)> {
     let Some(info) = parse_docblock_for_tags(docblock) else {
         return Vec::new();
     };
@@ -320,7 +320,7 @@ fn collect_template_bindings(
 pub fn extract_generics_tag_from_info(
     info: &DocblockInfo,
     tag: &str,
-) -> Vec<(String, Vec<String>)> {
+) -> Vec<(String, Vec<PhpType>)> {
     // Map the tag string to the corresponding TagKinds.
     // For `@extends` we also accept `@phpstan-extends` and `@template-extends`.
     // Note: `@phpstan-extends`, `@phpstan-implements`, and `@phpstan-use`
@@ -368,7 +368,7 @@ pub fn extract_generics_tag_from_info(
 
 /// Parse a generics tag description (e.g. `"Collection<int, Language>"`) into
 /// a `(base_name, generic_args)` tuple.
-fn parse_generics_from_description(desc: &str) -> Option<(String, Vec<String>)> {
+fn parse_generics_from_description(desc: &str) -> Option<(String, Vec<PhpType>)> {
     let desc = desc.trim();
     if desc.is_empty() {
         return None;
@@ -389,14 +389,7 @@ fn parse_generics_from_description(desc: &str) -> Option<(String, Vec<String>)> 
             if base_name.is_empty() {
                 return None;
             }
-            let arg_strings: Vec<String> = args
-                .iter()
-                .map(|a| {
-                    let s = a.to_string();
-                    strip_fqn_prefix(&s).to_string()
-                })
-                .collect();
-            Some((base_name, arg_strings))
+            Some((base_name, args))
         }
         _ => None,
     }

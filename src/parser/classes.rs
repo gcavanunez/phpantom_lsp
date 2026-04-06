@@ -237,18 +237,9 @@ fn extract_class_docblock<'a>(
         template_params,
         template_param_bounds,
         template_param_defaults,
-        extends_generics: docblock::extract_generics_tag_from_info(&info, "@extends")
-            .into_iter()
-            .map(|(name, args)| (name, args.into_iter().map(|a| PhpType::parse(&a)).collect()))
-            .collect(),
-        implements_generics: docblock::extract_generics_tag_from_info(&info, "@implements")
-            .into_iter()
-            .map(|(name, args)| (name, args.into_iter().map(|a| PhpType::parse(&a)).collect()))
-            .collect(),
-        use_generics: docblock::extract_generics_tag_from_info(&info, "@use")
-            .into_iter()
-            .map(|(name, args)| (name, args.into_iter().map(|a| PhpType::parse(&a)).collect()))
-            .collect(),
+        extends_generics: docblock::extract_generics_tag_from_info(&info, "@extends"),
+        implements_generics: docblock::extract_generics_tag_from_info(&info, "@implements"),
+        use_generics: docblock::extract_generics_tag_from_info(&info, "@use"),
         type_aliases: docblock::extract_type_aliases_from_info(&info),
         mixins,
         mixin_generics,
@@ -1170,11 +1161,7 @@ impl Backend {
                         template_param_defaults: doc_info.template_param_defaults,
                         extends_generics: vec![],
                         implements_generics: vec![],
-                        use_generics: {
-                            let mut ug: Vec<(String, Vec<PhpType>)> = vec![];
-                            ug.extend(inline_use_generics);
-                            ug
-                        },
+                        use_generics: inline_use_generics,
                         type_aliases: HashMap::new(),
                         trait_precedences,
                         trait_aliases,
@@ -2420,9 +2407,7 @@ impl Backend {
                         )
                     {
                         let tags = docblock::extract_generics_tag(doc_text, "@use");
-                        inline_use_generics.extend(tags.into_iter().map(|(name, args)| {
-                            (name, args.into_iter().map(|a| PhpType::parse(&a)).collect())
-                        }));
+                        inline_use_generics.extend(tags);
                     }
 
                     // Parse trait adaptation block (`{ ... }`) if present.
