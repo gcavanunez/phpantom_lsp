@@ -417,38 +417,33 @@ emits the concrete callable signature in the `@param` tag.
 ## T19. Structured type representation
 **Impact: High · Effort: Very High**
 
-PHPantom represents types as strings (e.g. `"Collection<string>|null"`)
-and manipulates them via string splitting, regex, and concatenation.
-PHPStan, Psalm, and Mago all use structured type trees (enums/classes)
-where each type is a node with typed children. This causes:
+**Status: nearly complete.** The `PhpType` enum exists in
+`src/php_type.rs` with full parsing via `mago-type-syntax`, a rich
+method set (substitution, extraction, display, name resolution), and
+is already used as the primary representation in core data structures
+(`MethodInfo.return_type`, `PropertyInfo.type_hint`,
+`ParameterInfo.type_hint`, `ResolvedType.type_string`). Template
+substitution, type narrowing, and inheritance merging all operate on
+`PhpType` values.
 
-- Fragile parsing on every type comparison or manipulation
-- No proper subtype checking (can't answer "is `Cat` a subtype of
-  `Animal`?")
-- String-based template substitution that breaks on nested generics
-- No union simplification (`string|string` stays as-is, `true|false`
-  doesn't merge to `bool`)
-- Intersection types can't be properly distributed over unions
+The API boundary cleanup (T29, T30) is complete. All core internal
+APIs now accept and return `PhpType` values directly.
 
-A structured type representation (a Rust `enum PhpType`) would
-eliminate these issues. PHPantom already has `PhpType` via
-`mago-type-syntax` for parsing. The gap is using it as the primary
-representation throughout the resolution pipeline instead of raw
-strings.
+Structural subtype checking (`is_subtype_of`), union simplification
+(`simplified`), and intersection distribution over unions
+(`distribute_intersection`) are now implemented with 69 unit tests.
+The subtype checker handles the full PHP scalar type lattice (including
+refinements like `positive-int <: int <: float <: numeric <: scalar`),
+nullable/union/intersection subtyping, generic covariance for
+array-like containers, callable variance, class-string hierarchy,
+literal types, and int ranges. Union simplification handles
+deduplication, `true|false` → `bool`, `mixed` absorption, scalar
+refinement absorption, nested flattening, and single-member unwrapping.
 
-**Migration path:** incremental. Start by making the hottest paths
-(template substitution, type narrowing) operate on `PhpType` values
-instead of strings, converting at the boundary. Expand outward over
-time.
-
-**Reference:** PHPStan's `Type` interface (~120 methods), Psalm's
-`Union`/`Atomic` hierarchy, Mago's `TUnion`/`TAtomic` enum. All three
-converge on the same architecture.
-
-**Note:** the `mago-type-syntax` integration tracked in `refactor.md`
-is a stepping stone toward this. The remaining items there
-(`ArrayShapeEntry.value_type` to `PhpType`, `split_type_token`
-replacement) should be completed first.
+The remaining work is wiring `is_subtype_of` into a class-hierarchy
+aware wrapper (so that `Cat <: Animal` can be checked when a class
+loader is available) and using `simplified()` in the resolution
+pipeline to produce cleaner hover/completion output.
 
 ---
 

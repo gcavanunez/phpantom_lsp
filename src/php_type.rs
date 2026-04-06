@@ -1612,6 +1612,803 @@ impl PhpType {
             _ => false,
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Subtype checking (structural, without class hierarchy)
+    // -----------------------------------------------------------------------
+
+    /// Check whether `self` is a structural subtype of `supertype`.
+    ///
+    /// This performs subtype checks that can be decided from type
+    /// structure alone, **without** consulting a class hierarchy.
+    /// It handles:
+    ///
+    /// - Reflexivity: `T <: T`
+    /// - `never` is a subtype of everything
+    /// - Everything is a subtype of `mixed`
+    /// - `null <: ?T` and `T <: ?T`
+    /// - `?T` is sugar for `T|null`, normalised before comparison
+    /// - `true <: bool`, `false <: bool`
+    /// - `int <: float` (PHP's widening)
+    /// - Scalar refinement subtypes: `positive-int <: int`,
+    ///   `non-empty-string <: string`, `list <: array`, etc.
+    /// - `T[] <: array`
+    /// - `array{…} <: array`
+    /// - Union: `A|B <: C` iff `A <: C` and `B <: C`
+    /// - Union supertype: `A <: B|C` iff `A <: B` or `A <: C`
+    /// - Intersection: `A&B <: C` iff `A <: C` or `B <: C`
+    /// - Intersection supertype: `A <: B&C` iff `A <: B` and `A <: C`
+    /// - Generic covariance for read-only containers:
+    ///   `array<Tk, Tv> <: array<Tk2, Tv2>` when `Tk <: Tk2` and `Tv <: Tv2`
+    /// - `Callable` covariance on return, contravariance on params
+    /// - `class-string<T> <: class-string` and `class-string <: string`
+    ///
+    /// For nominal class relationships (`Cat <: Animal`) the caller must
+    /// check the class hierarchy separately. This method returns `false`
+    /// for unrelated named types.
+    pub fn is_subtype_of(&self, supertype: &PhpType) -> bool {
+        // Reflexivity.
+        if self == supertype {
+            return true;
+        }
+
+        // `never` / `no-return` is bottom — subtype of everything.
+        if self.is_never() {
+            return true;
+        }
+
+        // Everything is a subtype of `mixed`.
+        if supertype.is_mixed() {
+            return true;
+        }
+
+        // ── Nullable normalisation ──────────────────────────────────
+        // Treat `?T` as `T|null` for uniform handling.
+        if let PhpType::Nullable(inner) = self {
+            let as_union =
+                PhpType::Union(vec![inner.as_ref().clone(), PhpType::Named("null".into())]);
+            return as_union.is_subtype_of(supertype);
+        }
+        if let PhpType::Nullable(inner) = supertype {
+            let as_union =
+                PhpType::Union(vec![inner.as_ref().clone(), PhpType::Named("null".into())]);
+            return self.is_subtype_of(&as_union);
+        }
+
+        // ── Union subtype: every member must be a subtype ───────────
+        if let PhpType::Union(members) = self {
+            return members.iter().all(|m| m.is_subtype_of(supertype));
+        }
+
+        // ── Union supertype: at least one member must accept self ────
+        if let PhpType::Union(members) = supertype {
+            return members.iter().any(|m| self.is_subtype_of(m));
+        }
+
+        // ── Intersection subtype: at least one member suffices ──────
+        if let PhpType::Intersection(members) = self {
+            return members.iter().any(|m| m.is_subtype_of(supertype));
+        }
+
+        // ── Intersection supertype: all members required ────────────
+        if let PhpType::Intersection(members) = supertype {
+            return members.iter().all(|m| self.is_subtype_of(m));
+        }
+
+        // ── Named ↔ Named scalar subtyping ──────────────────────────
+        if let (PhpType::Named(sub), PhpType::Named(sup)) = (self, supertype) {
+            return is_named_subtype(sub, sup);
+        }
+
+        // ── Literal subtyping ───────────────────────────────────────
+        if let PhpType::Literal(lit) = self {
+            return literal_is_subtype_of(lit, supertype);
+        }
+
+        // ── IntRange <: int ─────────────────────────────────────────
+        if matches!(self, PhpType::IntRange(..))
+            && let PhpType::Named(sup) = supertype
+        {
+            return matches!(
+                sup.to_ascii_lowercase().as_str(),
+                "int" | "integer" | "numeric" | "scalar" | "array-key"
+            );
+        }
+
+        // ── Array slice: T[] <: array ───────────────────────────────
+        if let PhpType::Array(inner_sub) = self {
+            match supertype {
+                PhpType::Named(sup) => {
+                    return matches!(
+                        sup.to_ascii_lowercase().as_str(),
+                        "array" | "iterable" | "object"
+                    );
+                }
+                PhpType::Array(inner_sup) => {
+                    return inner_sub.is_subtype_of(inner_sup);
+                }
+                PhpType::Generic(name, params) if is_array_like_name(name) => {
+                    // T[] <: array<int, T2> when T <: T2
+                    if let Some(val) = params.last() {
+                        return inner_sub.is_subtype_of(val);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // ── ArrayShape <: array / iterable ──────────────────────────
+        if matches!(self, PhpType::ArrayShape(_)) {
+            if let PhpType::Named(sup) = supertype {
+                return matches!(sup.to_ascii_lowercase().as_str(), "array" | "iterable");
+            }
+            if matches!(
+                supertype,
+                PhpType::ArrayShape(_) | PhpType::Generic(..) | PhpType::Array(_)
+            ) {
+                // Structural shape-to-shape or shape-to-generic-array
+                // comparison is complex; fall through to false for now.
+            }
+        }
+
+        // ── ObjectShape <: object ───────────────────────────────────
+        if matches!(self, PhpType::ObjectShape(_))
+            && let PhpType::Named(sup) = supertype
+        {
+            return sup.eq_ignore_ascii_case("object");
+        }
+
+        // ── Generic covariance (array-like containers) ──────────────
+        if let (PhpType::Generic(name_sub, args_sub), PhpType::Generic(name_sup, args_sup)) =
+            (self, supertype)
+        {
+            let base_sub = name_sub.to_ascii_lowercase();
+            let base_sup = name_sup.to_ascii_lowercase();
+
+            // Same base or compatible bases (list <: array, etc.)
+            let bases_compatible = base_sub == base_sup
+                || (is_array_like_name(name_sub) && is_array_like_name(name_sup));
+
+            if bases_compatible && args_sub.len() == args_sup.len() {
+                return args_sub
+                    .iter()
+                    .zip(args_sup.iter())
+                    .all(|(s, t)| s.is_subtype_of(t));
+            }
+        }
+
+        // Generic array-like <: bare `array` / `iterable`
+        if let PhpType::Generic(name, _) = self
+            && is_array_like_name(name)
+            && let PhpType::Named(sup) = supertype
+        {
+            return matches!(sup.to_ascii_lowercase().as_str(), "array" | "iterable");
+        }
+
+        // ── class-string subtyping ──────────────────────────────────
+        match (self, supertype) {
+            (PhpType::ClassString(_), PhpType::Named(sup))
+                if matches!(sup.to_ascii_lowercase().as_str(), "string" | "class-string") =>
+            {
+                return true;
+            }
+            (PhpType::ClassString(Some(sub_inner)), PhpType::ClassString(Some(sup_inner))) => {
+                return sub_inner.is_subtype_of(sup_inner);
+            }
+            (PhpType::ClassString(Some(_)), PhpType::ClassString(None)) => {
+                return true;
+            }
+            _ => {}
+        }
+
+        // ── interface-string subtyping ──────────────────────────────
+        match (self, supertype) {
+            (PhpType::InterfaceString(_), PhpType::Named(sup))
+                if matches!(
+                    sup.to_ascii_lowercase().as_str(),
+                    "string" | "class-string" | "interface-string"
+                ) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+
+        // ── Callable subtyping ──────────────────────────────────────
+        if let (
+            PhpType::Callable {
+                params: params_sub,
+                return_type: ret_sub,
+                ..
+            },
+            PhpType::Callable {
+                params: params_sup,
+                return_type: ret_sup,
+                ..
+            },
+        ) = (self, supertype)
+        {
+            // Return type is covariant.
+            let ret_ok = match (ret_sub, ret_sup) {
+                (Some(rs), Some(rp)) => rs.is_subtype_of(rp),
+                (_, None) => true,        // supertype has no return constraint
+                (None, Some(_)) => false, // sub has no return but super requires one
+            };
+            // Parameters are contravariant (supertype params must be
+            // subtypes of subtype params).
+            let params_ok = if params_sub.len() >= params_sup.len() {
+                params_sup
+                    .iter()
+                    .zip(params_sub.iter())
+                    .all(|(p_sup, p_sub)| p_sup.type_hint.is_subtype_of(&p_sub.type_hint))
+            } else {
+                false
+            };
+            return ret_ok && params_ok;
+        }
+
+        // Callable <: callable (named)
+        if matches!(self, PhpType::Callable { .. })
+            && let PhpType::Named(sup) = supertype
+        {
+            return matches!(sup.to_ascii_lowercase().as_str(), "callable");
+        }
+
+        false
+    }
+
+    // -----------------------------------------------------------------------
+    // Union / intersection simplification
+    // -----------------------------------------------------------------------
+
+    /// Return a simplified copy of this type.
+    ///
+    /// Applies the following normalisations recursively:
+    ///
+    /// - Deduplicates union and intersection members.
+    /// - `true | false` → `bool` (in either order, including with
+    ///   extra members).
+    /// - Unions containing `mixed` collapse to `mixed`.
+    /// - Unions containing both `T` and `null` where `T` is a single
+    ///   type collapse to `?T`.
+    /// - Scalar refinement absorption: `positive-int | int` → `int`,
+    ///   `non-empty-string | string` → `string`, etc.
+    /// - Single-member unions/intersections are unwrapped.
+    /// - `?T` where `T` is `never` simplifies to `null`.
+    /// - Nested unions are flattened (`(A|B)|C` → `A|B|C`).
+    /// - Nested intersections are flattened (`(A&B)&C` → `A&B&C`).
+    pub fn simplified(&self) -> PhpType {
+        match self {
+            PhpType::Union(members) => {
+                // Recursively simplify members first.
+                let mut simplified: Vec<PhpType> = Vec::with_capacity(members.len());
+                for m in members {
+                    let s = m.simplified();
+                    // Flatten nested unions.
+                    if let PhpType::Union(inner) = s {
+                        simplified.extend(inner);
+                    } else {
+                        simplified.push(s);
+                    }
+                }
+
+                // If any member is `mixed`, the whole union is `mixed`.
+                if simplified.iter().any(|m| m.is_mixed()) {
+                    return PhpType::Named("mixed".into());
+                }
+
+                // Deduplicate (by Display form for simplicity).
+                dedup_types(&mut simplified);
+
+                // `true | false` → `bool`.
+                simplify_bool_union(&mut simplified);
+
+                // Scalar refinement absorption.
+                absorb_scalar_refinements(&mut simplified);
+
+                // Unwrap single-member union.
+                if simplified.len() == 1 {
+                    return simplified.into_iter().next().unwrap();
+                }
+                if simplified.is_empty() {
+                    return PhpType::Named("never".into());
+                }
+
+                PhpType::Union(simplified)
+            }
+            PhpType::Intersection(members) => {
+                let mut simplified: Vec<PhpType> = Vec::with_capacity(members.len());
+                for m in members {
+                    let s = m.simplified();
+                    // Flatten nested intersections.
+                    if let PhpType::Intersection(inner) = s {
+                        simplified.extend(inner);
+                    } else {
+                        simplified.push(s);
+                    }
+                }
+
+                dedup_types(&mut simplified);
+
+                // If any member is `never`, the intersection is `never`.
+                if simplified.iter().any(|m| m.is_never()) {
+                    return PhpType::Named("never".into());
+                }
+
+                if simplified.len() == 1 {
+                    return simplified.into_iter().next().unwrap();
+                }
+                if simplified.is_empty() {
+                    return PhpType::Named("mixed".into());
+                }
+
+                PhpType::Intersection(simplified)
+            }
+            PhpType::Nullable(inner) => {
+                let s = inner.simplified();
+                if s.is_never() || s.is_null() {
+                    PhpType::Named("null".into())
+                } else if s.is_mixed() {
+                    PhpType::Named("mixed".into())
+                } else {
+                    PhpType::Nullable(Box::new(s))
+                }
+            }
+            PhpType::Generic(name, args) => {
+                let simplified_args: Vec<PhpType> = args.iter().map(|a| a.simplified()).collect();
+                PhpType::Generic(name.clone(), simplified_args)
+            }
+            PhpType::Array(inner) => PhpType::Array(Box::new(inner.simplified())),
+            PhpType::ClassString(inner) => {
+                PhpType::ClassString(inner.as_ref().map(|i| Box::new(i.simplified())))
+            }
+            PhpType::InterfaceString(inner) => {
+                PhpType::InterfaceString(inner.as_ref().map(|i| Box::new(i.simplified())))
+            }
+            PhpType::KeyOf(inner) => PhpType::KeyOf(Box::new(inner.simplified())),
+            PhpType::ValueOf(inner) => PhpType::ValueOf(Box::new(inner.simplified())),
+            // Leaf types are already simplified.
+            _ => self.clone(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Intersection distribution over unions
+    // -----------------------------------------------------------------------
+
+    /// Distribute intersections over unions.
+    ///
+    /// Transforms `(A|B) & C` into `(A&C) | (B&C)`, producing a
+    /// union of intersections (disjunctive normal form for types).
+    ///
+    /// This is useful for type narrowing: when an intersection type
+    /// contains union members, distributing lets each branch be
+    /// checked independently.
+    ///
+    /// If the type is not an intersection containing unions, returns
+    /// a clone unchanged. The result is also simplified.
+    pub fn distribute_intersection(&self) -> PhpType {
+        match self {
+            PhpType::Intersection(members) => {
+                // Check if any member is a union.
+                let has_union = members.iter().any(|m| matches!(m, PhpType::Union(_)));
+                if !has_union {
+                    return self.clone();
+                }
+
+                // Collect each member as a list of alternatives.
+                // Non-union members are singleton lists.
+                let alternatives: Vec<Vec<PhpType>> = members
+                    .iter()
+                    .map(|m| match m {
+                        PhpType::Union(u) => u.clone(),
+                        other => vec![other.clone()],
+                    })
+                    .collect();
+
+                // Compute the cartesian product to produce union members.
+                let mut product: Vec<Vec<PhpType>> = vec![vec![]];
+                for alt_set in &alternatives {
+                    let mut new_product = Vec::with_capacity(product.len() * alt_set.len());
+                    for existing in &product {
+                        for alt in alt_set {
+                            let mut combo = existing.clone();
+                            combo.push(alt.clone());
+                            new_product.push(combo);
+                        }
+                    }
+                    product = new_product;
+                }
+
+                // Each product element becomes an intersection.
+                let union_members: Vec<PhpType> = product
+                    .into_iter()
+                    .map(|combo| {
+                        if combo.len() == 1 {
+                            combo.into_iter().next().unwrap()
+                        } else {
+                            PhpType::Intersection(combo)
+                        }
+                    })
+                    .collect();
+
+                if union_members.len() == 1 {
+                    union_members.into_iter().next().unwrap().simplified()
+                } else {
+                    PhpType::Union(union_members).simplified()
+                }
+            }
+            _ => self.clone(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers for subtype / simplification
+    // -----------------------------------------------------------------------
+
+    /// Whether this type is `never` (bottom type).
+    fn is_never(&self) -> bool {
+        matches!(self, PhpType::Named(s)
+            if matches!(s.to_ascii_lowercase().as_str(),
+                "never" | "no-return" | "noreturn" | "never-return" | "never-returns"
+            )
+        )
+    }
+
+    /// Whether this type is `mixed` (top type).
+    fn is_mixed(&self) -> bool {
+        matches!(self, PhpType::Named(s) if s.eq_ignore_ascii_case("mixed"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Subtype helpers (private)
+// ---------------------------------------------------------------------------
+
+/// Check structural subtyping between two named types (scalars, keywords).
+///
+/// This handles PHP's built-in type lattice without class hierarchy lookup:
+/// - `never <: T` for all `T`
+/// - `T <: mixed` for all `T`
+/// - `true <: bool`, `false <: bool`
+/// - `int <: float` (widening)
+/// - `int <: numeric`, `float <: numeric`
+/// - `int <: scalar`, `float <: scalar`, `string <: scalar`, `bool <: scalar`
+/// - `int <: array-key`, `string <: array-key`
+/// - Refinement subtypes: `positive-int <: int`, `non-empty-string <: string`, etc.
+/// - `list <: array`, `non-empty-list <: array`, `non-empty-array <: array`
+/// - `callable <: object` is NOT true (callables can be strings/arrays)
+fn is_named_subtype(sub: &str, sup: &str) -> bool {
+    let sub_l = sub.to_ascii_lowercase();
+    let sup_l = sup.to_ascii_lowercase();
+
+    if sub_l == sup_l {
+        return true;
+    }
+
+    // Alias normalisation.
+    let sub_n = normalize_alias(&sub_l);
+    let sup_n = normalize_alias(&sup_l);
+
+    if sub_n == sup_n {
+        return true;
+    }
+
+    // `never` is bottom.
+    if matches!(
+        sub_n,
+        "never" | "no-return" | "noreturn" | "never-return" | "never-returns"
+    ) {
+        return true;
+    }
+
+    // `mixed` is top.
+    if sup_n == "mixed" {
+        return true;
+    }
+
+    // `void` is only a subtype of `mixed` (handled above) and itself.
+    if sub_n == "void" || sup_n == "void" {
+        return false;
+    }
+
+    match sup_n {
+        // ── bool supertypes ─────────────────────────────────────
+        "bool" | "boolean" => matches!(sub_n, "true" | "false"),
+
+        // ── int supertypes ──────────────────────────────────────
+        "int" | "integer" => matches!(
+            sub_n,
+            "positive-int"
+                | "negative-int"
+                | "non-positive-int"
+                | "non-negative-int"
+                | "non-zero-int"
+        ),
+
+        // ── float supertypes ────────────────────────────────────
+        "float" | "double" => matches!(
+            sub_n,
+            "int"
+                | "integer"
+                | "positive-int"
+                | "negative-int"
+                | "non-positive-int"
+                | "non-negative-int"
+                | "non-zero-int"
+        ),
+
+        // ── string supertypes ───────────────────────────────────
+        "string" => matches!(
+            sub_n,
+            "non-empty-string"
+                | "numeric-string"
+                | "class-string"
+                | "interface-string"
+                | "literal-string"
+                | "callable-string"
+                | "truthy-string"
+                | "non-falsy-string"
+                | "trait-string"
+                | "enum-string"
+                | "lowercase-string"
+                | "uppercase-string"
+                | "non-empty-lowercase-string"
+                | "non-empty-uppercase-string"
+                | "non-empty-literal-string"
+        ),
+
+        "non-empty-string" | "truthy-string" | "non-falsy-string" => matches!(
+            sub_n,
+            "non-empty-literal-string"
+                | "non-empty-lowercase-string"
+                | "non-empty-uppercase-string"
+                | "callable-string"
+                | "class-string"
+                | "interface-string"
+                | "trait-string"
+                | "enum-string"
+        ),
+
+        "literal-string" => matches!(sub_n, "non-empty-literal-string"),
+
+        "lowercase-string" => matches!(sub_n, "non-empty-lowercase-string"),
+
+        "uppercase-string" => matches!(sub_n, "non-empty-uppercase-string"),
+
+        // ── numeric supertypes ──────────────────────────────────
+        "numeric" | "number" => matches!(
+            sub_n,
+            "int"
+                | "integer"
+                | "float"
+                | "double"
+                | "positive-int"
+                | "negative-int"
+                | "non-positive-int"
+                | "non-negative-int"
+                | "non-zero-int"
+                | "numeric-string"
+        ),
+
+        // ── scalar supertype ────────────────────────────────────
+        "scalar" => matches!(
+            sub_n,
+            "int"
+                | "integer"
+                | "float"
+                | "double"
+                | "string"
+                | "bool"
+                | "boolean"
+                | "true"
+                | "false"
+                | "positive-int"
+                | "negative-int"
+                | "non-positive-int"
+                | "non-negative-int"
+                | "non-zero-int"
+                | "non-empty-string"
+                | "numeric-string"
+                | "class-string"
+                | "interface-string"
+                | "literal-string"
+                | "callable-string"
+                | "truthy-string"
+                | "non-falsy-string"
+                | "trait-string"
+                | "enum-string"
+                | "lowercase-string"
+                | "uppercase-string"
+                | "non-empty-lowercase-string"
+                | "non-empty-uppercase-string"
+                | "non-empty-literal-string"
+                | "numeric"
+                | "number"
+        ),
+
+        // ── array-key supertype ─────────────────────────────────
+        "array-key" => matches!(
+            sub_n,
+            "int"
+                | "integer"
+                | "string"
+                | "positive-int"
+                | "negative-int"
+                | "non-positive-int"
+                | "non-negative-int"
+                | "non-zero-int"
+                | "non-empty-string"
+                | "numeric-string"
+                | "literal-string"
+                | "class-string"
+                | "interface-string"
+                | "callable-string"
+                | "truthy-string"
+                | "non-falsy-string"
+                | "trait-string"
+                | "enum-string"
+                | "lowercase-string"
+                | "uppercase-string"
+                | "non-empty-lowercase-string"
+                | "non-empty-uppercase-string"
+                | "non-empty-literal-string"
+        ),
+
+        // ── array supertypes ────────────────────────────────────
+        "array" => matches!(
+            sub_n,
+            "list" | "non-empty-list" | "non-empty-array" | "associative-array"
+        ),
+
+        "non-empty-array" => matches!(sub_n, "non-empty-list"),
+
+        // ── iterable supertype ──────────────────────────────────
+        "iterable" => matches!(
+            sub_n,
+            "array" | "list" | "non-empty-array" | "non-empty-list" | "associative-array"
+        ),
+
+        // ── object supertype ────────────────────────────────────
+        // Any named non-scalar is potentially an object subtype,
+        // but we can't confirm without class hierarchy. Only
+        // handle `callable-object`.
+        "object" => matches!(sub_n, "callable-object"),
+
+        // ── callable supertype ──────────────────────────────────
+        "callable" => matches!(
+            sub_n,
+            "callable-string" | "callable-array" | "callable-object" | "closure"
+        ),
+
+        // ── resource ────────────────────────────────────────────
+        "resource" => matches!(sub_n, "closed-resource" | "open-resource"),
+
+        _ => false,
+    }
+}
+
+/// Normalise common PHP type aliases to a canonical form.
+fn normalize_alias(name: &str) -> &str {
+    match name {
+        "integer" => "int",
+        "double" => "float",
+        "boolean" => "bool",
+        "no-return" | "noreturn" | "never-return" | "never-returns" => "never",
+        "non-empty-mixed" => "mixed",
+        other => other,
+    }
+}
+
+/// Check whether a literal type is a subtype of a given supertype.
+fn literal_is_subtype_of(lit: &str, supertype: &PhpType) -> bool {
+    match supertype {
+        PhpType::Literal(other_lit) => lit == other_lit,
+        PhpType::Named(sup) => {
+            let sup_l = sup.to_ascii_lowercase();
+            // Integer literal → int (and its supertypes).
+            if lit.parse::<i64>().is_ok() {
+                return matches!(
+                    sup_l.as_str(),
+                    "int"
+                        | "integer"
+                        | "float"
+                        | "double"
+                        | "numeric"
+                        | "number"
+                        | "scalar"
+                        | "array-key"
+                );
+            }
+            // Float literal → float (and its supertypes).
+            if lit.parse::<f64>().is_ok() {
+                return matches!(
+                    sup_l.as_str(),
+                    "float" | "double" | "numeric" | "number" | "scalar"
+                );
+            }
+            // String literal → string (and its supertypes).
+            if lit.starts_with('\'') || lit.starts_with('"') {
+                return matches!(
+                    sup_l.as_str(),
+                    "string"
+                        | "literal-string"
+                        | "non-empty-string"
+                        | "non-empty-literal-string"
+                        | "scalar"
+                        | "array-key"
+                );
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Simplification helpers (private)
+// ---------------------------------------------------------------------------
+
+/// Deduplicate types in a vector by their `Display` form.
+fn dedup_types(types: &mut Vec<PhpType>) {
+    let mut seen = std::collections::HashSet::new();
+    types.retain(|t| {
+        let key = t.to_string().to_ascii_lowercase();
+        seen.insert(key)
+    });
+}
+
+/// If a union contains both `true` and `false`, replace them with `bool`.
+fn simplify_bool_union(types: &mut Vec<PhpType>) {
+    let has_true = types
+        .iter()
+        .any(|t| matches!(t, PhpType::Named(s) if s.eq_ignore_ascii_case("true")));
+    let has_false = types
+        .iter()
+        .any(|t| matches!(t, PhpType::Named(s) if s.eq_ignore_ascii_case("false")));
+
+    if has_true && has_false {
+        types.retain(|t| {
+            !matches!(t, PhpType::Named(s)
+                if matches!(s.to_ascii_lowercase().as_str(), "true" | "false"))
+        });
+        types.push(PhpType::Named("bool".into()));
+    }
+}
+
+/// Absorb scalar refinements into their parent types.
+///
+/// When a union contains both a refinement and its parent (e.g.
+/// `positive-int | int`), the refinement is redundant and removed.
+fn absorb_scalar_refinements(types: &mut Vec<PhpType>) {
+    // Collect the named types present.
+    let named_set: std::collections::HashSet<String> = types
+        .iter()
+        .filter_map(|t| {
+            if let PhpType::Named(s) = t {
+                Some(s.to_ascii_lowercase())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if named_set.is_empty() {
+        return;
+    }
+
+    types.retain(|t| {
+        if let PhpType::Named(s) = t {
+            let lower = s.to_ascii_lowercase();
+            // Check if any OTHER type in the set is a proper supertype.
+            for sup in &named_set {
+                if sup != &lower && is_named_subtype(&lower, sup) {
+                    return false; // Remove: absorbed by the supertype.
+                }
+            }
+        }
+        true
+    });
 }
 
 /// Replace PHPStan `*` wildcards in generic type argument positions with
@@ -4182,5 +4979,597 @@ mod tests {
         let ty = PhpType::parse("?Generator<int, string, MyClass, void>");
         let send = ty.generator_send_type(false).unwrap();
         assert_eq!(*send, PhpType::Named("MyClass".to_owned()));
+    }
+
+    // ── Subtype checking tests ──────────────────────────────────────────
+
+    mod subtype_tests {
+        use super::*;
+
+        // ── Reflexivity ─────────────────────────────────────────────────
+
+        #[test]
+        fn subtype_reflexive_named() {
+            let t = PhpType::Named("int".into());
+            assert!(t.is_subtype_of(&t));
+        }
+
+        #[test]
+        fn subtype_reflexive_generic() {
+            let t = PhpType::parse("array<int, string>");
+            assert!(t.is_subtype_of(&t));
+        }
+
+        // ── Never and mixed ─────────────────────────────────────────────
+
+        #[test]
+        fn never_is_subtype_of_everything() {
+            let never = PhpType::Named("never".into());
+            assert!(never.is_subtype_of(&PhpType::Named("int".into())));
+            assert!(never.is_subtype_of(&PhpType::Named("string".into())));
+            assert!(never.is_subtype_of(&PhpType::Named("mixed".into())));
+            assert!(never.is_subtype_of(&PhpType::parse("array<int>")));
+        }
+
+        #[test]
+        fn everything_is_subtype_of_mixed() {
+            let mixed = PhpType::Named("mixed".into());
+            assert!(PhpType::Named("int".into()).is_subtype_of(&mixed));
+            assert!(PhpType::Named("string".into()).is_subtype_of(&mixed));
+            assert!(PhpType::parse("Foo").is_subtype_of(&mixed));
+            assert!(PhpType::parse("array<int>").is_subtype_of(&mixed));
+        }
+
+        // ── Bool subtypes ───────────────────────────────────────────────
+
+        #[test]
+        fn true_is_subtype_of_bool() {
+            assert!(PhpType::Named("true".into()).is_subtype_of(&PhpType::Named("bool".into())));
+        }
+
+        #[test]
+        fn false_is_subtype_of_bool() {
+            assert!(PhpType::Named("false".into()).is_subtype_of(&PhpType::Named("bool".into())));
+        }
+
+        #[test]
+        fn bool_is_not_subtype_of_true() {
+            assert!(!PhpType::Named("bool".into()).is_subtype_of(&PhpType::Named("true".into())));
+        }
+
+        // ── Int <: float ────────────────────────────────────────────────
+
+        #[test]
+        fn int_is_subtype_of_float() {
+            assert!(PhpType::Named("int".into()).is_subtype_of(&PhpType::Named("float".into())));
+        }
+
+        #[test]
+        fn float_is_not_subtype_of_int() {
+            assert!(!PhpType::Named("float".into()).is_subtype_of(&PhpType::Named("int".into())));
+        }
+
+        // ── Scalar refinements ──────────────────────────────────────────
+
+        #[test]
+        fn positive_int_is_subtype_of_int() {
+            assert!(
+                PhpType::Named("positive-int".into()).is_subtype_of(&PhpType::Named("int".into()))
+            );
+        }
+
+        #[test]
+        fn non_empty_string_is_subtype_of_string() {
+            assert!(
+                PhpType::Named("non-empty-string".into())
+                    .is_subtype_of(&PhpType::Named("string".into()))
+            );
+        }
+
+        #[test]
+        fn class_string_is_subtype_of_string() {
+            assert!(
+                PhpType::Named("class-string".into())
+                    .is_subtype_of(&PhpType::Named("string".into()))
+            );
+        }
+
+        #[test]
+        fn list_is_subtype_of_array() {
+            assert!(PhpType::Named("list".into()).is_subtype_of(&PhpType::Named("array".into())));
+        }
+
+        #[test]
+        fn non_empty_list_is_subtype_of_non_empty_array() {
+            assert!(
+                PhpType::Named("non-empty-list".into())
+                    .is_subtype_of(&PhpType::Named("non-empty-array".into()))
+            );
+        }
+
+        #[test]
+        fn array_is_subtype_of_iterable() {
+            assert!(
+                PhpType::Named("array".into()).is_subtype_of(&PhpType::Named("iterable".into()))
+            );
+        }
+
+        #[test]
+        fn closure_is_subtype_of_callable() {
+            assert!(
+                PhpType::Named("Closure".into()).is_subtype_of(&PhpType::Named("callable".into()))
+            );
+        }
+
+        // ── Scalar / numeric / array-key supertypes ─────────────────────
+
+        #[test]
+        fn int_is_subtype_of_scalar() {
+            assert!(PhpType::Named("int".into()).is_subtype_of(&PhpType::Named("scalar".into())));
+        }
+
+        #[test]
+        fn string_is_subtype_of_array_key() {
+            assert!(
+                PhpType::Named("string".into()).is_subtype_of(&PhpType::Named("array-key".into()))
+            );
+        }
+
+        #[test]
+        fn int_is_subtype_of_numeric() {
+            assert!(PhpType::Named("int".into()).is_subtype_of(&PhpType::Named("numeric".into())));
+        }
+
+        // ── Nullable / union subtyping ──────────────────────────────────
+
+        #[test]
+        fn null_is_subtype_of_nullable() {
+            assert!(PhpType::Named("null".into()).is_subtype_of(&PhpType::parse("?string")));
+        }
+
+        #[test]
+        fn string_is_subtype_of_nullable_string() {
+            assert!(PhpType::Named("string".into()).is_subtype_of(&PhpType::parse("?string")));
+        }
+
+        #[test]
+        fn nullable_is_not_subtype_of_non_nullable() {
+            assert!(!PhpType::parse("?string").is_subtype_of(&PhpType::Named("string".into())));
+        }
+
+        #[test]
+        fn union_member_is_subtype_of_union() {
+            assert!(PhpType::Named("int".into()).is_subtype_of(&PhpType::parse("int|string")));
+        }
+
+        #[test]
+        fn union_is_subtype_when_all_members_are() {
+            assert!(PhpType::parse("int|float").is_subtype_of(&PhpType::Named("float".into())));
+        }
+
+        #[test]
+        fn union_is_not_subtype_when_member_is_not() {
+            assert!(!PhpType::parse("int|string").is_subtype_of(&PhpType::Named("int".into())));
+        }
+
+        // ── Intersection subtyping ──────────────────────────────────────
+
+        #[test]
+        fn intersection_is_subtype_when_any_member_is() {
+            // Foo & Bar <: Foo
+            let inter = PhpType::Intersection(vec![
+                PhpType::Named("Foo".into()),
+                PhpType::Named("Bar".into()),
+            ]);
+            assert!(inter.is_subtype_of(&PhpType::Named("Foo".into())));
+        }
+
+        #[test]
+        fn subtype_of_intersection_requires_all() {
+            // Foo <: Foo & Bar — false (Foo is not necessarily a Bar)
+            let inter = PhpType::Intersection(vec![
+                PhpType::Named("Foo".into()),
+                PhpType::Named("Bar".into()),
+            ]);
+            assert!(!PhpType::Named("Foo".into()).is_subtype_of(&inter));
+        }
+
+        // ── Array / generic subtyping ───────────────────────────────────
+
+        #[test]
+        fn array_slice_is_subtype_of_array() {
+            assert!(PhpType::parse("string[]").is_subtype_of(&PhpType::Named("array".into())));
+        }
+
+        #[test]
+        fn array_shape_is_subtype_of_array() {
+            assert!(
+                PhpType::parse("array{name: string}")
+                    .is_subtype_of(&PhpType::Named("array".into()))
+            );
+        }
+
+        #[test]
+        fn generic_array_is_subtype_of_array() {
+            assert!(
+                PhpType::parse("array<int, string>").is_subtype_of(&PhpType::Named("array".into()))
+            );
+        }
+
+        #[test]
+        fn generic_array_covariance() {
+            assert!(
+                PhpType::parse("array<int, string>")
+                    .is_subtype_of(&PhpType::parse("array<int, string>"))
+            );
+        }
+
+        #[test]
+        fn generic_list_is_subtype_of_generic_array() {
+            assert!(PhpType::parse("list<string>").is_subtype_of(&PhpType::parse("array<string>")));
+        }
+
+        #[test]
+        fn array_slice_covariance() {
+            // int[] <: int[] — reflexive
+            assert!(PhpType::parse("int[]").is_subtype_of(&PhpType::parse("int[]")));
+        }
+
+        // ── class-string subtyping ──────────────────────────────────────
+
+        #[test]
+        fn class_string_generic_is_subtype_of_bare_class_string() {
+            assert!(
+                PhpType::parse("class-string<User>").is_subtype_of(&PhpType::parse("class-string"))
+            );
+        }
+
+        #[test]
+        fn class_string_generic_is_subtype_of_string() {
+            assert!(
+                PhpType::parse("class-string<User>")
+                    .is_subtype_of(&PhpType::Named("string".into()))
+            );
+        }
+
+        // ── Callable subtyping ──────────────────────────────────────────
+
+        #[test]
+        fn callable_is_subtype_of_named_callable() {
+            assert!(
+                PhpType::parse("callable(int): string")
+                    .is_subtype_of(&PhpType::Named("callable".into()))
+            );
+        }
+
+        #[test]
+        fn callable_covariant_return() {
+            // callable(): int <: callable(): float (int <: float)
+            assert!(
+                PhpType::parse("callable(): int")
+                    .is_subtype_of(&PhpType::parse("callable(): float"))
+            );
+        }
+
+        // ── Literal subtyping ───────────────────────────────────────────
+
+        #[test]
+        fn literal_int_is_subtype_of_int() {
+            assert!(PhpType::Literal("42".into()).is_subtype_of(&PhpType::Named("int".into())));
+        }
+
+        #[test]
+        fn literal_string_is_subtype_of_string() {
+            assert!(
+                PhpType::Literal("'hello'".into()).is_subtype_of(&PhpType::Named("string".into()))
+            );
+        }
+
+        #[test]
+        fn literal_int_is_subtype_of_float() {
+            assert!(PhpType::Literal("42".into()).is_subtype_of(&PhpType::Named("float".into())));
+        }
+
+        // ── IntRange subtyping ──────────────────────────────────────────
+
+        #[test]
+        fn int_range_is_subtype_of_int() {
+            assert!(
+                PhpType::IntRange("0".into(), "100".into())
+                    .is_subtype_of(&PhpType::Named("int".into()))
+            );
+        }
+
+        // ── Unrelated types ─────────────────────────────────────────────
+
+        #[test]
+        fn string_is_not_subtype_of_int() {
+            assert!(!PhpType::Named("string".into()).is_subtype_of(&PhpType::Named("int".into())));
+        }
+
+        #[test]
+        fn unrelated_classes_are_not_subtypes() {
+            assert!(!PhpType::Named("Cat".into()).is_subtype_of(&PhpType::Named("Dog".into())));
+        }
+
+        // ── Aliases ─────────────────────────────────────────────────────
+
+        #[test]
+        fn integer_alias_subtype_of_int() {
+            assert!(PhpType::Named("integer".into()).is_subtype_of(&PhpType::Named("int".into())));
+        }
+
+        #[test]
+        fn boolean_alias_subtype_of_bool() {
+            assert!(PhpType::Named("boolean".into()).is_subtype_of(&PhpType::Named("bool".into())));
+        }
+
+        // ── object shape <: object ──────────────────────────────────────
+
+        #[test]
+        fn object_shape_is_subtype_of_object() {
+            assert!(
+                PhpType::parse("object{name: string}")
+                    .is_subtype_of(&PhpType::Named("object".into()))
+            );
+        }
+    }
+
+    // ── Simplification tests ────────────────────────────────────────────
+
+    mod simplification_tests {
+        use super::*;
+
+        #[test]
+        fn dedup_union() {
+            let t = PhpType::Union(vec![
+                PhpType::Named("string".into()),
+                PhpType::Named("string".into()),
+            ]);
+            assert_eq!(t.simplified().to_string(), "string");
+        }
+
+        #[test]
+        fn true_false_becomes_bool() {
+            let t = PhpType::Union(vec![
+                PhpType::Named("true".into()),
+                PhpType::Named("false".into()),
+            ]);
+            assert_eq!(t.simplified().to_string(), "bool");
+        }
+
+        #[test]
+        fn true_false_with_extra_member() {
+            let t = PhpType::Union(vec![
+                PhpType::Named("true".into()),
+                PhpType::Named("false".into()),
+                PhpType::Named("null".into()),
+            ]);
+            let s = t.simplified();
+            let display = s.to_string();
+            assert!(display.contains("bool"), "should contain bool: {display}");
+            assert!(display.contains("null"), "should contain null: {display}");
+            assert!(
+                !display.contains("true"),
+                "should not contain true: {display}"
+            );
+            assert!(
+                !display.contains("false"),
+                "should not contain false: {display}"
+            );
+        }
+
+        #[test]
+        fn mixed_absorbs_union() {
+            let t = PhpType::Union(vec![
+                PhpType::Named("mixed".into()),
+                PhpType::Named("string".into()),
+                PhpType::Named("int".into()),
+            ]);
+            assert_eq!(t.simplified().to_string(), "mixed");
+        }
+
+        #[test]
+        fn scalar_refinement_absorbed() {
+            let t = PhpType::Union(vec![
+                PhpType::Named("positive-int".into()),
+                PhpType::Named("int".into()),
+            ]);
+            assert_eq!(t.simplified().to_string(), "int");
+        }
+
+        #[test]
+        fn non_empty_string_absorbed_by_string() {
+            let t = PhpType::Union(vec![
+                PhpType::Named("non-empty-string".into()),
+                PhpType::Named("string".into()),
+            ]);
+            assert_eq!(t.simplified().to_string(), "string");
+        }
+
+        #[test]
+        fn list_absorbed_by_array() {
+            let t = PhpType::Union(vec![
+                PhpType::Named("list".into()),
+                PhpType::Named("array".into()),
+            ]);
+            assert_eq!(t.simplified().to_string(), "array");
+        }
+
+        #[test]
+        fn single_member_union_unwrapped() {
+            let t = PhpType::Union(vec![PhpType::Named("int".into())]);
+            assert_eq!(t.simplified(), PhpType::Named("int".into()));
+        }
+
+        #[test]
+        fn single_member_intersection_unwrapped() {
+            let t = PhpType::Intersection(vec![PhpType::Named("Foo".into())]);
+            assert_eq!(t.simplified(), PhpType::Named("Foo".into()));
+        }
+
+        #[test]
+        fn nullable_never_becomes_null() {
+            let t = PhpType::Nullable(Box::new(PhpType::Named("never".into())));
+            assert_eq!(t.simplified(), PhpType::Named("null".into()));
+        }
+
+        #[test]
+        fn nullable_null_becomes_null() {
+            let t = PhpType::Nullable(Box::new(PhpType::Named("null".into())));
+            assert_eq!(t.simplified(), PhpType::Named("null".into()));
+        }
+
+        #[test]
+        fn nullable_mixed_becomes_mixed() {
+            let t = PhpType::Nullable(Box::new(PhpType::Named("mixed".into())));
+            assert_eq!(t.simplified(), PhpType::Named("mixed".into()));
+        }
+
+        #[test]
+        fn nested_union_flattened() {
+            let t = PhpType::Union(vec![
+                PhpType::Union(vec![
+                    PhpType::Named("Foo".into()),
+                    PhpType::Named("Bar".into()),
+                ]),
+                PhpType::Named("Baz".into()),
+            ]);
+            let s = t.simplified();
+            if let PhpType::Union(members) = &s {
+                assert_eq!(members.len(), 3);
+            } else {
+                panic!("Expected Union, got {s:?}");
+            }
+        }
+
+        #[test]
+        fn nested_intersection_flattened() {
+            let t = PhpType::Intersection(vec![
+                PhpType::Intersection(vec![
+                    PhpType::Named("Foo".into()),
+                    PhpType::Named("Bar".into()),
+                ]),
+                PhpType::Named("Baz".into()),
+            ]);
+            let s = t.simplified();
+            if let PhpType::Intersection(members) = &s {
+                assert_eq!(members.len(), 3);
+            } else {
+                panic!("Expected Intersection, got {s:?}");
+            }
+        }
+
+        #[test]
+        fn intersection_with_never_collapses() {
+            let t = PhpType::Intersection(vec![
+                PhpType::Named("Foo".into()),
+                PhpType::Named("never".into()),
+            ]);
+            assert_eq!(t.simplified(), PhpType::Named("never".into()));
+        }
+
+        #[test]
+        fn generic_args_simplified() {
+            let t = PhpType::Generic(
+                "array".into(),
+                vec![PhpType::Union(vec![
+                    PhpType::Named("true".into()),
+                    PhpType::Named("false".into()),
+                ])],
+            );
+            let s = t.simplified();
+            assert_eq!(s.to_string(), "array<bool>");
+        }
+
+        #[test]
+        fn dedup_case_insensitive() {
+            let t = PhpType::Union(vec![
+                PhpType::Named("String".into()),
+                PhpType::Named("string".into()),
+            ]);
+            // Should deduplicate — only one remains.
+            let s = t.simplified();
+            assert!(
+                !matches!(s, PhpType::Union(_)),
+                "should be unwrapped: {s:?}"
+            );
+        }
+
+        #[test]
+        fn closure_subtype_of_callable() {
+            // Ensure Closure <: callable works in subtype check (case-insensitive).
+            assert!(
+                PhpType::Named("closure".into()).is_subtype_of(&PhpType::Named("callable".into()))
+            );
+        }
+    }
+
+    // ── Intersection distribution tests ─────────────────────────────────
+
+    mod distribute_tests {
+        use super::*;
+
+        #[test]
+        fn distribute_simple() {
+            // (A|B) & C → (A&C) | (B&C)
+            let t = PhpType::Intersection(vec![
+                PhpType::Union(vec![PhpType::Named("A".into()), PhpType::Named("B".into())]),
+                PhpType::Named("C".into()),
+            ]);
+            let d = t.distribute_intersection();
+            if let PhpType::Union(members) = &d {
+                assert_eq!(members.len(), 2);
+            } else {
+                panic!("Expected Union, got {d:?}");
+            }
+        }
+
+        #[test]
+        fn distribute_no_union_unchanged() {
+            let t = PhpType::Intersection(vec![
+                PhpType::Named("Foo".into()),
+                PhpType::Named("Bar".into()),
+            ]);
+            let d = t.distribute_intersection();
+            assert_eq!(d, t);
+        }
+
+        #[test]
+        fn distribute_non_intersection_unchanged() {
+            let t = PhpType::Named("Foo".into());
+            let d = t.distribute_intersection();
+            assert_eq!(d, t);
+        }
+
+        #[test]
+        fn distribute_two_unions() {
+            // (A|B) & (C|D) → (A&C) | (A&D) | (B&C) | (B&D)
+            let t = PhpType::Intersection(vec![
+                PhpType::Union(vec![PhpType::Named("A".into()), PhpType::Named("B".into())]),
+                PhpType::Union(vec![PhpType::Named("C".into()), PhpType::Named("D".into())]),
+            ]);
+            let d = t.distribute_intersection();
+            if let PhpType::Union(members) = &d {
+                assert_eq!(members.len(), 4, "Expected 4 members, got {d}");
+            } else {
+                panic!("Expected Union, got {d:?}");
+            }
+        }
+
+        #[test]
+        fn distribute_with_simplification() {
+            // (A|A) & B → after distribution and simplification → A & B
+            let t = PhpType::Intersection(vec![
+                PhpType::Union(vec![PhpType::Named("A".into()), PhpType::Named("A".into())]),
+                PhpType::Named("B".into()),
+            ]);
+            let d = t.distribute_intersection();
+            // The union (A|A) deduplicates to A, so the result should be A&B.
+            assert!(
+                matches!(d, PhpType::Intersection(_)),
+                "Expected Intersection, got {d:?}"
+            );
+        }
     }
 }

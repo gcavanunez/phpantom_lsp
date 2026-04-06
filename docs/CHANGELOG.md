@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Standalone `@var` docblock for untyped closure parameters.** When a closure parameter lacks a type hint and no assignment follows, a `@var` block above the usage is now picked up as the variable's type.
 - **`--stdio` CLI flag.** Accepted (and ignored) for compatibility with LSP client wrappers that pass `--stdio` by default.
 - **Method-level template parameters resolve inside method bodies.** `@template T of Builder` with `@param T $query` now resolves `$query` to the template bound inside the method body, providing completions from the bound class.
+- **Structural subtype checking.** `PhpType::is_subtype_of` answers whether one type is a structural subtype of another without consulting a class hierarchy. Covers the full PHP scalar lattice (including refinements like `positive-int`, `non-empty-string`, `class-string`), `never` as bottom, `mixed` as top, nullable/union/intersection decomposition, generic covariance for array-like containers, callable variance, literal types, and int ranges.
+- **Union simplification.** `PhpType::simplified` deduplicates union members, merges `true|false` into `bool`, absorbs scalar refinements into their parent types (`positive-int|int` becomes `int`), collapses unions containing `mixed`, flattens nested unions and intersections, and unwraps single-member composites.
+- **Intersection distribution over unions.** `PhpType::distribute_intersection` transforms `(A|B) & C` into `(A&C) | (B&C)`, producing disjunctive normal form for type narrowing.
 
 ### Changed
 
