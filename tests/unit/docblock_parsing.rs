@@ -209,7 +209,7 @@ fn property_tag_multiple() {
     );
     let props = extract_property_tags(doc);
     assert_eq!(props.len(), 2);
-    // `null|int` is now preserved (clean_type used to strip `|null`).
+    // `null|int` is preserved in the type hint.
     assert_eq!(
         props[0],
         (
@@ -860,73 +860,6 @@ fn effective_type_neither() {
         resolve_effective_type(None, None).map(|t| t.to_string()),
         None::<String>
     );
-}
-
-// ── clean_type ──────────────────────────────────────────────────────
-
-#[test]
-fn clean_leading_backslash() {
-    // Leading `\` is preserved — it marks a fully-qualified name so that
-    // `resolve_type_string` does not incorrectly prepend the file namespace.
-    assert_eq!(clean_type("\\Foo\\Bar"), "\\Foo\\Bar");
-}
-
-#[test]
-fn clean_generic_preserved() {
-    // clean_type now preserves generic parameters for downstream resolution.
-    assert_eq!(
-        clean_type("Collection<int, Model>"),
-        "Collection<int, Model>"
-    );
-}
-
-#[test]
-fn clean_type_nested_generic() {
-    assert_eq!(
-        clean_type("array<int, Collection<string, User>>"),
-        "array<int, Collection<string, User>>"
-    );
-}
-
-#[test]
-fn clean_type_generic_with_nullable_union() {
-    // `Collection<int, User>|null` → preserve null, keep generics
-    assert_eq!(
-        clean_type("Collection<int, User>|null"),
-        "Collection<int, User>|null"
-    );
-}
-
-#[test]
-fn clean_type_generic_union_inside_angle_brackets() {
-    // `|` inside `<…>` must not be treated as a union separator
-    assert_eq!(
-        clean_type("Collection<int|string, User>|null"),
-        "Collection<int|string, User>|null"
-    );
-}
-
-#[test]
-fn clean_nullable_union() {
-    assert_eq!(clean_type("Foo|null"), "Foo|null");
-}
-
-#[test]
-fn clean_nullable_shorthand_preserved() {
-    // clean_type preserves `?` — it is meaningful for display and tag
-    // extraction.  Use PhpType::parse(s).base_name() when you need a
-    // bare class name.
-    assert_eq!(clean_type("?Foo"), "?Foo");
-}
-
-#[test]
-fn clean_nullable_shorthand_fqn_preserved() {
-    assert_eq!(clean_type("?\\App\\Models\\User"), "?\\App\\Models\\User");
-}
-
-#[test]
-fn clean_trailing_punctuation() {
-    assert_eq!(clean_type("Foo."), "Foo");
 }
 
 // ── extract_conditional_return_type ─────────────────────────────────

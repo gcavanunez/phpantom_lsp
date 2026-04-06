@@ -81,6 +81,6 @@ pub use conditional::{extract_conditional_return_type, extract_conditional_retur
 
 // Type utilities
 pub use types::{
-    clean_type, extract_array_shape_value_type, extract_object_shape_property_type,
-    is_object_shape, parse_array_shape, parse_object_shape,
+    extract_array_shape_value_type, extract_object_shape_property_type, is_object_shape,
+    parse_array_shape, parse_object_shape,
 };

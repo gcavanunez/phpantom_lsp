@@ -2216,12 +2216,11 @@ async fn test_method_template_different_param_name() {
     }
 }
 
-// ─── Generic context preservation through clean_type ────────────────────────
+// ─── Generic context preservation ──────────────────────────────────────────
 //
 // These tests verify that when a property or method return type carries
 // generic parameters (e.g. `Collection<int, User>`), the generic context
 // is preserved and applied so that further chaining resolves correctly.
-// This was previously broken because `clean_type` stripped `<…>` generics.
 
 /// Test: a property typed as `Collection<int, User>` via `@var` docblock
 /// should resolve to `Collection` with `TValue → User`, so chaining

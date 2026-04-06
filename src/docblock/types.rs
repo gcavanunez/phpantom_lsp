@@ -13,7 +13,6 @@
 // ─── Re-exports: type_strings ───────────────────────────────────────────────
 
 pub(crate) use super::type_strings::PHPDOC_TYPE_KEYWORDS;
-pub use super::type_strings::clean_type;
 pub(crate) use super::type_strings::split_type_token;
 
 // ─── Re-exports: shapes ─────────────────────────────────────────────────────

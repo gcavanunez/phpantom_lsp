@@ -26,7 +26,7 @@ use crate::types::{AssertionKind, PhpVersion, TypeAssertion};
 use crate::util::strip_fqn_prefix;
 
 use super::parser::{DocblockInfo, collapse_newlines, parse_docblock_for_tags};
-use super::types::{clean_type, split_type_token};
+use super::types::split_type_token;
 use crate::php_type::PhpType;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -366,7 +366,7 @@ pub fn extract_type_assertions_from_info(info: &DocblockInfo) -> Vec<TypeAsserti
         results.push(TypeAssertion {
             kind: assertion_kind_for(tag.kind),
             param_name: param_str.to_string(),
-            asserted_type: PhpType::parse(&clean_type(type_str)),
+            asserted_type: PhpType::parse(type_str.trim_end_matches(['.', ','])),
             negated,
         });
     }
@@ -413,7 +413,7 @@ pub fn extract_var_type_with_name_from_info(
         // Extract the type token, respecting `<…>` nesting so that
         // generics like `Collection<int, User>` are treated as one unit.
         let (type_str, remainder) = split_type_token(desc);
-        let cleaned_type = clean_type(type_str);
+        let cleaned_type = type_str.trim_end_matches(['.', ',']).to_string();
         if cleaned_type.is_empty() {
             return None;
         }
@@ -1541,7 +1541,7 @@ fn count_braces_on_line(line: &str) -> (i32, i32) {
 ///
 /// The tag's `description` field already contains the joined, multi-line
 /// content after the tag name.  We extract the type portion using
-/// `split_type_token` and clean it with `clean_type`.
+/// `split_type_token`, stripping trailing punctuation.
 ///
 /// Skips PHPStan conditional return types (descriptions starting with `(`).
 fn extract_type_via_mago(docblock: &str, kinds: &[TagKind]) -> Option<String> {
@@ -1567,16 +1567,15 @@ fn extract_type_via_mago_from_info(info: &DocblockInfo, kinds: &[TagKind]) -> Op
             // mago-docblock joins multi-line tag descriptions with `\n`.
             // Normalise newlines (and surrounding whitespace from
             // indentation) into a single space so that `split_type_token`
-            // and `clean_type` see the same single-line input the old
-            // line-by-line scanner produced after trimming and joining
-            // continuation lines.
+            // sees the same single-line input the old line-by-line scanner
+            // produced after trimming and joining continuation lines.
             let normalised = collapse_newlines(desc);
             let (type_str, _remainder) = split_type_token(&normalised);
             if type_str.is_empty() {
                 continue;
             }
 
-            return Some(clean_type(type_str));
+            return Some(type_str.trim_end_matches(['.', ',']).to_string());
         }
     }
 

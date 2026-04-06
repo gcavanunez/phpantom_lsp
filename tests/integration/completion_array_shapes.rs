@@ -1245,23 +1245,6 @@ fn test_parse_array_shape_nested_shapes() {
     assert_eq!(entries[1].value_type.to_string(), "bool");
 }
 
-// ─── split_type_token and clean_type with array shapes ──────────────────────
-
-#[test]
-fn test_clean_type_preserves_array_shape() {
-    use phpantom_lsp::docblock::clean_type;
-
-    assert_eq!(
-        clean_type("array{name: string, age: int}"),
-        "array{name: string, age: int}"
-    );
-    assert_eq!(
-        clean_type("array{name: string, age: int}|null"),
-        "array{name: string, age: int}|null"
-    );
-    assert_eq!(clean_type("\\array{name: string}"), "\\array{name: string}");
-}
-
 // ─── Array Shape Key Completion in Class Method Context ─────────────────────
 
 #[tokio::test]

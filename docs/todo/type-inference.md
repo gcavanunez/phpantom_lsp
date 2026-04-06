@@ -541,27 +541,6 @@ update consumers.
 
 ---
 
-## T33. Remove or inline `clean_type()`
-**Impact: Low · Effort: Low**
-
-`clean_type()` in `docblock/type_strings.rs` now only trims trailing
-`.` and `,` characters. It used to strip `|null` and leading `\` but
-those behaviours were removed. The function allocates a new `String`
-on every call for minimal work that could be done inline or, better,
-eliminated entirely by feeding raw strings directly to
-`PhpType::parse()` which handles all normalization internally.
-
-**Task:** Audit all ~15 call sites. Where the result is immediately
-passed to `PhpType::parse()`, remove the `clean_type()` call (parse
-handles trailing punctuation). Where the result is used as a raw
-string, replace with inline `.trim_end_matches(['.', ','])`. Remove
-the function once all call sites are migrated.
-
-**Files:** `src/docblock/type_strings.rs`, `src/docblock/tags.rs`,
-`src/docblock/virtual_members.rs`, and other callers
-
----
-
 ## T20. Type narrowing reconciliation engine
 **Impact: Medium-High · Effort: High**
 

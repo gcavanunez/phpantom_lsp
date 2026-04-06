@@ -80,13 +80,9 @@ pub fn extract_property_tags(docblock: &str) -> Vec<(String, String)> {
             continue;
         }
 
-        // Use the raw type token instead of `clean_type()`.
-        // `clean_type()` strips `|null` from union types, which loses
-        // nullable information (e.g. `@property int|null $foo` would
-        // become just `int`).  Downstream consumers parse the string
-        // with `PhpType::parse()` which handles nullability correctly.
-        // Only strip trailing punctuation that could leak from
-        // descriptions (e.g. trailing `.` or `,`).
+        // Strip trailing punctuation that could leak from descriptions
+        // (e.g. trailing `.` or `,`).  The full type string including
+        // nullability is preserved for `PhpType::parse()` downstream.
         let type_str = type_token.trim_end_matches(['.', ',']);
         results.push((name.to_string(), type_str.to_string()));
     }
@@ -174,9 +170,8 @@ pub fn extract_method_tags(docblock: &str) -> Vec<MethodInfo> {
             continue;
         }
 
-        // Use the raw type token with only trailing punctuation
-        // stripped, instead of `clean_type()` which strips `|null`
-        // and loses nullable information.
+        // Strip trailing punctuation that could leak from descriptions,
+        // preserving the full type string including nullability.
         let return_type = return_type_raw.map(|s| s.trim_end_matches(['.', ',']).to_string());
         let return_type = match return_type {
             Some(ref s) if s.is_empty() => None,

@@ -868,8 +868,7 @@ impl PhpType {
     /// For a type that doesn't contain `null`, returns `None`.
     /// For bare `null`, returns `None`.
     ///
-    /// This replaces the `clean_type` pattern of extracting the
-    /// non-null part from a union type.
+    /// This extracts the non-null part from a union type.
     pub fn non_null_type(&self) -> Option<PhpType> {
         match self {
             PhpType::Nullable(inner) => Some(inner.as_ref().clone()),
@@ -896,8 +895,7 @@ impl PhpType {
     /// For bare scalars like `int`, returns `true`.
     /// For bare classes like `User`, returns `false`.
     ///
-    /// This replaces the `clean_type` + `is_scalar` pattern used in
-    /// diagnostics to check whether a type is purely scalar.
+    /// Checks whether a type is purely scalar.
     pub fn all_members_scalar(&self) -> bool {
         match self {
             PhpType::Union(members) => members
@@ -917,8 +915,7 @@ impl PhpType {
     /// etc.).  Returns `false` for `mixed`, `object`, `class-string`,
     /// and other pseudo-types on which member access may be valid.
     ///
-    /// This is the correct replacement for the old
-    /// `clean_type` + `is_scalar` pattern in `resolve_scalar_subject_type`.
+    /// Checks whether all members are primitive scalar types.
     pub fn all_members_primitive_scalar(&self) -> bool {
         match self {
             PhpType::Union(members) => members
