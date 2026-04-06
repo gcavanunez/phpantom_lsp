@@ -260,7 +260,7 @@ impl Backend {
                 }
                 // Resolve exception class names in @throws tags.
                 for throw in &mut func.throws {
-                    let resolved = Self::resolve_type_string_via_php_type(throw, &resolver);
+                    let resolved = throw.resolve_names(&resolver);
                     if resolved != *throw {
                         *throw = resolved;
                     }
@@ -819,6 +819,13 @@ impl Backend {
                         }
                     }
                 }
+                // Resolve exception class names in @throws tags.
+                for throw in &mut method.throws {
+                    let resolved = throw.resolve_names(method_resolver);
+                    if resolved != *throw {
+                        *throw = resolved;
+                    }
+                }
             }
             for prop in class.properties.make_mut() {
                 if let Some(ref hint) = prop.type_hint {
@@ -1003,7 +1010,7 @@ impl Backend {
     ///
     /// Parses the string into a `PhpType`, resolves names via the given
     /// resolver, and converts back to a string.  This is used for
-    /// string-typed fields (e.g. `throws`, `native_return_type`,
+    /// string-typed fields (e.g. `native_return_type`,
     /// type alias definitions) where the caller does not have a `PhpType`.
     fn resolve_type_string_via_php_type(
         type_str: &str,

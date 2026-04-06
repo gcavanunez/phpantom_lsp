@@ -555,12 +555,12 @@ pub struct MethodInfo {
     /// methods.  Used by the narrowing engine to apply type guards from
     /// static method calls like `Assert::instanceOf($value, Foo::class)`.
     pub type_assertions: Vec<TypeAssertion>,
-    /// Exception type names declared via `@throws` tags in the method's docblock.
+    /// Exception types declared via `@throws` tags in the method's docblock.
     ///
     /// For example, a method with `@throws \InvalidArgumentException` would have
-    /// `throws: vec!["\\InvalidArgumentException".into()]`.  Used during code
-    /// generation and analysis to propagate exception information.
-    pub throws: Vec<String>,
+    /// `throws: vec![PhpType::Named("InvalidArgumentException".into())]`.  Used
+    /// during code generation and analysis to propagate exception information.
+    pub throws: Vec<PhpType>,
 }
 
 impl MethodInfo {
@@ -1037,12 +1037,12 @@ pub struct FunctionInfo {
     /// bindings to infer concrete types for each template parameter
     /// from the actual argument expressions.
     pub template_bindings: Vec<(String, String)>,
-    /// Exception type names from `@throws` docblock tags.
+    /// Exception types from `@throws` docblock tags.
     ///
     /// Populated during parsing from the function's docblock.  Used by
     /// the cross-file throws analysis to propagate exceptions from
     /// standalone function calls.
-    pub throws: Vec<String>,
+    pub throws: Vec<PhpType>,
     /// Whether this function was extracted from inside a
     /// `if (! function_exists('name'))` guard.
     ///

@@ -1320,7 +1320,7 @@ fn find_cross_file_propagated_throws(
                     {
                         for exc_type in &ctor.throws {
                             results.push(ThrowInfo {
-                                type_name: exc_type.clone(),
+                                type_name: exc_type.to_string(),
                                 offset: call_start,
                             });
                         }
@@ -1454,7 +1454,7 @@ fn find_cross_file_propagated_throws(
                         {
                             for exc_type in &func_info.throws {
                                 results.push(ThrowInfo {
-                                    type_name: exc_type.clone(),
+                                    type_name: exc_type.to_string(),
                                     offset: ident_start,
                                 });
                             }
@@ -1494,7 +1494,7 @@ fn collect_method_throws(
     {
         for exc_type in &method_info.throws {
             results.push(ThrowInfo {
-                type_name: exc_type.clone(),
+                type_name: exc_type.to_string(),
                 offset,
             });
         }

@@ -255,8 +255,8 @@ pub fn extract_mixin_tags_from_info(info: &DocblockInfo) -> Vec<(String, Vec<Str
 ///   - `@throws \Fully\Qualified\ExceptionType`
 ///   - `@throws ExceptionType Some description text`
 ///
-/// Returns a list of cleaned type name strings (leading `\` stripped).
-pub fn extract_throws_tags(docblock: &str) -> Vec<String> {
+/// Returns a list of parsed [`PhpType`] values (leading `\` stripped).
+pub fn extract_throws_tags(docblock: &str) -> Vec<PhpType> {
     let Some(info) = parse_docblock_for_tags(docblock) else {
         return Vec::new();
     };
@@ -265,7 +265,7 @@ pub fn extract_throws_tags(docblock: &str) -> Vec<String> {
 }
 
 /// Like [`extract_throws_tags`], but operates on a pre-parsed [`DocblockInfo`].
-pub fn extract_throws_tags_from_info(info: &DocblockInfo) -> Vec<String> {
+pub fn extract_throws_tags_from_info(info: &DocblockInfo) -> Vec<PhpType> {
     let mut results = Vec::new();
 
     for tag in info.tags_by_kind(TagKind::Throws) {
@@ -282,7 +282,7 @@ pub fn extract_throws_tags_from_info(info: &DocblockInfo) -> Vec<String> {
 
         let cleaned = type_name.trim_start_matches('\\');
         if !cleaned.is_empty() {
-            results.push(cleaned.to_string());
+            results.push(PhpType::parse(cleaned));
         }
     }
 

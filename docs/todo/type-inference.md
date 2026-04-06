@@ -447,29 +447,6 @@ pipeline to produce cleaner hover/completion output.
 
 ---
 
-## T31. Migrate `throws` fields to `Vec<PhpType>`
-**Impact: Low · Effort: Low**
-
-`MethodInfo::throws` and `FunctionInfo::throws` store exception type
-names as `Vec<String>`. Comparisons and deduplication use
-case-insensitive string matching. Using `Vec<PhpType>` would allow
-`PhpType::resolve_names()` and `PhpType::equivalent()` for more
-robust handling.
-
-**Task:** Change both fields to `Vec<PhpType>`, update extraction in
-`docblock/tags.rs`, and update consumers in `code_actions/phpstan/`,
-`code_actions/update_docblock.rs`, `completion/source/throws_analysis.rs`,
-and `parser/ast_update.rs`.
-
-**Files:** `src/types.rs`, `src/docblock/tags.rs`,
-`src/code_actions/phpstan/add_throws.rs`,
-`src/code_actions/phpstan/remove_throws.rs`,
-`src/code_actions/update_docblock.rs`,
-`src/completion/source/throws_analysis.rs`,
-`src/parser/ast_update.rs`
-
----
-
 ## T32. Migrate `closure_this_type` to `Option<PhpType>`
 **Impact: Low · Effort: Low**
 

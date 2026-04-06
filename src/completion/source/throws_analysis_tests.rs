@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::php_type::PhpType;
 use crate::types::{ClassInfo, ClassLikeKind, FunctionInfo, MethodInfo, Visibility};
 
 // ── Low-level scanning tests ────────────────────────────────────────
@@ -763,7 +764,7 @@ fn make_class_with_throws(name: &str, methods: Vec<(&str, Vec<&str>)>) -> Arc<Cl
             is_abstract: false,
             is_virtual: false,
             type_assertions: Vec::new(),
-            throws: throws.into_iter().map(|s| s.to_string()).collect(),
+            throws: throws.into_iter().map(PhpType::parse).collect(),
         })
         .collect();
 
@@ -1056,7 +1057,7 @@ fn test_find_cross_file_propagated_throws_function_call() {
         deprecated_replacement: None,
         template_params: Vec::new(),
         template_bindings: Vec::new(),
-        throws: vec!["DatabaseException".to_string()],
+        throws: vec![PhpType::parse("DatabaseException")],
         is_polyfill: false,
     };
 
@@ -1176,7 +1177,7 @@ fn test_find_cross_file_propagated_throws_mixed_patterns() {
         deprecated_replacement: None,
         template_params: Vec::new(),
         template_bindings: Vec::new(),
-        throws: vec!["HelperException".to_string()],
+        throws: vec![PhpType::parse("HelperException")],
         is_polyfill: false,
     };
 
@@ -1276,21 +1277,30 @@ fn test_find_uncaught_with_class_loader_catches_cross_file() {
 fn test_extract_throws_tags_basic() {
     let docblock = "/**\n * @throws BusinessCentralException\n * @throws ConvertException\n */";
     let tags = crate::docblock::extract_throws_tags(docblock);
-    assert_eq!(tags, vec!["BusinessCentralException", "ConvertException"]);
+    assert_eq!(
+        tags,
+        vec![
+            PhpType::parse("BusinessCentralException"),
+            PhpType::parse("ConvertException"),
+        ]
+    );
 }
 
 #[test]
 fn test_extract_throws_tags_with_fqn() {
     let docblock = "/**\n * @throws \\App\\Exceptions\\CustomException\n */";
     let tags = crate::docblock::extract_throws_tags(docblock);
-    assert_eq!(tags, vec!["App\\Exceptions\\CustomException"]);
+    assert_eq!(
+        tags,
+        vec![PhpType::parse("App\\Exceptions\\CustomException")]
+    );
 }
 
 #[test]
 fn test_extract_throws_tags_with_description() {
     let docblock = "/**\n * @throws RuntimeException When something goes wrong\n */";
     let tags = crate::docblock::extract_throws_tags(docblock);
-    assert_eq!(tags, vec!["RuntimeException"]);
+    assert_eq!(tags, vec![PhpType::parse("RuntimeException")]);
 }
 
 #[test]
