@@ -53,6 +53,7 @@ use crate::completion::source::throws_analysis::{self, ThrowsContext};
 use crate::completion::use_edit::{analyze_use_block, build_use_edit};
 use crate::php_type::{PhpType, is_keyword_type};
 use crate::types::{ClassInfo, FunctionLoader};
+use crate::util::{byte_offset_to_utf16_col, utf16_col_to_byte_offset};
 
 /// Detect whether the cursor is immediately after a `/**` trigger and,
 /// if so, generate a full docblock completion item.
@@ -386,7 +387,12 @@ fn detect_docblock_trigger(content: &str, position: Position) -> Option<(Range, 
     }
 
     let line = lines[line_idx];
-    let col = position.character as usize;
+
+    // Convert the UTF-16 column offset to a byte offset within the line.
+    // LSP positions use UTF-16 code units, which diverge from byte offsets
+    // when the line contains multibyte characters (e.g. "ń" is 2 bytes in
+    // UTF-8 but 1 UTF-16 code unit).
+    let col = utf16_col_to_byte_offset(line, position.character);
 
     // The cursor column must be at least 3 (for `/**`).
     if col < 3 {
@@ -412,7 +418,7 @@ fn detect_docblock_trigger(content: &str, position: Position) -> Option<(Range, 
     }
 
     // Check what follows the `/**` on this line.
-    let after_trigger = &line[col..];
+    let after_trigger = if col <= line.len() { &line[col..] } else { "" };
 
     // Editors like VS Code auto-close `/**` into `/** */` on the same
     // line.  We allow this when the only thing after `/**` is optional
@@ -446,14 +452,13 @@ fn detect_docblock_trigger(content: &str, position: Position) -> Option<(Range, 
     }
 
     let indent = prefix.to_string();
-    let start_col = (col - 3) as u32;
 
-    // If the editor auto-closed `/** */`, extend the range to cover
-    // the closing `*/` so the snippet replaces the entire block.
+    // Convert byte offsets back to UTF-16 columns for the LSP Range.
+    let start_col = byte_offset_to_utf16_col(line, col - 3);
     let end_col = if after_trigger.contains("*/") {
-        line.len() as u32
+        byte_offset_to_utf16_col(line, line.len())
     } else {
-        col as u32
+        byte_offset_to_utf16_col(line, col)
     };
 
     let range = Range {
@@ -1885,6 +1890,21 @@ mod tests {
             result.is_none(),
             "Should not trigger when code precedes /**"
         );
+    }
+
+    #[test]
+    fn no_panic_on_multibyte_characters() {
+        // "ń" is 2 bytes in UTF-8 but 1 UTF-16 code unit.
+        // The cursor is after the closing paren, UTF-16 column 32.
+        // Using that as a byte offset would land inside "ń" and panic.
+        let content = "<?php\n                $table->string(ń);";
+        let pos = Position {
+            line: 1,
+            character: 32,
+        };
+        // Must not panic — should simply return None.
+        let result = detect_docblock_trigger(content, pos);
+        assert!(result.is_none());
     }
 
     // ── Declaration classification ──────────────────────────────────────

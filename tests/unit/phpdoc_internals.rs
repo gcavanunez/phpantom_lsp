@@ -736,6 +736,28 @@ fn typing_pos_still_typing_tag_name_returns_none() {
 }
 
 #[test]
+fn typing_pos_no_panic_on_multibyte_characters() {
+    // "ń" is 2 bytes in UTF-8 but 1 UTF-16 code unit.
+    // Using the UTF-16 column as a byte offset would land inside the
+    // multibyte character and panic.
+    let content = "<?php\n/**\n * @param ń\n */\nfunction foo() {}\n";
+    let pos = Position {
+        line: 2,
+        character: 12,
+    };
+    // Must not panic. "ń" is not a valid PHP identifier character, so
+    // the trailing identifier extraction returns an empty partial.
+    let result = detect_docblock_typing_position(content, pos);
+    assert_eq!(
+        result,
+        Some(DocblockTypingContext::Type {
+            partial: String::new(),
+            tag: "param".to_string(),
+        })
+    );
+}
+
+#[test]
 fn typing_pos_tag_no_space_returns_none() {
     // Cursor right after `@param` with no space — tag name, not type
     let content = "<?php\n/**\n * @param\n */\n";

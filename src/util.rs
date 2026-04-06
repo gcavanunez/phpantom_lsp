@@ -325,6 +325,39 @@ pub(crate) fn position_to_byte_offset(content: &str, position: Position) -> usiz
     content.len()
 }
 
+/// Convert a UTF-16 column offset to a byte offset within a single line.
+///
+/// LSP positions use UTF-16 code units for the character offset.  When a
+/// line contains multi-byte characters (e.g. `ń` is 2 bytes in UTF-8 but
+/// 1 UTF-16 code unit), the two offsets diverge.  This helper walks the
+/// line counting UTF-16 code units and returns the corresponding byte
+/// position.
+///
+/// Returns `line.len()` if `utf16_col` is past the end of the line.
+pub(crate) fn utf16_col_to_byte_offset(line: &str, utf16_col: u32) -> usize {
+    let mut col = 0u32;
+    for (i, ch) in line.char_indices() {
+        if col == utf16_col {
+            return i;
+        }
+        col += ch.len_utf16() as u32;
+    }
+    line.len()
+}
+
+/// Convert a byte offset within a single line to a UTF-16 column offset.
+///
+/// This is the inverse of [`utf16_col_to_byte_offset`].  It counts
+/// UTF-16 code units for all characters before `byte_offset` and returns
+/// the result.
+///
+/// Returns the total UTF-16 length of the line if `byte_offset` is past
+/// the end.
+pub(crate) fn byte_offset_to_utf16_col(line: &str, byte_offset: usize) -> u32 {
+    let clamped = byte_offset.min(line.len());
+    line[..clamped].encode_utf16().count() as u32
+}
+
 /// Extract the short (unqualified) class name from a potentially
 /// fully-qualified name.
 ///
