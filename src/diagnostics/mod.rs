@@ -38,6 +38,14 @@
 //!   when the class has `__call` / `__callStatic` / `__get` magic methods.
 //! - **Unknown function diagnostics** — report function calls that
 //!   cannot be resolved to any known function definition.
+//! - **Undefined variable diagnostics** — report variable reads that
+//!   have no prior definition (assignment, parameter, foreach binding,
+//!   catch variable, `global`, `static`, `use()` clause, or `list()`
+//!   destructuring) in the same scope.  Uses a conservative Phase 1
+//!   approach: any assignment anywhere in the function counts as a
+//!   definition.  Suppressed for superglobals, `isset()` / `empty()`
+//!   guards, `compact()` references, `extract()` calls, variable
+//!   variables (`$$`), `@` error suppression, and `@var` annotations.
 //! - **Unresolved member access diagnostics** (opt-in) — report
 //!   `MemberAccess` spans where the **subject type** cannot be resolved
 //!   at all.  Off by default; enable via `[diagnostics]
@@ -102,6 +110,7 @@ mod deprecated;
 pub(crate) mod helpers;
 mod implementation_errors;
 mod syntax_errors;
+pub(crate) mod undefined_variables;
 pub(crate) mod unknown_classes;
 pub(crate) mod unknown_functions;
 pub(crate) mod unknown_members;
@@ -159,6 +168,7 @@ impl Backend {
         self.collect_argument_count_diagnostics(uri_str, content, out);
         self.collect_implementation_error_diagnostics(uri_str, content, out);
         self.collect_deprecated_diagnostics(uri_str, content, out);
+        self.collect_undefined_variable_diagnostics(uri_str, content, out);
     }
 
     /// Build a merged diagnostic set from fresh fast diagnostics,

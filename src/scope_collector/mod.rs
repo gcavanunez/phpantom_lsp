@@ -97,6 +97,14 @@ pub(crate) struct Frame {
     /// to detect closure captures that cross extraction boundaries.
     #[allow(dead_code)] // infrastructure for Extract Function closure-aware extraction
     pub captures: Vec<(String, bool)>,
+    /// Parameter names (with `$` prefix) declared on this frame.
+    ///
+    /// Populated for functions, methods, closures, and arrow functions.
+    /// Used by the undefined-variable diagnostic to identify which
+    /// variables are defined as parameters (their write offsets are
+    /// before the frame's `start` and cannot be distinguished from
+    /// outer-scope writes by offset alone).
+    pub parameters: Vec<String>,
 }
 
 /// The kind of scope boundary a [`Frame`] represents.
@@ -443,6 +451,7 @@ pub(crate) fn collect_scope(
         end: body_end,
         kind: FrameKind::TopLevel,
         captures: Vec::new(),
+        parameters: Vec::new(),
     });
 
     for stmt in statements {
@@ -512,11 +521,18 @@ pub(crate) fn collect_function_scope_with_kind<'a>(
 ) -> ScopeMap {
     let mut collector = Collector::new();
 
+    let param_names: Vec<String> = params
+        .parameters
+        .iter()
+        .map(|p| p.variable.name.to_string())
+        .collect();
+
     collector.push_frame(Frame {
         start: body_start,
         end: body_end,
         kind,
         captures: Vec::new(),
+        parameters: param_names,
     });
 
     // Record parameters as writes.
@@ -665,11 +681,17 @@ fn walk_statement(stmt: &Statement<'_>, collector: &mut Collector) {
             for catch in try_stmt.catch_clauses.iter() {
                 let catch_start = catch.block.left_brace.start.offset;
                 let catch_end = catch.block.right_brace.end.offset;
+                let catch_params = if let Some(ref var) = catch.variable {
+                    vec![var.name.to_string()]
+                } else {
+                    Vec::new()
+                };
                 collector.push_frame(Frame {
                     start: catch_start,
                     end: catch_end,
                     kind: FrameKind::Catch,
                     captures: Vec::new(),
+                    parameters: catch_params,
                 });
                 if let Some(ref var) = catch.variable {
                     let name = var.name.to_string();
@@ -1185,11 +1207,19 @@ fn walk_closure(closure: &Closure<'_>, collector: &mut Collector) {
         }
     }
 
+    let param_names: Vec<String> = closure
+        .parameter_list
+        .parameters
+        .iter()
+        .map(|p| p.variable.name.to_string())
+        .collect();
+
     collector.push_frame(Frame {
         start: body_start,
         end: body_end,
         kind: FrameKind::Closure,
         captures: captures.clone(),
+        parameters: param_names,
     });
 
     // Record parameters as writes in the closure frame.
@@ -1222,11 +1252,19 @@ fn walk_arrow_function(arrow: &ArrowFunction<'_>, collector: &mut Collector) {
     let body_start = arrow.arrow.start.offset;
     let body_end = arrow.expression.span().end.offset;
 
+    let param_names: Vec<String> = arrow
+        .parameter_list
+        .parameters
+        .iter()
+        .map(|p| p.variable.name.to_string())
+        .collect();
+
     collector.push_frame(Frame {
         start: body_start,
         end: body_end,
         kind: FrameKind::ArrowFunction,
         captures: Vec::new(), // Arrow functions capture implicitly.
+        parameters: param_names,
     });
 
     // Record parameters as writes.

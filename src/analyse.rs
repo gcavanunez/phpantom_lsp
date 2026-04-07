@@ -318,6 +318,12 @@ pub async fn run(options: AnalyseOptions) -> i32 {
                                     "deprecated",
                                     backend.collect_deprecated_diagnostics(uri, content, &mut raw)
                                 ),
+                                timed_collect!(
+                                    "undefined_variable",
+                                    backend.collect_undefined_variable_diagnostics(
+                                        uri, content, &mut raw,
+                                    )
+                                ),
                             ];
 
                             let file_elapsed = file_start.elapsed();
@@ -348,6 +354,7 @@ pub async fn run(options: AnalyseOptions) -> i32 {
                             backend
                                 .collect_implementation_error_diagnostics(uri, content, &mut raw);
                             backend.collect_deprecated_diagnostics(uri, content, &mut raw);
+                            backend.collect_undefined_variable_diagnostics(uri, content, &mut raw);
                         }
 
                         let mut filtered: Vec<FileDiagnostic> = raw

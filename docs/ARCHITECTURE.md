@@ -991,6 +991,7 @@ The native diagnostic categories reflect this philosophy:
 | Unknown functions | Every function call resolves to a declared function. |
 | Argument count | Call sites match the target's parameter count. |
 | Implementation errors | Concrete classes satisfy their interface/abstract contracts. |
+| Undefined variables | Every variable read has a prior definition in scope. |
 | Deprecated usage | The developer is aware of deprecation. |
 
 None of these are type-compatibility checks, dead-code analysis, or control-flow reasoning. That is by design. A project that passes all of PHPantom's diagnostics has 100% type coverage from the LSP's perspective: every symbol is resolvable, every completion trigger produces results, and every hover shows a type.

@@ -31,7 +31,6 @@ within the same impact tier.
 | #   | Item                                                                                                                         | Impact | Effort |
 | --- | ---------------------------------------------------------------------------------------------------------------------------- | ------ | ------ |
 |     | Clear [refactoring gate](todo/refactor.md)                                                                                   | —      | —      |
-| D8  | [Undefined variable diagnostic](todo/diagnostics.md#d8-undefined-variable-diagnostic)                                        | High   | Medium |
 | D12 | [Mago linter integration](todo/diagnostics.md#d12-mago-linter-integration-optional-diagnostics)                              | Medium | Medium |
 | D11 | [Invalid class-like kind in context](todo/diagnostics.md#d11-invalid-class-like-kind-in-context)                             | Medium | Low    |
 | F4  | [Return type and closure parameter type inlay hints](todo/lsp-features.md#f4-return-type-and-closure-parameter-type-inlay-hints) | Medium | Medium |
