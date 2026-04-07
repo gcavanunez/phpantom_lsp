@@ -23,6 +23,83 @@ PHPantom assigns diagnostic severity based on runtime consequences:
 
 ---
 
+## D4. Unused variable diagnostic
+
+**Impact: Medium · Effort: Medium**
+
+Flag variables that are assigned but never read. This is one of the
+most common issues in PHP codebases and catches dead code, typos in
+variable names, and forgotten refactoring leftovers.
+
+PHPantom already has an undefined-variable diagnostic
+(`undefined_variable` in `diagnostics/undefined_variables.rs`) that
+tracks variable definitions and reads through scope analysis. The
+unused-variable diagnostic is the dual: a variable that has a
+definition site but zero read sites within the same scope.
+
+**Severity:** Information (rendered as dimmed text). Assigned-but-
+unread variables are not bugs per se (the code still runs), but they
+are strong signals of dead code or typos. Information severity avoids
+alarming users while still making the issue visible.
+
+**Diagnostic code:** `unused_variable` (matches the planned CLI fix
+rule FX2).
+
+### Scope
+
+1. **Local variables in function/method bodies.** A variable assigned
+   inside a function or method body that is never read before the
+   scope ends. Parameters count as assignments; an unused parameter
+   in a non-abstract, non-interface method is flagged.
+2. **Foreach bindings.** `foreach ($items as $key => $value)` where
+   `$key` or `$value` is never read inside the loop body. Convention:
+   variables named `$_` or starting with `$_` are exempt (intentional
+   discard).
+3. **Catch variables.** `catch (Exception $e)` where `$e` is never
+   read. Same `$_` exemption applies.
+
+### Exclusions
+
+- Variables in the global scope (scripts, templates).
+- Variables passed by reference (`&$var`) to functions, since the
+  callee may use them as out-parameters.
+- Variables used inside closures or arrow functions that capture them
+  (explicit `use ($var)` or implicit capture).
+- Compact() calls that reference the variable by string name.
+- Variables used in string interpolation (`"Hello $name"`).
+- Variables whose RHS has side effects (method calls, function calls)
+  should still be flagged, but with a detail note that removing the
+  assignment would also remove the side effect.
+
+### PHPStan parallel
+
+PHPStan does not have a built-in unused-variable rule, but third-party
+rulesets (e.g. `phpstan-strict-rules`, `tomasvotruba/unused-public`)
+report similar issues. When D4 ships, the PHPStan quick-fix
+infrastructure should recognise our native `unused_variable` code so
+that:
+
+- The "Remove unused import" pattern can be extended to offer a
+  "Remove unused variable" quick-fix (same code action kind).
+- FX2 (`unused_variable` CLI fix rule) can consume our diagnostic
+  directly without needing PHPStan.
+
+### Implementation
+
+1. Extend the scope collector (`scope_collector/mod.rs`) to track
+   read sites per variable per frame (it already tracks definition
+   sites for the undefined-variable diagnostic).
+2. After processing a scope, iterate defined variables and flag any
+   that have zero reads and are not in the exclusion list.
+3. Emit diagnostics with `DiagnosticSeverity::HINT` and
+   `DiagnosticTag::UNNECESSARY` so editors render unused variables
+   as dimmed/faded text.
+4. Add a code action (in `code_actions/`) to remove the assignment
+   statement when the RHS is side-effect-free, or to prefix the
+   variable with `$_` to suppress the diagnostic.
+
+---
+
 ## D3. Deprecated rendering — chain subject resolution
 
 **Impact: Low-Medium · Effort: Medium**
@@ -324,3 +401,85 @@ in PHP projects for enforcing style and detecting common mistakes.
 6. Support `phpcs:ignore` and `phpcs:disable` / `phpcs:enable`
    suppression comments when diagnostic suppression intelligence
    (D5) is implemented.
+
+---
+
+## D15. Type error diagnostics
+
+**Impact: Medium-High · Effort: High**
+
+Report type mismatches that would cause runtime errors or indicate
+logical bugs: passing a value of the wrong type to a function,
+returning the wrong type from a function, or assigning an incompatible
+type to a typed property.
+
+This is the bread-and-butter of static analysis tools like PHPStan
+(levels 5-9) and Psalm. PHPantom already resolves types for
+completion, hover, and variable inference. Surfacing type errors
+reuses that infrastructure to catch bugs without requiring an external
+tool.
+
+### Severity
+
+- **Error** for mismatches that would cause a `TypeError` at runtime
+  (e.g. passing `string` to a parameter typed `int` with strict
+  types enabled, or returning `null` from a non-nullable return type).
+- **Warning** for mismatches that PHP would coerce silently in weak
+  mode but that are almost certainly bugs (e.g. passing an `array`
+  where `string` is expected).
+
+### Scope (phased rollout)
+
+**Phase 1 — Argument type mismatches.** When calling a function or
+method whose parameter types are known (native hints or `@param`
+docblock), check each argument's resolved type against the declared
+parameter type. Flag clear mismatches (e.g. `string` passed to `int`,
+`null` passed to non-nullable). Skip `mixed`, unresolved types, and
+union types where any branch matches (to avoid false positives).
+
+**Phase 2 — Return type mismatches.** When a function or method has a
+declared return type (native or `@return`), check the types of values
+in `return` statements against the declared type. Flag clear
+mismatches. This catches the common "forgot to return early" pattern
+where `null` falls through a non-nullable return type.
+
+**Phase 3 — Property type mismatches.** When assigning to a typed
+property (`public int $count`), check the RHS type against the
+declared property type. This catches assignment bugs that PHP would
+reject at runtime with a `TypeError`.
+
+### Design constraints
+
+- **Conservative.** Only flag mismatches where we are confident the
+  types are incompatible. When in doubt (unresolved types, `mixed`,
+  complex generics), do not flag. False positives are worse than
+  missed true positives for a feature that competes with PHPStan.
+- **Respect `strict_types`.** In files with `declare(strict_types=1)`,
+  coercions like `int` to `string` are errors. In files without it,
+  PHP's type juggling rules apply and only truly incompatible types
+  (e.g. `array` to `string`) should be flagged.
+- **Diagnostic code:** `type_error` with subcodes like
+  `type_error.argument`, `type_error.return`, `type_error.property`
+  for filtering and suppression.
+
+### Dependencies
+
+- Accurate type resolution for function/method parameters (already
+  available via completion and hover infrastructure).
+- `declare(strict_types=1)` detection (need to check file-level
+  declare statements).
+- Subtype checking utility (is type A assignable to type B?) — a
+  shared helper that would also benefit other diagnostics. The
+  existing `is_subtype_of` in the type hierarchy module covers class
+  hierarchies; scalar and union type compatibility needs to be added.
+
+### Quick-fix integration
+
+When a type mismatch is detected, offer code actions:
+
+- **Add type cast** (e.g. `(int)$value` when passing `string` to
+  `int` parameter).
+- **Add null check** when passing a nullable type to a non-nullable
+  parameter.
+- **Update docblock** when the declared `@param` or `@return` type is
+  too narrow for the actual usage.

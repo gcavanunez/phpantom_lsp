@@ -8,7 +8,9 @@ scheduled.
 **Guiding priorities:** Completion accuracy → Type intelligence →
 Cross-file navigation → Diagnostics → Code actions → Performance.
 
-Items inside each sprint are ordered by priority (top = do first).
+Items inside each sprint are ordered by priority (top = do first):
+quick wins (low effort) before heavy lifts, dependencies before their
+dependents, and within the same effort tier by impact descending.
 The backlog is ordered by impact (descending), then effort (ascending)
 within the same impact tier.
 
@@ -28,19 +30,22 @@ within the same impact tier.
 
 ## Sprint 5 — Polish for office adoption
 
-| #   | Item                                                                                                                         | Impact | Effort |
-| --- | ---------------------------------------------------------------------------------------------------------------------------- | ------ | ------ |
-|     | Clear [refactoring gate](todo/refactor.md)                                                                                   | —      | —      |
-| D12 | [Mago linter integration](todo/diagnostics.md#d12-mago-linter-integration-optional-diagnostics)                              | Medium | Medium |
-| D11 | [Invalid class-like kind in context](todo/diagnostics.md#d11-invalid-class-like-kind-in-context)                             | Medium | Low    |
-| F4  | [Return type and closure parameter type inlay hints](todo/lsp-features.md#f4-return-type-and-closure-parameter-type-inlay-hints) | Medium | Medium |
-| A36 | [Import all missing classes](todo/actions.md#a36-import-all-missing-classes) (bulk import)                                    | Medium | Low    |
-| F6  | [Machine-readable CLI output formats](todo/lsp-features.md#f6-machine-readable-cli-output-formats) (`--format github\|json`) | Medium | Low    |
-| F9  | [Namespace renaming](todo/lsp-features.md#f9-namespace-renaming)                                                             | Medium | Medium |
-| A40 | [Convert to instance variable](todo/actions.md#a40-convert-to-instance-variable)                                             | Medium | Medium |
-| D10 | [PHPMD diagnostic proxy](todo/diagnostics.md#d10-phpmd-diagnostic-proxy)                                                     | Low    | Medium |
-| D14 | [PHPCS diagnostic proxy](todo/diagnostics.md#d14-phpcs-diagnostic-proxy)                                                     | Low    | Medium |
-|     | **Release 0.8.0**                                                                                                            |        |        |
+| #   | Item                                                                                                                         | Impact      | Effort |
+| --- | ---------------------------------------------------------------------------------------------------------------------------- | ----------- | ------ |
+|     | Clear [refactoring gate](todo/refactor.md)                                                                                   | —           | —      |
+| D11 | [Invalid class-like kind in context](todo/diagnostics.md#d11-invalid-class-like-kind-in-context)                             | Medium      | Low    |
+| F10 | [Linked editing ranges](todo/lsp-features.md#f10-linked-editing-ranges)                                                      | Medium      | Low    |
+| A36 | [Import all missing classes](todo/actions.md#a36-import-all-missing-classes) (bulk import)                                    | Medium      | Low    |
+| F6  | [Machine-readable CLI output formats](todo/lsp-features.md#f6-machine-readable-cli-output-formats) (`--format github\|json`) | Medium      | Low    |
+| D4  | [Unused variable diagnostic](todo/diagnostics.md#d4-unused-variable-diagnostic)                                              | Medium      | Medium |
+| D12 | [Mago linter integration](todo/diagnostics.md#d12-mago-linter-integration-optional-diagnostics)                              | Medium      | Medium |
+| F4  | [Return type and closure parameter type inlay hints](todo/lsp-features.md#f4-return-type-and-closure-parameter-type-inlay-hints) | Medium  | Medium |
+| F9  | [Namespace renaming](todo/lsp-features.md#f9-namespace-renaming)                                                             | Medium      | Medium |
+| A40 | [Convert to instance variable](todo/actions.md#a40-convert-to-instance-variable)                                             | Medium      | Medium |
+| D10 | [PHPMD diagnostic proxy](todo/diagnostics.md#d10-phpmd-diagnostic-proxy)                                                     | Low         | Medium |
+| D14 | [PHPCS diagnostic proxy](todo/diagnostics.md#d14-phpcs-diagnostic-proxy)                                                     | Low         | Medium |
+| D15 | [Type error diagnostics](todo/diagnostics.md#d15-type-error-diagnostics) (argument, return, property type mismatches)        | Medium-High | High   |
+|     | **Release 0.8.0**                                                                                                            |             |        |
 
 > **Note:** F1 (Workspace symbol search), F2 (Document symbols), A8
 > (Implement interface methods), A9 (Auto import), D1 (Unknown class
@@ -52,22 +57,28 @@ within the same impact tier.
 | #   | Item                                                                                                                | Impact     | Effort |
 | --- | ------------------------------------------------------------------------------------------------------------------- | ---------- | ------ |
 |     | Clear [refactoring gate](todo/refactor.md)                                                                          | —          | —      |
+| A35 | [Convert to arrow function](todo/actions.md#a35-convert-to-arrow-function) (only non-void single-expression closures) | Low-Medium | Low    |
 | C2  | [`#[ArrayShape]` return shapes on stub functions](todo/completion.md#c2-arrayshape-return-shapes-on-stub-functions) | Medium     | Medium |
 | T7  | [`key-of<T>` and `value-of<T>` resolution](todo/type-inference.md#t7-key-oft-and-value-oft-resolution)              | Medium     | Medium |
 | A3  | Switch → match conversion                                                                                           | Low-Medium | Medium |
 | A10 | [Generate interface from class](todo/actions.md#a10-generate-interface-from-class)                                  | Low-Medium | Medium |
-| A35 | [Convert to arrow function](todo/actions.md#a35-convert-to-arrow-function) (only non-void single-expression closures) | Low-Medium | Low    |
 
-## Sprint 7 — Laravel excellence & stub accuracy
+## Sprint 7 — 1.0 release & IDE extensions
 
 | #   | Item                                                                                                                                       | Impact      | Effort      |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ----------- |
 |     | Clear [refactoring gate](todo/refactor.md)                                                                                                 | —           | —           |
-| L1  | [Facade completion](todo/laravel.md#l1-facade-completion)                                                                                  | High        | High        |
-| L11 | [Relation dot-notation string and column name string completion](todo/laravel.md#l11-relation-dot-notation-string-completion-and-column-name-string-completion) | Medium-High | Medium-High |
-| E1  | [External stub packages (ide-helper, etc.)](todo/external-stubs.md#e1-external-stub-packages)                                              | Medium-High | Medium      |
-| E4  | [Stub version alignment with target PHP](todo/external-stubs.md#e4-stub-version-alignment)                                                 | Medium      | Medium      |
 | E5  | [Extension stub coverage audit](todo/external-stubs.md#e5-extension-stub-audit)                                                            | Medium      | Low         |
+| X1  | [Staleness detection and auto-refresh](todo/indexing.md#x1-staleness-detection-and-auto-refresh)                                           | Medium      | Medium      |
+| E1  | [External stub packages (ide-helper, etc.)](todo/external-stubs.md#e1-external-stub-packages)                                              | Medium-High | Medium      |
+| E2  | [Project-level stubs as type resolution source](todo/external-stubs.md#e2-project-level-stubs-as-type-resolution-source) (depends on E1)   | Medium      | Medium      |
+| E3  | [IDE-provided and `.phpantom.toml` stub paths](todo/external-stubs.md#e3-ide-provided-and-phpantomtoml-stub-paths) (depends on E2)         | Low-Medium  | Low         |
+| E4  | [Stub version alignment with target PHP](todo/external-stubs.md#e4-stub-version-alignment) (depends on E1)                                 | Medium      | Medium      |
+| L11 | [Relation dot-notation string and column name string completion](todo/laravel.md#l11-relation-dot-notation-string-completion-and-column-name-string-completion) | Medium-High | Medium-High |
+| P1a | `type_hint_to_classes` returns `Vec<Arc<ClassInfo>>` (memory prerequisite for X4)                                                                              | Low         | Low         |
+| X4  | [Full background indexing](todo/indexing.md#x4-full-background-indexing) (workspace symbols, fast find-references; depends on P1a)         | Medium      | High        |
+| L1  | [Facade completion](todo/laravel.md#l1-facade-completion)                                                                                  | High        | High        |
+|     | **Release 1.0.0 + IDE extensions**                                                                                                         |             |             |
 
 ## Sprint 8 — Blade support
 
@@ -162,8 +173,6 @@ unlikely to move the needle for most users.
 | L9   | Higher-order collection proxies                                                                                                                                             | Low-Medium  | Medium-High    |
 | L10  | `View::withX()` / `RedirectResponse::withX()` dynamic methods                                                                                                               | Low         | Low            |
 |      | **[External Stubs](todo/external-stubs.md)**                                                                                                                                |             |                |
-| E2   | Project-level stubs as type resolution source                                                                                                                               | Medium      | Medium         |
-| E3   | IDE-provided and `.phpantom.toml` stub paths                                                                                                                                | Low-Medium  | Low            |
 | E6   | Stub install prompt for non-Composer projects                                                                                                                               | Low         | Low            |
 | E7   | [Stub-based framework patches](todo/external-stubs.md#e7-stub-based-framework-patches)                                                                                      | Medium      | Medium         |
 |      | **[Performance](todo/performance.md)**                                                                                                                                      |             |                |
@@ -174,7 +183,6 @@ unlikely to move the needle for most users.
 | P10  | [Redundant `parse_and_cache_file` from multiple threads](todo/performance.md#p10-redundant-parse_and_cache_file-from-multiple-threads)                                      | Medium      | Low            |
 | P11  | [Uncached base-resolution in `build_scope_methods_for_builder`](todo/performance.md#p11-uncached-base-resolution-in-build_scope_methods_for_builder)                        | Low-Medium  | Low            |
 | P3   | Parallel pre-filter in `find_implementors`                                                                                                                                  | Low-Medium  | Medium         |
-| P1a  | `type_hint_to_classes` returns `Vec<Arc<ClassInfo>>`                                                                                                                        | Low         | Low            |
 | P1b  | Propagate `Arc<ClassInfo>` through variable-resolution pipeline                                                                                                             | Low         | Medium         |
 | P4   | `memmem` for block comment terminator search                                                                                                                                | Low         | Low            |
 | P5   | `memmap2` for file reads during scanning                                                                                                                                    | Low         | Low            |
@@ -185,12 +193,10 @@ unlikely to move the needle for most users.
 | P17  | [`mago-names` resolution on the parse hot path](todo/performance.md#p17-mago-names-resolution-on-the-parse-hot-path)                                                        | Medium      | Low            |
 | P18  | [Subtype result caching](todo/performance.md#p18-subtype-result-caching) (per-request HashMap for hierarchy walks)                                                          | Medium      | Low            |
 |      | **[Indexing](todo/indexing.md)**                                                                                                                                            |             |                |
-| X1   | Staleness detection and auto-refresh                                                                                                                                        | Medium      | Medium         |
 | X3   | Completion item detail on demand (`completionItem/resolve`)                                                                                                                 | Medium      | Medium         |
 | X7   | [Recency tracking](todo/indexing.md#x7-recency-tracking)                                                                                                                    | Medium      | Medium         |
 | X2   | Parallel file processing — remaining work                                                                                                                                   | Low-Medium  | Medium         |
 | X5   | Granular progress reporting for indexing, GTI, and Find References                                                                                                          | Low-Medium  | Medium         |
-| X4   | Full background indexing (`strategy = "full"`)                                                                                                                              | Medium      | High           |
 | X6   | Disk cache (evaluate later)                                                                                                                                                 | Medium      | High           |
 |      | **[Inline Completion](todo/inline-completion.md)**                                                                                                                          |             |                |
 | N1   | Template engine (type-aware snippets)                                                                                                                                       | Medium      | High           |
