@@ -1553,6 +1553,21 @@ impl Backend {
     }
 }
 
+// ─── Self-keyword helpers ───────────────────────────────────────────────────
+
+/// Returns `true` if `s` is one of the PHP keywords that refer to the
+/// *current* class (not the parent): `self`, `static`, or `$this`.
+///
+/// Callers that also need to match `parent` should add a separate
+/// `eq_ignore_ascii_case("parent")` check, because `parent` resolves
+/// to the *parent* class rather than the current one.
+///
+/// The comparison is case-insensitive for `self` and `static`.
+/// `$this` is matched literally (it is always lowercase in PHP).
+pub(crate) fn is_self_or_static(s: &str) -> bool {
+    s.eq_ignore_ascii_case("self") || s.eq_ignore_ascii_case("static") || s == "$this"
+}
+
 // ─── Shared helpers for code actions and diagnostics ────────────────────────
 
 /// Check if a line contains the `function` keyword as a standalone word
@@ -1728,4 +1743,38 @@ pub(crate) fn infer_type_from_literal(expr: &str) -> Option<PhpType> {
 
     // Not a simple literal.
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_self_or_static_matches_three() {
+        assert!(is_self_or_static("self"));
+        assert!(is_self_or_static("static"));
+        assert!(is_self_or_static("$this"));
+    }
+
+    #[test]
+    fn is_self_or_static_excludes_parent() {
+        assert!(!is_self_or_static("parent"));
+        assert!(!is_self_or_static("Parent"));
+        assert!(!is_self_or_static("PARENT"));
+    }
+
+    #[test]
+    fn is_self_or_static_case_insensitive() {
+        assert!(is_self_or_static("Self"));
+        assert!(is_self_or_static("SELF"));
+        assert!(is_self_or_static("Static"));
+        assert!(is_self_or_static("STATIC"));
+    }
+
+    #[test]
+    fn is_self_or_static_rejects_others() {
+        assert!(!is_self_or_static(""));
+        assert!(!is_self_or_static("this"));
+        assert!(!is_self_or_static("Foo"));
+    }
 }

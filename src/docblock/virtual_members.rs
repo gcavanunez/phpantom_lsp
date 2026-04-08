@@ -257,7 +257,7 @@ fn parse_method_tag_params(params_str: &str) -> Vec<ParameterInfo> {
         // Scan tokens right-to-left to find the `$name` token (it may be
         // followed by `= default`).
         let dollar_pos = part.rfind('$');
-        let (type_hint, param_name) = if let Some(dp) = dollar_pos {
+        let (parsed_type, param_name) = if let Some(dp) = dollar_pos {
             let name_and_rest = &part[dp..];
             // The name ends at whitespace, `=`, `)`, or end of string.
             let name_end = name_and_rest
@@ -266,17 +266,18 @@ fn parse_method_tag_params(params_str: &str) -> Vec<ParameterInfo> {
             let name = &name_and_rest[..name_end];
 
             let before = part[..dp].trim().trim_end_matches("...");
-            let type_str = if before.is_empty() {
+            let parsed_type = if before.is_empty() {
                 None
             } else {
-                Some(before.trim_end_matches(['.', ',']).to_string())
-            };
-            let type_str = match type_str {
-                Some(ref s) if s.is_empty() => None,
-                other => other,
+                let trimmed = before.trim_end_matches(['.', ',']);
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(PhpType::parse(trimmed))
+                }
             };
 
-            (type_str, name.to_string())
+            (parsed_type, name.to_string())
         } else {
             // No `$` found — treat the whole thing as a name-less param.
             // This is unusual but we handle it gracefully.
@@ -285,7 +286,6 @@ fn parse_method_tag_params(params_str: &str) -> Vec<ParameterInfo> {
 
         let is_required = !has_default && !is_variadic;
 
-        let parsed_type = type_hint.as_deref().map(PhpType::parse);
         result.push(ParameterInfo {
             name: param_name,
             is_required,

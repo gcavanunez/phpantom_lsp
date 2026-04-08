@@ -1809,6 +1809,39 @@ impl ResolvedType {
         }
     }
 
+    /// Strip null from the type, preserving class info (since
+    /// null-stripping never invalidates the class).
+    pub(crate) fn strip_null(&mut self) {
+        if let Some(non_null) = self.type_string.non_null_type() {
+            self.type_string = non_null;
+        }
+    }
+
+    /// Replace the type string and clear `class_info` when the new type
+    /// no longer matches the original class.
+    pub(crate) fn replace_type(&mut self, new_type: PhpType) {
+        let still_matches = self.class_info.as_ref().is_some_and(|ci| {
+            // Check base_name first (fast path for simple Named/Generic types).
+            if let Some(bn) = new_type.base_name() {
+                let bn = bn.strip_prefix('\\').unwrap_or(bn);
+                if bn == ci.name || bn == ci.fqn() {
+                    return true;
+                }
+            }
+            // For unions/intersections, check whether the class still
+            // appears as a top-level member (e.g. `Foobar|int` still
+            // contains `Foobar`).
+            new_type.top_level_class_names().iter().any(|name| {
+                let name = name.strip_prefix('\\').unwrap_or(name);
+                name == ci.name || name == ci.fqn()
+            })
+        });
+        if !still_matches {
+            self.class_info = None;
+        }
+        self.type_string = new_type;
+    }
+
     /// Extract just the class info, discarding the type string.
     ///
     /// Convenience method for callers that only need the `ClassInfo`
@@ -1866,6 +1899,17 @@ impl ResolvedType {
         if classes.len() == 1 {
             let class = classes.into_iter().next().unwrap();
             vec![ResolvedType::from_both(type_hint, class)]
+        } else if matches!(&type_hint, PhpType::Intersection(_)) {
+            // Intersection types: all classes contribute members to a
+            // single value.  Emit one ResolvedType per class (so
+            // `into_arced_classes` sees every member set) but tag each
+            // entry with the full intersection PhpType so that
+            // `types_joined` can reconstruct the intersection instead
+            // of wrapping them in a union.
+            classes
+                .into_iter()
+                .map(|c| ResolvedType::from_both(type_hint.clone(), c))
+                .collect()
         } else {
             classes.into_iter().map(ResolvedType::from_class).collect()
         }
@@ -1960,6 +2004,16 @@ impl ResolvedType {
             0 => PhpType::mixed(),
             1 => resolved[0].type_string.clone(),
             _ => {
+                // When all entries share the same intersection type,
+                // they came from a single intersection — return it
+                // directly instead of wrapping in a Union.
+                if let PhpType::Intersection(_) = &resolved[0].type_string
+                    && resolved
+                        .iter()
+                        .all(|rt| rt.type_string == resolved[0].type_string)
+                {
+                    return resolved[0].type_string.clone();
+                }
                 let members: Vec<PhpType> =
                     resolved.iter().map(|rt| rt.type_string.clone()).collect();
                 PhpType::Union(members)
@@ -2837,5 +2891,185 @@ mod tests {
             a.signature_eq(&b),
             "Body-only changes (offsets, descriptions, links) must not break signature_eq"
         );
+    }
+
+    // ── ResolvedType helpers ────────────────────────────────────────
+
+    /// Helper: create a minimal ClassInfo with only a name.
+    fn class(name: &str) -> ClassInfo {
+        ClassInfo {
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Helper: create a ClassInfo with a namespace.
+    fn class_with_ns(name: &str, ns: &str) -> ClassInfo {
+        ClassInfo {
+            name: name.to_string(),
+            file_namespace: Some(ns.to_string()),
+            ..Default::default()
+        }
+    }
+
+    // ── from_classes_with_hint: intersection ────────────────────────
+
+    #[test]
+    fn from_classes_with_hint_single_class_uses_hint() {
+        let hint = PhpType::Named("Foo".to_owned());
+        let result = ResolvedType::from_classes_with_hint(vec![class("Foo")], hint.clone());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].type_string, hint);
+        assert!(result[0].class_info.is_some());
+    }
+
+    #[test]
+    fn from_classes_with_hint_intersection_preserves_type() {
+        let hint = PhpType::Intersection(vec![
+            PhpType::Named("Countable".to_owned()),
+            PhpType::Named("Serializable".to_owned()),
+        ]);
+        let classes = vec![class("Countable"), class("Serializable")];
+        let result = ResolvedType::from_classes_with_hint(classes, hint.clone());
+        assert_eq!(result.len(), 2);
+        // Both entries carry the full intersection type.
+        for rt in &result {
+            assert_eq!(rt.type_string, hint);
+            assert!(rt.class_info.is_some());
+        }
+    }
+
+    #[test]
+    fn from_classes_with_hint_union_uses_class_names() {
+        let hint = PhpType::Union(vec![
+            PhpType::Named("Foo".to_owned()),
+            PhpType::Named("Bar".to_owned()),
+        ]);
+        let classes = vec![class("Foo"), class("Bar")];
+        let result = ResolvedType::from_classes_with_hint(classes, hint);
+        assert_eq!(result.len(), 2);
+        // Union: each entry uses the class's own name (old behaviour).
+        assert_eq!(result[0].type_string, PhpType::Named("Foo".to_owned()));
+        assert_eq!(result[1].type_string, PhpType::Named("Bar".to_owned()));
+    }
+
+    // ── types_joined: intersection ──────────────────────────────────
+
+    #[test]
+    fn types_joined_single_entry() {
+        let entries = vec![ResolvedType::from_type_string(PhpType::Named(
+            "Foo".to_owned(),
+        ))];
+        assert_eq!(
+            ResolvedType::types_joined(&entries),
+            PhpType::Named("Foo".to_owned())
+        );
+    }
+
+    #[test]
+    fn types_joined_intersection_entries_return_intersection() {
+        let intersection = PhpType::Intersection(vec![
+            PhpType::Named("Countable".to_owned()),
+            PhpType::Named("Serializable".to_owned()),
+        ]);
+        let entries = vec![
+            ResolvedType::from_both(intersection.clone(), class("Countable")),
+            ResolvedType::from_both(intersection.clone(), class("Serializable")),
+        ];
+        let joined = ResolvedType::types_joined(&entries);
+        assert_eq!(joined, intersection);
+    }
+
+    #[test]
+    fn types_joined_mixed_entries_return_union() {
+        let entries = vec![
+            ResolvedType::from_type_string(PhpType::Named("Foo".to_owned())),
+            ResolvedType::from_type_string(PhpType::Named("Bar".to_owned())),
+        ];
+        let joined = ResolvedType::types_joined(&entries);
+        assert_eq!(
+            joined,
+            PhpType::Union(vec![
+                PhpType::Named("Foo".to_owned()),
+                PhpType::Named("Bar".to_owned()),
+            ])
+        );
+    }
+
+    #[test]
+    fn types_joined_empty_returns_mixed() {
+        let entries: Vec<ResolvedType> = vec![];
+        assert_eq!(ResolvedType::types_joined(&entries), PhpType::mixed());
+    }
+
+    // ── strip_null ──────────────────────────────────────────────────
+
+    #[test]
+    fn strip_null_removes_nullable() {
+        let mut rt = ResolvedType::from_both(
+            PhpType::Nullable(Box::new(PhpType::Named("Foo".to_owned()))),
+            class("Foo"),
+        );
+        rt.strip_null();
+        assert_eq!(rt.type_string, PhpType::Named("Foo".to_owned()));
+        assert!(rt.class_info.is_some());
+    }
+
+    #[test]
+    fn strip_null_no_op_when_not_nullable() {
+        let mut rt = ResolvedType::from_both(PhpType::Named("Foo".to_owned()), class("Foo"));
+        rt.strip_null();
+        assert_eq!(rt.type_string, PhpType::Named("Foo".to_owned()));
+        assert!(rt.class_info.is_some());
+    }
+
+    // ── replace_type ────────────────────────────────────────────────
+
+    #[test]
+    fn replace_type_keeps_class_info_when_matching() {
+        let mut rt = ResolvedType::from_both(PhpType::Named("Foo".to_owned()), class("Foo"));
+        rt.replace_type(PhpType::Named("Foo".to_owned()));
+        assert_eq!(rt.type_string, PhpType::Named("Foo".to_owned()));
+        assert!(rt.class_info.is_some());
+    }
+
+    #[test]
+    fn replace_type_clears_class_info_when_mismatched() {
+        let mut rt = ResolvedType::from_both(PhpType::Named("Foo".to_owned()), class("Foo"));
+        rt.replace_type(PhpType::Named("array".to_owned()));
+        assert_eq!(rt.type_string, PhpType::Named("array".to_owned()));
+        assert!(rt.class_info.is_none());
+    }
+
+    #[test]
+    fn replace_type_matches_fqn_with_leading_backslash() {
+        let mut rt = ResolvedType::from_both(
+            PhpType::Named("App\\Models\\User".to_owned()),
+            class_with_ns("User", "App\\Models"),
+        );
+        rt.replace_type(PhpType::Named("\\App\\Models\\User".to_owned()));
+        assert_eq!(
+            rt.type_string,
+            PhpType::Named("\\App\\Models\\User".to_owned())
+        );
+        assert!(
+            rt.class_info.is_some(),
+            "class_info should be preserved when FQN matches modulo leading backslash"
+        );
+    }
+
+    #[test]
+    fn replace_type_matches_short_name() {
+        let mut rt = ResolvedType::from_both(PhpType::Named("User".to_owned()), class("User"));
+        rt.replace_type(PhpType::Named("User".to_owned()));
+        assert!(rt.class_info.is_some());
+    }
+
+    #[test]
+    fn replace_type_clears_when_no_class_info() {
+        let mut rt = ResolvedType::from_type_string(PhpType::Named("int".to_owned()));
+        rt.replace_type(PhpType::Named("string".to_owned()));
+        assert_eq!(rt.type_string, PhpType::Named("string".to_owned()));
+        assert!(rt.class_info.is_none());
     }
 }

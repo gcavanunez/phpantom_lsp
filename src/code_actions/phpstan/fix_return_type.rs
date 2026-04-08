@@ -1991,7 +1991,7 @@ pub(crate) fn is_fix_return_type_stale(content: &str, diag_line: usize, identifi
                     .split(|c: char| c.is_whitespace() || c == '{')
                     .next()
                     .unwrap_or("");
-                type_word == "void"
+                PhpType::parse(type_word).is_void()
             } else {
                 false
             }

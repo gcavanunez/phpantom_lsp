@@ -41,6 +41,32 @@ use crate::completion::conditional_resolution::resolve_conditional_with_args;
 use crate::completion::resolver::{Loaders, VarResolutionCtx};
 use crate::util::strip_fqn_prefix;
 
+/// Create a `ResolvedType` from a `PhpType`, looking up class info when the type names a class.
+///
+/// When the `PhpType` has a `base_name()` that resolves to a known class, returns
+/// `ResolvedType::from_both(ty, class)`. Otherwise returns `ResolvedType::from_type_string(ty)`.
+fn resolved_type_with_lookup(
+    ty: PhpType,
+    _current_class_name: &str,
+    all_classes: &[Arc<ClassInfo>],
+    class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
+) -> ResolvedType {
+    if let Some(base) = ty.base_name() {
+        let base = base.strip_prefix('\\').unwrap_or(base);
+        // Don't try to look up scalars/pseudo-types
+        if !crate::php_type::is_keyword_type(base) {
+            // Try in-file classes first
+            let cls = crate::util::find_class_by_name(all_classes, base)
+                .map(|arc| arc.as_ref().clone())
+                .or_else(|| class_loader(base).map(Arc::unwrap_or_clone));
+            if let Some(class) = cls {
+                return ResolvedType::from_both(ty, class);
+            }
+        }
+    }
+    ResolvedType::from_type_string(ty)
+}
+
 /// Resolve a right-hand-side expression to zero or more
 /// [`ResolvedType`] values.
 ///
@@ -496,13 +522,15 @@ fn resolve_rhs_instantiation(
                             }
                         }
 
-                        return vec![ResolvedType::from_class(substituted)];
+                        let generic_type =
+                            PhpType::Generic(substituted.name.clone(), type_args.clone());
+                        return vec![ResolvedType::from_both(generic_type, substituted)];
                     }
                 }
             }
         }
 
-        return ResolvedType::from_classes(classes);
+        return ResolvedType::from_classes_with_hint(classes, parsed_name);
     }
 
     // ── `new $var` where `$var` holds a class-string ────────────
@@ -1282,7 +1310,12 @@ fn resolve_rhs_function_call<'b>(
         }
         // The type string is informative (e.g. `list<User>`) but
         // doesn't resolve to a class — return as type-string-only.
-        return vec![ResolvedType::from_type_string(raw_type)];
+        return vec![resolved_type_with_lookup(
+            raw_type,
+            current_class_name,
+            all_classes,
+            class_loader,
+        )];
     }
 
     if let Some(ref name) = func_name
@@ -1363,7 +1396,12 @@ fn resolve_rhs_function_call<'b>(
             if *ret == PhpType::void() {
                 return vec![ResolvedType::from_type_string(PhpType::null())];
             }
-            return vec![ResolvedType::from_type_string(ret.clone())];
+            return vec![resolved_type_with_lookup(
+                ret.clone(),
+                current_class_name,
+                all_classes,
+                class_loader,
+            )];
         }
     }
 
@@ -1389,7 +1427,12 @@ fn resolve_rhs_function_call<'b>(
         if ret == PhpType::void() {
             return vec![ResolvedType::from_type_string(PhpType::null())];
         }
-        return vec![ResolvedType::from_type_string(ret)];
+        return vec![resolved_type_with_lookup(
+            ret,
+            current_class_name,
+            all_classes,
+            class_loader,
+        )];
     }
 
     // ── Variable invocation: $fn() ──────────────────
@@ -1489,7 +1532,12 @@ fn resolve_rhs_function_call<'b>(
                 // callers like foreach resolution can still extract the
                 // element type via `PhpType::extract_value_type`.
                 if !ret.is_empty() {
-                    return vec![ResolvedType::from_type_string(ret.clone())];
+                    return vec![resolved_type_with_lookup(
+                        ret.clone(),
+                        current_class_name,
+                        all_classes,
+                        class_loader,
+                    )];
                 }
             }
         }
@@ -1537,7 +1585,12 @@ fn resolve_rhs_function_call<'b>(
                     return ResolvedType::from_classes_with_hint(resolved, ret.clone());
                 }
                 if !ret.is_empty() {
-                    return vec![ResolvedType::from_type_string(ret.clone())];
+                    return vec![resolved_type_with_lookup(
+                        ret.clone(),
+                        current_class_name,
+                        all_classes,
+                        class_loader,
+                    )];
                 }
             }
         }
@@ -1728,7 +1781,12 @@ fn resolve_rhs_method_call_inner<'b>(
             if parsed_effective == PhpType::void() {
                 return vec![ResolvedType::from_type_string(PhpType::null())];
             }
-            return vec![ResolvedType::from_type_string(parsed_effective)];
+            return vec![resolved_type_with_lookup(
+                parsed_effective,
+                &ctx.current_class.name,
+                ctx.all_classes,
+                ctx.class_loader,
+            )];
         }
     }
     vec![]
@@ -1911,7 +1969,12 @@ fn resolve_rhs_static_call(
                 if *hint == PhpType::void() {
                     return vec![ResolvedType::from_type_string(PhpType::null())];
                 }
-                return vec![ResolvedType::from_type_string(hint.clone())];
+                return vec![resolved_type_with_lookup(
+                    hint.clone(),
+                    current_class_name,
+                    ctx.all_classes,
+                    ctx.class_loader,
+                )];
             }
         }
     }
@@ -1936,6 +1999,7 @@ fn resolve_rhs_property_access(
     fn resolve_property_with_hint(
         prop_name: &str,
         owner: &ClassInfo,
+        current_class_name: &str,
         all_classes: &[Arc<ClassInfo>],
         class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
     ) -> Vec<ResolvedType> {
@@ -1956,7 +2020,12 @@ fn resolve_rhs_property_access(
             // shapes, or names a non-scalar class).
             return match type_hint {
                 Some(hint) => {
-                    vec![ResolvedType::from_type_string(hint)]
+                    vec![resolved_type_with_lookup(
+                        hint,
+                        current_class_name,
+                        all_classes,
+                        class_loader,
+                    )]
                 }
                 _ => vec![],
             };
@@ -2076,8 +2145,13 @@ fn resolve_rhs_property_access(
             };
 
             for owner in &owner_classes {
-                let resolved =
-                    resolve_property_with_hint(&prop_name, owner, all_classes, class_loader);
+                let resolved = resolve_property_with_hint(
+                    &prop_name,
+                    owner,
+                    current_class_name,
+                    all_classes,
+                    class_loader,
+                );
                 if !resolved.is_empty() {
                     return resolved;
                 }

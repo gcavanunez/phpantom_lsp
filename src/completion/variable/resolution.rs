@@ -2715,7 +2715,10 @@ fn walk_try_statement<'b>(
                 ctx.all_classes,
                 ctx.class_loader,
             );
-            ResolvedType::extend_unique(results, ResolvedType::from_classes(resolved));
+            ResolvedType::extend_unique(
+                results,
+                ResolvedType::from_classes_with_hint(resolved, parsed_hint),
+            );
         }
         // Same logic: when the cursor is inside this catch block,
         // treat preceding assignments as unconditional.
@@ -3625,7 +3628,10 @@ fn try_apply_pass_by_reference_type(
                 if !conditional {
                     results.clear();
                 }
-                ResolvedType::extend_unique(results, ResolvedType::from_classes(resolved));
+                ResolvedType::extend_unique(
+                    results,
+                    ResolvedType::from_classes_with_hint(resolved, type_hint.clone()),
+                );
             }
         }
     }

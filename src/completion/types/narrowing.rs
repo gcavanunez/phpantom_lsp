@@ -1554,9 +1554,7 @@ fn apply_and_lhs_null_narrowing(
                 // The LHS proved the variable is non-null → remove null.
                 results.retain(|rt| !rt.type_string.is_null());
                 for rt in results.iter_mut() {
-                    if let Some(non_null) = rt.type_string.non_null_type() {
-                        rt.type_string = non_null;
-                    }
+                    rt.strip_null();
                 }
             }
         }
@@ -2350,9 +2348,7 @@ pub(in crate::completion) fn apply_guard_clause_null_narrowing(
             results.retain(|rt| !rt.type_string.is_null());
             // Also strip `null` from union types (e.g. `Foo|null` → `Foo`).
             for rt in results.iter_mut() {
-                if let Some(non_null) = rt.type_string.non_null_type() {
-                    rt.type_string = non_null;
-                }
+                rt.strip_null();
             }
         }
         // The "exits when non-null" case (condition_checks_null == true)
@@ -2387,9 +2383,7 @@ pub(in crate::completion) fn try_apply_if_body_null_narrowing(
     if condition_checks_non_null(condition, ctx.var_name) {
         results.retain(|rt| !rt.type_string.is_null());
         for rt in results.iter_mut() {
-            if let Some(non_null) = rt.type_string.non_null_type() {
-                rt.type_string = non_null;
-            }
+            rt.strip_null();
         }
     }
 }
@@ -2426,9 +2420,7 @@ pub(in crate::completion) fn try_apply_if_body_null_narrowing_inverse(
         // else-body sees non-null.
         results.retain(|rt| !rt.type_string.is_null());
         for rt in results.iter_mut() {
-            if let Some(non_null) = rt.type_string.non_null_type() {
-                rt.type_string = non_null;
-            }
+            rt.strip_null();
         }
     }
 }
@@ -2564,16 +2556,7 @@ fn apply_type_guard_inclusion(kind: TypeGuardKind, results: &mut Vec<ResolvedTyp
     for rt in results.iter_mut() {
         let filtered = filter_type_by_guard(&rt.type_string, kind, true);
         if let Some(narrowed) = filtered {
-            rt.type_string = narrowed;
-            // If the narrowed type no longer matches the class_info's
-            // class (e.g. narrowed from `Request|list<Request>` to
-            // `list<Request>`), clear the class_info.
-            if let Some(ref ci) = rt.class_info {
-                let ci_type = PhpType::Named(ci.name.clone());
-                if !type_matches_guard(&ci_type, kind) {
-                    rt.class_info = None;
-                }
-            }
+            rt.replace_type(narrowed);
         }
     }
     // Remove entries that became empty (no union member matched).
@@ -2586,7 +2569,7 @@ fn apply_type_guard_exclusion(kind: TypeGuardKind, results: &mut Vec<ResolvedTyp
     for rt in results.iter_mut() {
         let filtered = filter_type_by_guard(&rt.type_string, kind, false);
         if let Some(narrowed) = filtered {
-            rt.type_string = narrowed;
+            rt.replace_type(narrowed);
         }
     }
     results.retain(|rt| !rt.type_string.is_empty_sentinel());

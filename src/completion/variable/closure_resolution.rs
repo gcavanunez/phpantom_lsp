@@ -1357,7 +1357,8 @@ fn resolve_closure_params_with_inferred(
                             break;
                         }
                     }
-                    *results = ResolvedType::from_classes(resolved_classes);
+                    *results =
+                        ResolvedType::from_classes_with_hint(resolved_classes, hint_type.clone());
                     break;
                 }
 

@@ -27,8 +27,9 @@ use crate::completion::variable::rhs_resolution::{TemplateBindingMode, classify_
 use crate::completion::variable::{ARRAY_ELEMENT_FUNCS, ARRAY_PRESERVING_FUNCS};
 use crate::docblock;
 use crate::php_type::PhpType;
+use crate::subject_expr::SubjectExpr;
 use crate::types::*;
-use crate::util::{find_class_at_offset, position_to_offset};
+use crate::util::{find_class_at_offset, is_self_or_static, position_to_offset};
 
 use super::conditional_resolution::{
     VarClassStringResolver, resolve_conditional_with_text_args,
@@ -1196,7 +1197,7 @@ impl Backend {
         }
 
         // $this / self / static → current class
-        if trimmed == "$this" || trimmed == "self" || trimmed == "static" {
+        if is_self_or_static(trimmed) {
             return ctx.current_class.map(|c| PhpType::Named(c.name.clone()));
         }
 
@@ -1306,53 +1307,45 @@ impl Backend {
         if arg_text.ends_with(')')
             && let Some((call_body, _args)) = split_call_subject(arg_text)
         {
-            // Instance method chain: `expr->method()`
-            if let Some(pos) = call_body.rfind("->") {
-                // Strip trailing `?` from LHS when the operator was `?->`
-                let lhs = call_body[..pos]
-                    .strip_suffix('?')
-                    .unwrap_or(&call_body[..pos]);
-                let method_name = &call_body[pos + 2..];
-
-                let lhs_classes = ResolvedType::into_arced_classes(
-                    super::resolver::resolve_target_classes(lhs, AccessKind::Arrow, ctx),
-                );
-                for cls in &lhs_classes {
-                    if let Some(rt) = crate::inheritance::resolve_method_return_type(
-                        cls,
-                        method_name,
-                        class_loader,
-                    ) {
+            match SubjectExpr::parse_callee(call_body) {
+                SubjectExpr::MethodCall { base, method } => {
+                    let base_text = base.to_subject_text();
+                    let lhs_classes = ResolvedType::into_arced_classes(
+                        super::resolver::resolve_target_classes(&base_text, AccessKind::Arrow, ctx),
+                    );
+                    for cls in &lhs_classes {
+                        if let Some(rt) = crate::inheritance::resolve_method_return_type(
+                            cls,
+                            &method,
+                            class_loader,
+                        ) {
+                            return Some(rt);
+                        }
+                    }
+                }
+                SubjectExpr::StaticMethodCall { class, method } => {
+                    let owner = if is_self_or_static(&class) {
+                        current_class.cloned()
+                    } else if class.eq_ignore_ascii_case("parent") {
+                        current_class
+                            .and_then(|c| c.parent_class.as_ref())
+                            .and_then(|p| class_loader(p).map(Arc::unwrap_or_clone))
+                    } else {
+                        find_class_by_name(all_classes, &class)
+                            .map(|arc| ClassInfo::clone(arc))
+                            .or_else(|| class_loader(&class).map(Arc::unwrap_or_clone))
+                    };
+                    if let Some(ref cls) = owner
+                        && let Some(rt) = crate::inheritance::resolve_method_return_type(
+                            cls,
+                            &method,
+                            class_loader,
+                        )
+                    {
                         return Some(rt);
                     }
                 }
-            }
-
-            // Static call: `ClassName::method()`
-            if let Some(pos) = call_body.rfind("::") {
-                let class_part = &call_body[..pos];
-                let method_name = &call_body[pos + 2..];
-
-                let owner = if class_part == "self" || class_part == "static" {
-                    current_class.cloned()
-                } else if class_part == "parent" {
-                    current_class
-                        .and_then(|c| c.parent_class.as_ref())
-                        .and_then(|p| class_loader(p).map(Arc::unwrap_or_clone))
-                } else {
-                    find_class_by_name(all_classes, class_part)
-                        .map(|arc| ClassInfo::clone(arc))
-                        .or_else(|| class_loader(class_part).map(Arc::unwrap_or_clone))
-                };
-                if let Some(ref cls) = owner
-                    && let Some(rt) = crate::inheritance::resolve_method_return_type(
-                        cls,
-                        method_name,
-                        class_loader,
-                    )
-                {
-                    return Some(rt);
-                }
+                _ => {}
             }
         }
 
