@@ -654,7 +654,7 @@ impl Backend {
                 }
             }
 
-            SymbolKind::ClassReference { name, is_fqn: _ } => {
+            SymbolKind::ClassReference { name, .. } => {
                 // Check whether this class reference is in a `new ClassName` context.
                 // If so, show the __construct method hover instead of the class hover.
                 let before = &content[..symbol.start as usize];

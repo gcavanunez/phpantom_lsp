@@ -23,7 +23,7 @@ use crate::docblock::types::split_type_token;
 use crate::php_type::PhpType;
 use crate::types::TemplateVariance;
 
-use super::{SelfStaticParentKind, SymbolKind, SymbolSpan};
+use super::{ClassRefContext, SelfStaticParentKind, SymbolKind, SymbolSpan};
 use crate::util::strip_fqn_prefix;
 
 // ─── Navigability filter ────────────────────────────────────────────────────
@@ -57,7 +57,31 @@ pub(super) fn class_ref_span(start: u32, end: u32, raw_name: &str) -> SymbolSpan
     SymbolSpan {
         start,
         end,
-        kind: SymbolKind::ClassReference { name, is_fqn },
+        kind: SymbolKind::ClassReference {
+            name,
+            is_fqn,
+            context: ClassRefContext::Other,
+        },
+    }
+}
+
+/// Like [`class_ref_span`] but with an explicit [`ClassRefContext`].
+pub(super) fn class_ref_span_ctx(
+    start: u32,
+    end: u32,
+    raw_name: &str,
+    ctx: ClassRefContext,
+) -> SymbolSpan {
+    let is_fqn = raw_name.starts_with('\\');
+    let name = strip_fqn_prefix(raw_name).to_string();
+    SymbolSpan {
+        start,
+        end,
+        kind: SymbolKind::ClassReference {
+            name,
+            is_fqn,
+            context: ctx,
+        },
     }
 }
 
@@ -502,7 +526,11 @@ pub(super) fn emit_type_spans(
                 spans.push(SymbolSpan {
                     start: token_file_offset,
                     end: token_file_offset + trimmed.len() as u32,
-                    kind: SymbolKind::ClassReference { name, is_fqn },
+                    kind: SymbolKind::ClassReference {
+                        name,
+                        is_fqn,
+                        context: ClassRefContext::Other,
+                    },
                 });
             }
         }
@@ -930,6 +958,7 @@ fn emit_identifier_span(name: &str, start: u32, end: u32, spans: &mut Vec<Symbol
             kind: SymbolKind::ClassReference {
                 name: display_name,
                 is_fqn,
+                context: ClassRefContext::Other,
             },
         });
     }

@@ -109,6 +109,7 @@ mod argument_count;
 mod deprecated;
 pub(crate) mod helpers;
 mod implementation_errors;
+mod invalid_class_kind;
 mod syntax_errors;
 pub(crate) mod undefined_variables;
 pub(crate) mod unknown_classes;
@@ -169,6 +170,7 @@ impl Backend {
         self.collect_implementation_error_diagnostics(uri_str, content, out);
         self.collect_deprecated_diagnostics(uri_str, content, out);
         self.collect_undefined_variable_diagnostics(uri_str, content, out);
+        self.collect_invalid_class_kind_diagnostics(uri_str, content, out);
     }
 
     /// Build a merged diagnostic set from fresh fast diagnostics,

@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Invalid class-like kind diagnostics.** Flags class-like names used in positions where their kind is guaranteed to fail at runtime: `new` on abstract classes, interfaces, traits, or enums; `extends` on a final class, interface, or trait; `implements` with a non-interface; trait `use` with a non-trait; `instanceof` with a trait (always false); `catch` with a non-Throwable type or trait; and traits in native type-hint positions. Severity follows PHP semantics: unconditional fatal errors are Error, runtime-conditional failures are Warning.
 - **Nested array shape inference from multi-level key assignments.** Assignments like `$b['a']['b'] = 'x'` now produce a nested array shape type (`array{a: array{b: string}}`), enabling array key completion and hover for arrays built incrementally with nested keys. Previously only single-level key assignments were tracked.
 
 ### Fixed
 
+- **"Remove all unused imports" missing in braced namespaces.** The bulk action now appears when the cursor is on a `use` line inside a `namespace Foo { … }` block. Previously the brace-depth heuristic treated these as trait-use statements inside a class body.
 - **False-positive undefined variable on nested array access assignment.** `$b['a']['a'] = 'a'` no longer flags `$b` as undefined. The scope collector now correctly propagates write context through nested `ArrayAccess` and `ArrayAppend` expressions, so the base variable is recognized as defined.
 
 ## [0.7.0] - 2026-04-08

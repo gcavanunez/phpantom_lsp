@@ -76,7 +76,7 @@ impl Backend {
         for span in &symbol_map.spans {
             match &span.kind {
                 // ── Class references (type hints, new Foo, extends, etc.) ─
-                SymbolKind::ClassReference { name, is_fqn } => {
+                SymbolKind::ClassReference { name, is_fqn, .. } => {
                     // Prefer mago-names byte-offset lookup when available —
                     // it applies PHP's full name resolution rules.  Fall
                     // back to the legacy resolve_to_fqn helper otherwise.

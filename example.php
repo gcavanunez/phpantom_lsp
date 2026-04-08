@@ -19,17 +19,10 @@
 namespace Demo {
 
 use Attribute;
-use Bug10298\PropAttr;
-use Bug5607\Cl;
 use Closure;
 use Demo\ValidationException;
 use Demo\NotFoundException;
 use Exception;
-use Override;
-use PHPStan\DependencyInjection\GenerateFactory;
-use PHPStan\Reflection\ClassReflection;
-use ReadonlyPropertyAssignPhpDoc\C;
-use Stringable;
 use Demo\UserProfile as Profile;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3329,6 +3322,44 @@ class ConditionalLoopShapeDemo
             $entry['tool']->write();      // Pen method via shape tracking
         }
     }
+}
+
+
+// ── Invalid Class-Like Kind Diagnostics ─────────────────────────────────────
+// PHPantom flags class-like names used in positions where their kind is
+// guaranteed to fail at runtime.  Open demo() and look for Error/Warning
+// squiggles on the class names.
+
+class InvalidClassKindDemo
+{
+    public function demo(): void
+    {
+        // Error: cannot instantiate abstract class
+        $a = new ScaffoldingAbstractShape();
+
+        // Error: cannot instantiate enum
+        $b = new Status();
+
+        // Warning: instanceof with a trait always evaluates to false
+        $x = new Pen('test');
+        $result = $x instanceof JsonSerializer;
+
+        // Warning: trait in a type hint will always fail type checking
+        $this->acceptTrait(new Pen('test'));
+    }
+
+    private function acceptTrait(JsonSerializer $x): JsonSerializer
+    {
+        return $x;
+    }
+
+    // These also produce diagnostics but would crash at class-load time,
+    // so they are shown as comments only:
+    //
+    //   class Bad1 extends ScaffoldingDrawable {}     // Error: interface in extends
+    //   class Bad2 implements Pen {}                   // Error: class in implements
+    //   class Bad3 { use ScaffoldingDrawable; }        // Error: interface in trait use
+    //   class Bad4 extends ScaffoldingAbstractShape {} // OK: abstract classes CAN be extended
 }
 
 

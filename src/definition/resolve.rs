@@ -239,7 +239,7 @@ impl Backend {
                 self.resolve_self_static_parent(uri, content, position, *ssp_kind)
             }
 
-            SymbolKind::ClassReference { name, is_fqn } => {
+            SymbolKind::ClassReference { name, is_fqn, .. } => {
                 self.resolve_class_reference(uri, content, name, *is_fqn, cursor_offset)
             }
 

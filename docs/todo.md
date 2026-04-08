@@ -33,8 +33,6 @@ within the same impact tier.
 
 | #   | Item                                                                                                                         | Impact      | Effort |
 | --- | ---------------------------------------------------------------------------------------------------------------------------- | ----------- | ------ |
-|     | Clear [refactoring gate](todo/refactor.md)                                                                                   | —           | —      |
-| D11 | [Invalid class-like kind in context](todo/diagnostics.md#d11-invalid-class-like-kind-in-context)                             | Medium      | Low    |
 | F10 | [Linked editing ranges](todo/lsp-features.md#f10-linked-editing-ranges)                                                      | Medium      | Low    |
 | A36 | [Import all missing classes](todo/actions.md#a36-import-all-missing-classes) (bulk import)                                    | Medium      | Low    |
 | F6  | [Machine-readable CLI output formats](todo/lsp-features.md#f6-machine-readable-cli-output-formats) (`--format github\|json`) | Medium      | Low    |

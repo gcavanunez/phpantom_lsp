@@ -105,7 +105,7 @@ impl Backend {
             }
 
             let (ref_name, is_fqn) = match &span.kind {
-                SymbolKind::ClassReference { name, is_fqn } => (name.as_str(), *is_fqn),
+                SymbolKind::ClassReference { name, is_fqn, .. } => (name.as_str(), *is_fqn),
                 _ => continue,
             };
 
