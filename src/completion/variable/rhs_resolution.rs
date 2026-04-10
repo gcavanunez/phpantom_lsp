@@ -477,11 +477,11 @@ fn resolve_rhs_instantiation(
                 && !ctor.template_bindings.is_empty()
                 && let Some(ref arg_list) = inst.argument_list
             {
-                let text_args =
-                    super::raw_type_inference::extract_argument_text(arg_list, ctx.content);
-                if !text_args.is_empty() {
+                let arg_texts =
+                    super::raw_type_inference::extract_arg_texts_from_ast(arg_list, ctx.content);
+                if !arg_texts.is_empty() {
                     let rctx = ctx.as_resolution_ctx();
-                    let subs = build_constructor_template_subs(cls, ctor, &text_args, &rctx, ctx);
+                    let subs = build_constructor_template_subs(cls, ctor, &arg_texts, &rctx, ctx);
                     if !subs.is_empty() {
                         let type_args: Vec<PhpType> = cls
                             .template_params
@@ -569,11 +569,10 @@ fn resolve_rhs_instantiation(
 fn build_constructor_template_subs(
     _class: &ClassInfo,
     ctor: &crate::types::MethodInfo,
-    text_args: &str,
+    arg_texts: &[String],
     rctx: &crate::completion::resolver::ResolutionCtx<'_>,
     ctx: &VarResolutionCtx<'_>,
 ) -> HashMap<String, PhpType> {
-    let args = crate::completion::conditional_resolution::split_text_args(text_args);
     let mut subs = HashMap::new();
 
     for (tpl_name, param_name) in &ctor.template_bindings {
@@ -584,7 +583,7 @@ fn build_constructor_template_subs(
         };
 
         // Get the corresponding argument text.
-        let arg_text = match args.get(param_idx) {
+        let arg_text = match arg_texts.get(param_idx) {
             Some(text) => text.trim(),
             None => continue,
         };
@@ -828,8 +827,12 @@ fn resolve_generic_wrapper_template(
     let paren_end = arg_text.rfind(')')?;
     let inner_args = arg_text[paren_start + 1..paren_end].trim();
 
+    let wrapper_arg_texts = crate::completion::conditional_resolution::split_text_args(inner_args)
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
     let wrapper_subs =
-        build_constructor_template_subs(&wrapper_cls, wrapper_ctor, inner_args, rctx, ctx);
+        build_constructor_template_subs(&wrapper_cls, wrapper_ctor, &wrapper_arg_texts, rctx, ctx);
 
     // Find the wrapper's template param at the given position and
     // look it up in the substitution map.
@@ -1012,10 +1015,9 @@ fn classify_array_index(index: &Expression<'_>) -> ArrayBracketSegment {
 ///     positional resolution through the wrapper's generic arguments.
 pub(crate) fn build_function_template_subs(
     func_info: &crate::types::FunctionInfo,
-    text_args: &str,
+    arg_texts: &[String],
     rctx: &crate::completion::resolver::ResolutionCtx<'_>,
 ) -> HashMap<String, PhpType> {
-    let args = crate::completion::conditional_resolution::split_text_args(text_args);
     let mut subs = HashMap::new();
 
     for (tpl_name, param_name) in &func_info.template_bindings {
@@ -1028,7 +1030,7 @@ pub(crate) fn build_function_template_subs(
             None => continue,
         };
 
-        let arg_text = match args.get(param_idx) {
+        let arg_text = match arg_texts.get(param_idx) {
             Some(text) => text.trim(),
             None => continue,
         };
@@ -1353,11 +1355,13 @@ fn resolve_rhs_function_call<'b>(
             && !func_info.template_bindings.is_empty()
             && func_info.return_type.is_some()
         {
-            let text_args =
-                super::raw_type_inference::extract_argument_text(&func_call.argument_list, content);
-            if !text_args.is_empty() {
+            let arg_texts = super::raw_type_inference::extract_arg_texts_from_ast(
+                &func_call.argument_list,
+                content,
+            );
+            if !arg_texts.is_empty() {
                 let rctx = ctx.as_resolution_ctx();
-                let subs = build_function_template_subs(&func_info, &text_args, &rctx);
+                let subs = build_function_template_subs(&func_info, &arg_texts, &rctx);
                 if !subs.is_empty()
                     && let Some(ref ret) = func_info.return_type
                 {
@@ -1673,13 +1677,16 @@ fn resolve_rhs_method_call_inner<'b>(
             (classes, resolved)
         };
 
-    let text_args = super::raw_type_inference::extract_argument_text(argument_list, ctx.content);
+    let arg_texts =
+        super::raw_type_inference::extract_arg_texts_from_ast(argument_list, ctx.content);
+    let arg_refs: Vec<&str> = arg_texts.iter().map(|s| s.as_str()).collect();
+    let text_args = arg_texts.join(", ");
     let rctx = ctx.as_resolution_ctx();
     let var_resolver = build_var_resolver_from_ctx(ctx);
 
     for owner in &owner_classes {
         let template_subs =
-            Backend::build_method_template_subs(owner, &method_name, &text_args, &rctx);
+            Backend::build_method_template_subs(owner, &method_name, &arg_refs, &rctx);
         let mr_ctx = MethodReturnCtx {
             all_classes: ctx.all_classes,
             class_loader: ctx.class_loader,
@@ -1894,13 +1901,15 @@ fn resolve_rhs_static_call(
             .map(|c| ClassInfo::clone(c))
             .or_else(|| (ctx.class_loader)(&cls_name).map(Arc::unwrap_or_clone));
         if let Some(ref owner) = owner {
-            let text_args = super::raw_type_inference::extract_argument_text(
+            let arg_texts = super::raw_type_inference::extract_arg_texts_from_ast(
                 &static_call.argument_list,
                 ctx.content,
             );
+            let arg_refs: Vec<&str> = arg_texts.iter().map(|s| s.as_str()).collect();
+            let text_args = arg_texts.join(", ");
             let rctx = ctx.as_resolution_ctx();
             let template_subs =
-                Backend::build_method_template_subs(owner, &method_name, &text_args, &rctx);
+                Backend::build_method_template_subs(owner, &method_name, &arg_refs, &rctx);
             let var_resolver = build_var_resolver_from_ctx(ctx);
             let mr_ctx = MethodReturnCtx {
                 all_classes: ctx.all_classes,

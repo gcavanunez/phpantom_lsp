@@ -18,7 +18,7 @@
 ///   return types and template substitutions.
 /// - [`Backend::build_method_template_subs`]: builds a template
 ///   substitution map for method-level `@template` parameters from
-///   call-site argument text.
+///   pre-split call-site argument texts.
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -374,8 +374,10 @@ impl Backend {
 
                 let mut results = Vec::new();
                 for owner in &lhs_classes {
+                    let split_args = split_text_args(text_args);
+                    let arg_refs = split_args.to_vec();
                     let template_subs =
-                        Self::build_method_template_subs(owner, method_name, text_args, ctx);
+                        Self::build_method_template_subs(owner, method_name, &arg_refs, ctx);
                     let var_resolver = build_var_resolver(ctx);
                     let mr_ctx = MethodReturnCtx {
                         all_classes: ctx.all_classes,
@@ -414,8 +416,10 @@ impl Backend {
                 };
 
                 if let Some(ref owner) = owner_class {
+                    let split_args = split_text_args(text_args);
+                    let arg_refs = split_args.to_vec();
                     let template_subs =
-                        Self::build_method_template_subs(owner, method_name, text_args, ctx);
+                        Self::build_method_template_subs(owner, method_name, &arg_refs, ctx);
                     let var_resolver = build_var_resolver(ctx);
                     let mr_ctx = MethodReturnCtx {
                         all_classes: ctx.all_classes,
@@ -519,8 +523,14 @@ impl Backend {
                         && func_info.return_type.is_some()
                         && !text_args.is_empty()
                     {
+                        let split_args: Vec<String> = split_text_args(text_args)
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect();
                         let subs = super::variable::rhs_resolution::build_function_template_subs(
-                            &func_info, text_args, ctx,
+                            &func_info,
+                            &split_args,
+                            ctx,
                         );
 
                         if !subs.is_empty()
@@ -1046,16 +1056,21 @@ impl Backend {
     /// Build a template substitution map for a method-level `@template` call.
     ///
     /// Finds the method on the class (or inherited), checks for template
-    /// params and bindings, resolves argument types from `text_args` using
-    /// the call resolution context, and returns a `HashMap` mapping template
-    /// parameter names to their resolved concrete types.
+    /// params and bindings, resolves argument types from the pre-split
+    /// `arg_texts` slice using the call resolution context, and returns a
+    /// `HashMap` mapping template parameter names to their resolved
+    /// concrete types.
+    ///
+    /// Callers with an AST `ArgumentList` should extract per-argument text
+    /// via [`extract_arg_texts_from_ast`] and convert to `&[&str]`.
+    /// Callers with only raw text should use [`split_text_args`] first.
     ///
     /// Returns an empty map if the method has no template params, no
     /// bindings, or if argument types cannot be resolved.
     pub(super) fn build_method_template_subs(
         class_info: &ClassInfo,
         method_name: &str,
-        text_args: &str,
+        arg_texts: &[&str],
         ctx: &ResolutionCtx<'_>,
     ) -> HashMap<String, PhpType> {
         // Find the method — first on the class directly, then via inheritance.
@@ -1082,7 +1097,6 @@ impl Backend {
             _ => return HashMap::new(),
         };
 
-        let args = split_text_args(text_args);
         let mut subs = HashMap::new();
 
         for (tpl_name, param_name) in &method.template_bindings {
@@ -1093,7 +1107,7 @@ impl Backend {
             };
 
             // Get the corresponding argument text.
-            let arg_text = match args.get(param_idx) {
+            let arg_text = match arg_texts.get(param_idx) {
                 Some(text) => text.trim(),
                 None => {
                     // No argument was provided at the call site.  If the

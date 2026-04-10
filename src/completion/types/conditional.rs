@@ -330,15 +330,40 @@ fn condition_includes_array(condition: &PhpType) -> bool {
 
 /// Split a textual argument list by commas, respecting nested parentheses
 /// so that `"foo(a, b), c"` splits into `["foo(a, b)", "c"]`.
-pub(crate) fn split_text_args(text: &str) -> Vec<&str> {
+pub fn split_text_args(text: &str) -> Vec<&str> {
     let mut result = Vec::new();
     let mut depth = 0u32;
     let mut start = 0;
-    for (i, ch) in text.char_indices() {
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut prev_was_backslash = false;
+
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if prev_was_backslash {
+            prev_was_backslash = false;
+            continue;
+        }
         match ch {
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
+            '\\' => {
+                // Only treat as escape if inside a quote
+                if in_single_quote || in_double_quote {
+                    prev_was_backslash = true;
+                }
+            }
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+            }
+            '(' | '[' if !in_single_quote && !in_double_quote => {
+                depth += 1;
+            }
+            ')' | ']' if !in_single_quote && !in_double_quote => {
+                depth = depth.saturating_sub(1);
+            }
+            ',' if depth == 0 && !in_single_quote && !in_double_quote => {
                 result.push(&text[start..i]);
                 start = i + 1; // skip the comma
             }

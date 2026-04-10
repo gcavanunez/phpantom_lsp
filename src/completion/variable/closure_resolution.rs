@@ -1501,10 +1501,8 @@ fn infer_callable_params_from_function(
         // concrete element type (`PurchaseFileProduct`).
         if !params.is_empty() && !fi.template_params.is_empty() && !fi.template_bindings.is_empty()
         {
-            let text_args = extract_argument_texts(arguments, ctx.content);
-            let text_args_joined = text_args.join(", ");
-            let subs =
-                super::rhs_resolution::build_function_template_subs(&fi, &text_args_joined, &rctx);
+            let arg_texts = extract_argument_texts(arguments, ctx.content);
+            let subs = super::rhs_resolution::build_function_template_subs(&fi, &arg_texts, &rctx);
             if !subs.is_empty() {
                 params = params.into_iter().map(|p| p.substitute(&subs)).collect();
             }

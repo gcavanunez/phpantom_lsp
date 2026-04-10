@@ -251,21 +251,32 @@ pub(in crate::completion) fn resolve_array_func_element_type(
     None
 }
 
-/// Extract the raw text of a function/method argument list from source.
+/// Extract per-argument source text from a parsed `ArgumentList`.
 ///
-/// Returns the text between the parentheses (exclusive), trimmed.
-/// For example, an argument list `($user, $role)` returns `"$user, $role"`.
-pub(in crate::completion) fn extract_argument_text(
+/// Returns one `String` per argument by walking the AST nodes and
+/// extracting their spans. This avoids serialising the argument list
+/// to a flat string and then re-splitting with `split_text_args`.
+pub(in crate::completion) fn extract_arg_texts_from_ast(
     argument_list: &mago_syntax::ast::ArgumentList<'_>,
     content: &str,
-) -> String {
-    let left = argument_list.left_parenthesis.span().end.offset as usize;
-    let right = argument_list.right_parenthesis.span().start.offset as usize;
-    if right > left && right <= content.len() {
-        content[left..right].trim().to_string()
-    } else {
-        String::new()
-    }
+) -> Vec<String> {
+    argument_list
+        .arguments
+        .iter()
+        .map(|arg| {
+            let span = match arg {
+                mago_syntax::ast::argument::Argument::Positional(pos) => pos.value.span(),
+                mago_syntax::ast::argument::Argument::Named(named) => named.value.span(),
+            };
+            let start = span.start.offset as usize;
+            let end = span.end.offset as usize;
+            if end <= content.len() {
+                content[start..end].to_string()
+            } else {
+                String::new()
+            }
+        })
+        .collect()
 }
 
 /// Extract the output element type for `array_map($callback, $array)`.
