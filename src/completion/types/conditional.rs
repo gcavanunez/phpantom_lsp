@@ -338,8 +338,7 @@ pub fn split_text_args(text: &str) -> Vec<&str> {
     let mut in_double_quote = false;
     let mut prev_was_backslash = false;
 
-    let mut chars = text.char_indices().peekable();
-    while let Some((i, ch)) = chars.next() {
+    for (i, ch) in text.char_indices() {
         if prev_was_backslash {
             prev_was_backslash = false;
             continue;

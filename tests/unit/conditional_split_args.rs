@@ -29,39 +29,19 @@ fn test_split_text_args_double_quoted_string_with_comma() {
 #[test]
 fn test_split_text_args_nested_quotes_and_escapes() {
     let args = split_text_args(r#""a,\"b,c\",d", 'x,\'y,z\'', foo)"#);
-    assert_eq!(
-        args,
-        vec![
-            r#""a,\"b,c\",d""#,
-            " 'x,\\'y,z\\''",
-            " foo)"
-        ]
-    );
+    assert_eq!(args, vec![r#""a,\"b,c\",d""#, " 'x,\\'y,z\\''", " foo)"]);
 }
 
 #[test]
 fn test_split_text_args_mixed_quotes_and_brackets() {
     let args = split_text_args(r#"array('a,b', ["x,y"]), "foo,bar""#);
-    assert_eq!(
-        args,
-        vec![
-            r#"array('a,b', ["x,y"])"#,
-            r#" "foo,bar""#
-        ]
-    );
+    assert_eq!(args, vec![r#"array('a,b', ["x,y"])"#, r#" "foo,bar""#]);
 }
 
 #[test]
 fn test_split_text_args_escaped_quotes() {
     let args = split_text_args(r#"'foo\,bar', "baz\"qux", plain"#);
-    assert_eq!(
-        args,
-        vec![
-            r#"'foo\,bar'"#,
-            r#" "baz\"qux""#,
-            " plain"
-        ]
-    );
+    assert_eq!(args, vec![r#"'foo\,bar'"#, r#" "baz\"qux""#, " plain"]);
 }
 
 #[test]

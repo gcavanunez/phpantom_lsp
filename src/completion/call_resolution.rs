@@ -1137,8 +1137,21 @@ impl Backend {
             let binding_mode = classify_template_binding(tpl_name, param_hint);
 
             match binding_mode {
-                TemplateBindingMode::Direct | TemplateBindingMode::GenericWrapper(..) => {
+                TemplateBindingMode::Direct => {
                     if let Some(resolved_type) = Self::resolve_arg_text_to_type(arg_text, ctx) {
+                        subs.insert(tpl_name.clone(), resolved_type);
+                    }
+                }
+                TemplateBindingMode::GenericWrapper(ref wrapper_name, tpl_position) => {
+                    if let Some(resolved_type) = Self::resolve_arg_text_to_type(arg_text, ctx) {
+                        // Special handling for class-string<T> to avoid double-wrapping
+                        if wrapper_name == "class-string"
+                            && tpl_position == 0
+                            && let Some(inner) = resolved_type.unwrap_class_string_inner()
+                        {
+                            subs.insert(tpl_name.clone(), inner.clone());
+                            continue;
+                        }
                         subs.insert(tpl_name.clone(), resolved_type);
                     }
                 }

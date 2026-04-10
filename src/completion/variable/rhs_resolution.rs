@@ -1106,9 +1106,18 @@ pub(crate) fn build_function_template_subs(
                     subs.insert(tpl_name.clone(), concrete);
                     continue;
                 }
-                // Fall back to direct resolution for non-array wrappers
-                // or when raw type extraction fails.
-                if let Some(resolved_type) = Backend::resolve_arg_text_to_type(arg_text, rctx) {
+                // Special case: unwrap class-string<class-string<T>> to class-string<T>
+                if wrapper_name == "class-string" && tpl_position == 0 {
+                    if let Some(resolved_type) = Backend::resolve_arg_text_to_type(arg_text, rctx) {
+                        if let Some(inner) = resolved_type.unwrap_class_string_inner() {
+                            subs.insert(tpl_name.clone(), inner.clone());
+                        } else {
+                            subs.insert(tpl_name.clone(), resolved_type);
+                        }
+                    }
+                } else if let Some(resolved_type) =
+                    Backend::resolve_arg_text_to_type(arg_text, rctx)
+                {
                     subs.insert(tpl_name.clone(), resolved_type);
                 }
             }

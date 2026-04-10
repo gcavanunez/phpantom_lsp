@@ -1521,6 +1521,14 @@ impl PhpType {
         }
     }
 
+    /// If this is a `class-string<T>`, returns `Some(&T)`. Otherwise, returns `None`.
+    pub fn unwrap_class_string_inner(&self) -> Option<&PhpType> {
+        match self {
+            PhpType::ClassString(Some(inner)) => Some(inner.as_ref()),
+            _ => None,
+        }
+    }
+
     /// Like [`all_members_scalar`] but uses the narrow
     /// [`is_primitive_scalar`] check.
     ///
