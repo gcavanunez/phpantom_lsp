@@ -282,7 +282,7 @@ fn resolve_rhs_expression_inner<'b>(
             let start = anon.left_brace.start.offset;
             let name = format!("__anonymous@{}", start);
             if let Some(cls) = ctx.all_classes.iter().find(|c| c.name == name) {
-                return ResolvedType::from_classes(vec![(**cls).clone()]);
+                return ResolvedType::from_classes(vec![Arc::clone(cls)]);
             }
             vec![]
         }
@@ -766,7 +766,7 @@ fn resolve_rhs_instantiation(
                 ctx.class_loader,
             );
         if !resolved.is_empty() {
-            return ResolvedType::from_classes(resolved);
+            return ResolvedType::from_classes(resolved.into_iter().map(Arc::new).collect());
         }
     }
 
@@ -1976,15 +1976,15 @@ fn resolve_rhs_method_call_inner<'b>(
     // expressions so that the receiver's generic type string (e.g.
     // `Builder<Article>`) is available when the method returns
     // `static`/`self`/`$this`.
-    let (owner_classes, receiver_resolved): (Vec<ClassInfo>, Vec<ResolvedType>) =
+    let (owner_classes, receiver_resolved): (Vec<Arc<ClassInfo>>, Vec<ResolvedType>) =
         if let Expression::Variable(Variable::Direct(dv)) = object
             && dv.name == "$this"
         {
-            let classes: Vec<ClassInfo> = ctx
+            let classes: Vec<Arc<ClassInfo>> = ctx
                 .all_classes
                 .iter()
                 .find(|c| c.name == ctx.current_class.name)
-                .map(|c| ClassInfo::clone(c))
+                .map(Arc::clone)
                 .into_iter()
                 .collect();
             (classes, vec![])
@@ -1998,14 +1998,14 @@ fn resolve_rhs_method_call_inner<'b>(
                 None => resolve_var_types(&var, ctx, object.span().end.offset),
             };
             if !resolved.is_empty() {
-                let classes = ResolvedType::into_classes(resolved.clone());
+                let classes = ResolvedType::into_arced_classes(resolved.clone());
                 (classes, resolved)
             } else {
                 // Fall back to resolve_target_classes when the
                 // variable resolution pipeline returns nothing (e.g.
                 // for parameters that are resolved through the
                 // completion pipeline's subject resolution).
-                let classes: Vec<ClassInfo> = ResolvedType::into_classes(
+                let classes: Vec<Arc<ClassInfo>> = ResolvedType::into_arced_classes(
                     crate::completion::resolver::resolve_target_classes(
                         &var,
                         crate::types::AccessKind::Arrow,
@@ -2019,7 +2019,7 @@ fn resolve_rhs_method_call_inner<'b>(
             // `(new Factory())->create()`, `getService()->method()`,
             // or chained calls by recursively resolving the expression.
             let resolved = resolve_rhs_expression(object, ctx);
-            let classes = ResolvedType::into_classes(resolved.clone());
+            let classes = ResolvedType::into_arced_classes(resolved.clone());
             (classes, resolved)
         };
 
@@ -2090,7 +2090,7 @@ fn resolve_rhs_method_call_inner<'b>(
             &mr_ctx,
         );
         if !results.is_empty() {
-            let classes: Vec<ClassInfo> = results.into_iter().map(Arc::unwrap_or_clone).collect();
+            let classes: Vec<Arc<ClassInfo>> = results;
             // When the method has a conditional return type, the
             // resolved classes came from evaluating the conditional
             // (e.g. `$type is class-string<T> ? T : mixed` resolved
@@ -2297,8 +2297,7 @@ fn resolve_rhs_static_call(
                 &mr_ctx,
             );
             if !results.is_empty() {
-                let classes: Vec<ClassInfo> =
-                    results.into_iter().map(Arc::unwrap_or_clone).collect();
+                let classes: Vec<Arc<ClassInfo>> = results;
                 // When the method has a conditional return type, the
                 // resolved classes came from evaluating the conditional.
                 // Using the method's declared return type (typically
@@ -2614,56 +2613,56 @@ fn resolve_rhs_property_access(
                 }
             }
 
-            let owner_classes: Vec<ClassInfo> = if let Expression::Variable(Variable::Direct(dv)) =
-                obj
-                && dv.name == "$this"
-            {
-                all_classes
-                    .iter()
-                    .find(|c| c.name == current_class_name)
-                    .map(|c| ClassInfo::clone(c))
-                    .into_iter()
-                    .collect()
-            } else if let Expression::Variable(Variable::Direct(dv)) = obj {
-                let var = dv.name.to_string();
-                // Check match-arm narrowing override first.
-                if let Some(overridden) = ctx.match_arm_narrowing.get(&var).cloned() {
-                    ResolvedType::into_classes(overridden)
-                } else {
-                    // When a scope_var_resolver is available (forward-walker
-                    // RHS resolution), try it first so we read from the
-                    // in-progress ScopeState instead of the diagnostic
-                    // scope cache or backward scanner.
-                    let from_scope = if let Some(resolver) = ctx.scope_var_resolver {
-                        let prefixed = if var.starts_with('$') {
-                            var.clone()
+            let owner_classes: Vec<Arc<ClassInfo>> =
+                if let Expression::Variable(Variable::Direct(dv)) = obj
+                    && dv.name == "$this"
+                {
+                    all_classes
+                        .iter()
+                        .find(|c| c.name == current_class_name)
+                        .map(Arc::clone)
+                        .into_iter()
+                        .collect()
+                } else if let Expression::Variable(Variable::Direct(dv)) = obj {
+                    let var = dv.name.to_string();
+                    // Check match-arm narrowing override first.
+                    if let Some(overridden) = ctx.match_arm_narrowing.get(&var).cloned() {
+                        ResolvedType::into_arced_classes(overridden)
+                    } else {
+                        // When a scope_var_resolver is available (forward-walker
+                        // RHS resolution), try it first so we read from the
+                        // in-progress ScopeState instead of the diagnostic
+                        // scope cache or backward scanner.
+                        let from_scope = if let Some(resolver) = ctx.scope_var_resolver {
+                            let prefixed = if var.starts_with('$') {
+                                var.clone()
+                            } else {
+                                format!("${}", var)
+                            };
+                            resolver(&prefixed)
                         } else {
-                            format!("${}", var)
+                            vec![]
                         };
-                        resolver(&prefixed)
-                    } else {
-                        vec![]
-                    };
-                    let classes = ResolvedType::into_classes(from_scope);
-                    if !classes.is_empty() {
-                        classes
-                    } else {
-                        ResolvedType::into_classes(
-                            crate::completion::resolver::resolve_target_classes(
-                                &var,
-                                crate::types::AccessKind::Arrow,
-                                &ctx.as_resolution_ctx(),
-                            ),
-                        )
+                        let classes = ResolvedType::into_arced_classes(from_scope);
+                        if !classes.is_empty() {
+                            classes
+                        } else {
+                            ResolvedType::into_arced_classes(
+                                crate::completion::resolver::resolve_target_classes(
+                                    &var,
+                                    crate::types::AccessKind::Arrow,
+                                    &ctx.as_resolution_ctx(),
+                                ),
+                            )
+                        }
                     }
-                }
-            } else {
-                // Handle non-variable object expressions like
-                // `(new Canvas())->easel`, `getService()->prop`,
-                // or `SomeClass::make()->prop` by recursively
-                // resolving the expression type.
-                ResolvedType::into_classes(resolve_rhs_expression(obj, ctx))
-            };
+                } else {
+                    // Handle non-variable object expressions like
+                    // `(new Canvas())->easel`, `getService()->prop`,
+                    // or `SomeClass::make()->prop` by recursively
+                    // resolving the expression type.
+                    ResolvedType::into_arced_classes(resolve_rhs_expression(obj, ctx))
+                };
 
             for owner in &owner_classes {
                 let resolved = resolve_property_with_hint(

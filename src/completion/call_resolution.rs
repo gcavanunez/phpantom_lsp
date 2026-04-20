@@ -180,7 +180,7 @@ impl Backend {
 
         for rt in &resolved_types {
             let owner = match &rt.class_info {
-                Some(ci) => Arc::new(ci.clone()),
+                Some(ci) => Arc::clone(ci),
                 None => continue,
             };
 
@@ -808,10 +808,7 @@ impl Backend {
                                 owner_name,
                                 ctx.all_classes,
                                 ctx.class_loader,
-                            )
-                            .into_iter()
-                            .map(Arc::new)
-                            .collect();
+                            );
                         if !classes.is_empty() {
                             return classes;
                         }
@@ -843,10 +840,7 @@ impl Backend {
                                     "",
                                     ctx.all_classes,
                                     ctx.class_loader,
-                                )
-                                .into_iter()
-                                .map(Arc::new)
-                                .collect();
+                                );
                             if !classes.is_empty() {
                                 return classes;
                             }
@@ -884,10 +878,7 @@ impl Backend {
                                     "",
                                     ctx.all_classes,
                                     ctx.class_loader,
-                                )
-                                .into_iter()
-                                .map(Arc::new)
-                                .collect();
+                                );
                             if !classes.is_empty() {
                                 return classes;
                             }
@@ -904,10 +895,7 @@ impl Backend {
                             "",
                             ctx.all_classes,
                             ctx.class_loader,
-                        )
-                        .into_iter()
-                        .map(Arc::new)
-                        .collect();
+                        );
                     }
                 }
 
@@ -932,10 +920,7 @@ impl Backend {
                             "",
                             ctx.all_classes,
                             ctx.class_loader,
-                        )
-                        .into_iter()
-                        .map(Arc::new)
-                        .collect();
+                        );
                     if !classes.is_empty() {
                         return classes;
                     }
@@ -955,10 +940,7 @@ impl Backend {
                             "",
                             ctx.all_classes,
                             ctx.class_loader,
-                        )
-                        .into_iter()
-                        .map(Arc::new)
-                        .collect();
+                        );
                     if !classes.is_empty() {
                         return classes;
                     }
@@ -974,10 +956,7 @@ impl Backend {
                             "",
                             ctx.all_classes,
                             ctx.class_loader,
-                        )
-                        .into_iter()
-                        .map(Arc::new)
-                        .collect();
+                        );
                     if !classes.is_empty() {
                         return classes;
                     }
@@ -999,10 +978,7 @@ impl Backend {
                                 "",
                                 ctx.all_classes,
                                 ctx.class_loader,
-                            )
-                            .into_iter()
-                            .map(Arc::new)
-                            .collect();
+                            );
                         if !classes.is_empty() {
                             return classes;
                         }
@@ -1044,10 +1020,7 @@ impl Backend {
                                 "",
                                 ctx.all_classes,
                                 ctx.class_loader,
-                            )
-                            .into_iter()
-                            .map(Arc::new)
-                            .collect();
+                            );
                         if !classes.is_empty() {
                             return classes;
                         }
@@ -1137,10 +1110,7 @@ impl Backend {
                             &class_info.fqn(),
                             all_classes,
                             class_loader,
-                        )
-                        .into_iter()
-                        .map(Arc::new)
-                        .collect();
+                        );
                     if !classes.is_empty() {
                         return classes;
                     }
@@ -1162,10 +1132,7 @@ impl Backend {
                             &class_info.fqn(),
                             all_classes,
                             class_loader,
-                        )
-                        .into_iter()
-                        .map(Arc::new)
-                        .collect();
+                        );
                     if !classes.is_empty() {
                         return classes;
                     }
@@ -1187,13 +1154,12 @@ impl Backend {
                 if ret.is_self_like() {
                     return vec![Arc::new(class_info.clone())];
                 }
-                let resolved = super::type_resolution::type_hint_to_classes_typed(
+                return super::type_resolution::type_hint_to_classes_typed(
                     ret,
                     &class_info.fqn(),
                     all_classes,
                     class_loader,
                 );
-                return resolved.into_iter().map(Arc::new).collect();
             }
             vec![]
         };

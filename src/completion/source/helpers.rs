@@ -495,7 +495,7 @@ pub(in crate::completion) fn try_chained_array_access_with_candidates<'a>(
     current_class: Option<&ClassInfo>,
     all_classes: &[Arc<ClassInfo>],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
-) -> Option<Vec<ClassInfo>> {
+) -> Option<Vec<Arc<ClassInfo>>> {
     let current_class_name = current_class.map(|c| c.name.as_str()).unwrap_or("");
 
     for candidate in candidates {
@@ -525,7 +525,7 @@ fn walk_array_segments_and_resolve(
     current_class_name: &str,
     all_classes: &[Arc<ClassInfo>],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
-) -> Option<Vec<ClassInfo>> {
+) -> Option<Vec<Arc<ClassInfo>>> {
     // Expand type aliases before walking segments.  The raw type may
     // be an alias name like `UserData` that resolves to
     // `array{name: string, pen: Pen}`.  Without expansion the

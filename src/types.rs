@@ -1839,14 +1839,6 @@ impl ClassInfo {
         }
     }
 
-    /// Extend `results` with entries from `new_classes`, skipping any whose
-    /// name already appears in `results`.
-    pub(crate) fn extend_unique(results: &mut Vec<ClassInfo>, new_classes: Vec<ClassInfo>) {
-        for cls in new_classes {
-            Self::push_unique(results, cls);
-        }
-    }
-
     /// Push an `Arc<ClassInfo>` into `results` only if no existing entry
     /// shares the same class name.
     pub(crate) fn push_unique_arc(results: &mut Vec<Arc<ClassInfo>>, cls: Arc<ClassInfo>) {
@@ -1891,7 +1883,7 @@ pub struct ResolvedType {
     /// Resolved class info, present when the base type names a
     /// class/interface/trait/enum.  `None` for scalars, shapes
     /// where the base is `array`, and unresolvable types.
-    pub class_info: Option<ClassInfo>,
+    pub class_info: Option<Arc<ClassInfo>>,
 }
 
 impl ResolvedType {
@@ -1904,6 +1896,17 @@ impl ResolvedType {
     /// but loses generic parameters.  Future sprints will populate the
     /// type string from the actual return type annotation.
     pub fn from_class(class: ClassInfo) -> Self {
+        let type_string = PhpType::Named(class.fqn().to_string());
+        Self {
+            type_string,
+            class_info: Some(Arc::new(class)),
+        }
+    }
+
+    /// Create a `ResolvedType` from an `Arc<ClassInfo>`, using its name
+    /// as the type string.  Avoids cloning when the caller already holds
+    /// an `Arc`.
+    pub fn from_arc(class: Arc<ClassInfo>) -> Self {
         let type_string = PhpType::Named(class.fqn().to_string());
         Self {
             type_string,
@@ -1931,6 +1934,16 @@ impl ResolvedType {
     /// generic parameters that would otherwise be lost when resolving
     /// to `ClassInfo`.
     pub fn from_both(type_string: PhpType, class: ClassInfo) -> Self {
+        Self {
+            type_string,
+            class_info: Some(Arc::new(class)),
+        }
+    }
+
+    /// Create a `ResolvedType` carrying both a type string and an
+    /// `Arc<ClassInfo>`.  Avoids cloning when the caller already holds
+    /// an `Arc`.
+    pub fn from_both_arc(type_string: PhpType, class: Arc<ClassInfo>) -> Self {
         Self {
             type_string,
             class_info: Some(class),
@@ -1975,7 +1988,7 @@ impl ResolvedType {
     ///
     /// Convenience method for callers that only need the `ClassInfo`
     /// (e.g. the completion builder).
-    pub fn into_class_info(self) -> Option<ClassInfo> {
+    pub fn into_class_info(self) -> Option<Arc<ClassInfo>> {
         self.class_info
     }
 
@@ -2009,8 +2022,8 @@ impl ResolvedType {
     /// This is a migration helper for code paths that still produce
     /// `Vec<ClassInfo>` internally (e.g. `type_hint_to_classes_typed`).
     /// Future sprints will populate proper type strings at the source.
-    pub(crate) fn from_classes(classes: Vec<ClassInfo>) -> Vec<ResolvedType> {
-        classes.into_iter().map(ResolvedType::from_class).collect()
+    pub(crate) fn from_classes(classes: Vec<Arc<ClassInfo>>) -> Vec<ResolvedType> {
+        classes.into_iter().map(ResolvedType::from_arc).collect()
     }
 
     /// Convert a `Vec<ClassInfo>` into `Vec<ResolvedType>`, preserving
@@ -2022,12 +2035,12 @@ impl ResolvedType {
     /// `type_hint_to_classes_typed`), each class uses its own name as the
     /// type string because the hint was already split into parts.
     pub(crate) fn from_classes_with_hint(
-        classes: Vec<ClassInfo>,
+        classes: Vec<Arc<ClassInfo>>,
         type_hint: PhpType,
     ) -> Vec<ResolvedType> {
         if classes.len() == 1 {
             let class = classes.into_iter().next().unwrap();
-            vec![ResolvedType::from_both(type_hint, class)]
+            vec![ResolvedType::from_both_arc(type_hint, class)]
         } else if matches!(&type_hint, PhpType::Intersection(_)) {
             // Intersection types: all classes contribute members to a
             // single value.  Emit one ResolvedType per class (so
@@ -2037,10 +2050,10 @@ impl ResolvedType {
             // of wrapping them in a union.
             classes
                 .into_iter()
-                .map(|c| ResolvedType::from_both(type_hint.clone(), c))
+                .map(|c| ResolvedType::from_both_arc(type_hint.clone(), c))
                 .collect()
         } else {
-            classes.into_iter().map(ResolvedType::from_class).collect()
+            classes.into_iter().map(ResolvedType::from_arc).collect()
         }
     }
 
@@ -2052,13 +2065,13 @@ impl ResolvedType {
     pub(crate) fn into_classes(resolved: Vec<ResolvedType>) -> Vec<ClassInfo> {
         resolved
             .into_iter()
-            .filter_map(|rt| rt.class_info)
+            .filter_map(|rt| rt.class_info.map(Arc::unwrap_or_clone))
             .collect()
     }
 
-    /// Extract `Vec<Arc<ClassInfo>>` from `Vec<ResolvedType>`, wrapping
-    /// each class in an `Arc` and discarding entries that have no class
-    /// info (scalars, shapes, unresolvable types).
+    /// Extract `Vec<Arc<ClassInfo>>` from `Vec<ResolvedType>`, returning
+    /// the inner `Arc`s directly (no wrapping needed since `class_info`
+    /// is already `Arc<ClassInfo>`).
     ///
     /// This is the primary conversion used by callers of
     /// `resolve_target_classes` that need `Arc<ClassInfo>` for
@@ -2066,7 +2079,7 @@ impl ResolvedType {
     pub(crate) fn into_arced_classes(resolved: Vec<ResolvedType>) -> Vec<Arc<ClassInfo>> {
         resolved
             .into_iter()
-            .filter_map(|rt| rt.class_info.map(Arc::new))
+            .filter_map(|rt| rt.class_info)
             .collect()
     }
 
@@ -2090,7 +2103,7 @@ impl ResolvedType {
     ) {
         let mut classes: Vec<ClassInfo> = results
             .iter()
-            .filter_map(|rt| rt.class_info.clone())
+            .filter_map(|rt| rt.class_info.as_ref().map(|arc| arc.as_ref().clone()))
             .collect();
         f(&mut classes);
 
@@ -3047,7 +3060,8 @@ mod tests {
     #[test]
     fn from_classes_with_hint_single_class_uses_hint() {
         let hint = PhpType::Named("Foo".to_owned());
-        let result = ResolvedType::from_classes_with_hint(vec![class("Foo")], hint.clone());
+        let result =
+            ResolvedType::from_classes_with_hint(vec![Arc::new(class("Foo"))], hint.clone());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].type_string, hint);
         assert!(result[0].class_info.is_some());
@@ -3059,7 +3073,10 @@ mod tests {
             PhpType::Named("Countable".to_owned()),
             PhpType::Named("Serializable".to_owned()),
         ]);
-        let classes = vec![class("Countable"), class("Serializable")];
+        let classes = vec![
+            Arc::new(class("Countable")),
+            Arc::new(class("Serializable")),
+        ];
         let result = ResolvedType::from_classes_with_hint(classes, hint.clone());
         assert_eq!(result.len(), 2);
         // Both entries carry the full intersection type.
@@ -3075,7 +3092,7 @@ mod tests {
             PhpType::Named("Foo".to_owned()),
             PhpType::Named("Bar".to_owned()),
         ]);
-        let classes = vec![class("Foo"), class("Bar")];
+        let classes = vec![Arc::new(class("Foo")), Arc::new(class("Bar"))];
         let result = ResolvedType::from_classes_with_hint(classes, hint);
         assert_eq!(result.len(), 2);
         // Union: each entry uses the class's own name (old behaviour).

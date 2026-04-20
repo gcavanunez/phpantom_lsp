@@ -144,7 +144,7 @@ inside `collect_slow_diagnostics`. Added an early-return guard that
 skips the walk when the scope cache is already populated. This cut
 `slow` time from 9.4s to 0.6s on example.php.
 
-#### Phase 4c: Eliminate ClassInfo cloning (next)
+#### Phase 4c: Eliminate ClassInfo cloning
 
 **Impact: Critical. Effort: Medium-High.**
 
@@ -175,25 +175,30 @@ the resolution pipeline.
 
 **Plan:**
 
-1. Change `ResolvedType.class_info` from `Option<ClassInfo>` to
+1. ✓ Change `ResolvedType.class_info` from `Option<ClassInfo>` to
    `Option<Arc<ClassInfo>>`. This propagates Arc sharing through
-   the entire variable resolution pipeline.
+   the entire variable resolution pipeline. Added `from_arc()` and
+   `from_both_arc()` constructors for zero-clone creation.
 
-2. Change `type_hint_to_classes_typed` to return
+2. ✓ Changed `type_hint_to_classes_typed` to return
    `Vec<Arc<ClassInfo>>`. Callers that need mutation (generic
    substitution, scope injection) clone only when necessary
    via `Arc::make_mut` or `Arc::unwrap_or_clone`.
 
-3. Change `ResolvedType::into_classes` to return
-   `Vec<Arc<ClassInfo>>` (rename to `into_arced_classes` or
-   merge with existing method).
+3. ✓ `ResolvedType::into_arced_classes` now returns inner `Arc`s
+   directly (zero-cost, no `Arc::new` wrapping). `into_classes`
+   kept for the few callers needing owned `ClassInfo`.
 
-4. Update `resolve_rhs_method_call_inner` and other RHS
-   resolution functions to work with `&ClassInfo` references
-   from the Arc instead of owned values.
+4. ✓ `resolve_rhs_method_call_inner` and `resolve_rhs_property_access`
+   now use `Vec<Arc<ClassInfo>>` for owner classes, eliminating
+   deep clones on every method/property access in the hot path.
+   Remaining `Arc::unwrap_or_clone` sites (~40) are in cold paths
+   (definition lookup, hover, narrowing) or require deeper
+   signature changes.
 
-5. Change `find_class_by_name` callers to use `Arc::clone`
-   (refcount bump) instead of `ClassInfo::clone` (deep copy).
+5. ✓ `find_class_by_name` callers in `resolver.rs` now use
+   `Arc::clone` + `from_arc` (refcount bump) instead of
+   `ClassInfo::clone` (deep copy). 11 call sites converted.
 
 **Expected impact:** Eliminates ~10-15% of total CPU (clone +
 drop + associated malloc/free). Combined with the double-walk

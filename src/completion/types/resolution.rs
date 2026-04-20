@@ -35,7 +35,7 @@ pub(crate) fn resolve_property_types(
     class_info: &ClassInfo,
     all_classes: &[Arc<ClassInfo>],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
-) -> Vec<ClassInfo> {
+) -> Vec<Arc<ClassInfo>> {
     // Resolve inheritance so that inherited (and generic-substituted)
     // properties are visible.  For example, if `ConfigWrapper extends
     // Wrapper<Config>` and `Wrapper` has `/** @var T */ public $value`,
@@ -71,7 +71,7 @@ pub(crate) fn type_hint_to_classes_typed(
     owning_class_name: &str,
     all_classes: &[Arc<ClassInfo>],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
-) -> Vec<ClassInfo> {
+) -> Vec<Arc<ClassInfo>> {
     type_hint_to_classes_typed_depth(ty, owning_class_name, all_classes, class_loader, 0)
 }
 
@@ -83,7 +83,7 @@ fn type_hint_to_classes_typed_depth(
     all_classes: &[Arc<ClassInfo>],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
     depth: u8,
-) -> Vec<ClassInfo> {
+) -> Vec<Arc<ClassInfo>> {
     if depth > MAX_ALIAS_DEPTH {
         return vec![];
     }
@@ -100,7 +100,7 @@ fn type_hint_to_classes_typed_depth(
 
         // ── Union type ─────────────────────────────────────────────
         PhpType::Union(members) => {
-            let mut results = Vec::new();
+            let mut results: Vec<Arc<ClassInfo>> = Vec::new();
             for member in members {
                 let resolved = type_hint_to_classes_typed_depth(
                     member,
@@ -109,14 +109,18 @@ fn type_hint_to_classes_typed_depth(
                     class_loader,
                     depth,
                 );
-                ClassInfo::extend_unique(&mut results, resolved);
+                for cls in resolved {
+                    if !results.iter().any(|existing| existing.name == cls.name) {
+                        results.push(cls);
+                    }
+                }
             }
             results
         }
 
         // ── Intersection type ──────────────────────────────────────
         PhpType::Intersection(members) => {
-            let mut results = Vec::new();
+            let mut results: Vec<Arc<ClassInfo>> = Vec::new();
             for member in members {
                 let resolved = type_hint_to_classes_typed_depth(
                     member,
@@ -125,7 +129,11 @@ fn type_hint_to_classes_typed_depth(
                     class_loader,
                     depth,
                 );
-                ClassInfo::extend_unique(&mut results, resolved);
+                for cls in resolved {
+                    if !results.iter().any(|existing| existing.name == cls.name) {
+                        results.push(cls);
+                    }
+                }
             }
             results
         }
@@ -151,11 +159,11 @@ fn type_hint_to_classes_typed_depth(
                     .collect(),
             );
 
-            vec![ClassInfo {
+            vec![Arc::new(ClassInfo {
                 name: atom("__object_shape"),
                 properties,
                 ..ClassInfo::default()
-            }]
+            })]
         }
 
         // ── Named type (class name, keyword, or alias) ─────────────
@@ -207,7 +215,7 @@ fn resolve_named_type(
     all_classes: &[Arc<ClassInfo>],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
     depth: u8,
-) -> Vec<ClassInfo> {
+) -> Vec<Arc<ClassInfo>> {
     // ── Fast reject: built-in scalar/pseudo types can never resolve
     //    to a class and are never type aliases. ──────────────────────
     if is_builtin_non_class_type(name) {
@@ -249,8 +257,8 @@ fn resolve_named_type(
             );
         }
         return find_class_by_name(all_classes, owning_class_name)
-            .map(|c| ClassInfo::clone(c))
-            .or_else(|| class_loader(owning_class_name).map(Arc::unwrap_or_clone))
+            .map(Arc::clone)
+            .or_else(|| class_loader(owning_class_name))
             .into_iter()
             .collect();
     }
@@ -263,8 +271,8 @@ fn resolve_named_type(
             .or_else(|| class_loader(owning_class_name).and_then(|c| c.parent_class));
         if let Some(parent) = parent_name {
             return find_class_by_name(all_classes, &parent)
-                .map(|c| ClassInfo::clone(c))
-                .or_else(|| class_loader(&parent).map(Arc::unwrap_or_clone))
+                .map(Arc::clone)
+                .or_else(|| class_loader(&parent))
                 .into_iter()
                 .collect();
         }
@@ -291,14 +299,14 @@ fn resolve_named_type(
 
     // ── Class lookup ───────────────────────────────────────────────
     let found = find_class_by_name(all_classes, name)
-        .map(|arc| ClassInfo::clone(arc))
-        .or_else(|| class_loader(name).map(Arc::unwrap_or_clone));
+        .map(Arc::clone)
+        .or_else(|| class_loader(name));
 
     match found {
         Some(cls) => {
             // ── Eloquent custom collection swapping ────────────────
             let cls = laravel::try_swap_custom_collection(
-                cls,
+                Arc::unwrap_or_clone(cls),
                 name,
                 generic_args,
                 all_classes,
@@ -375,9 +383,9 @@ fn resolve_named_type(
                     class_loader,
                 );
 
-                vec![result]
+                vec![Arc::new(result)]
             } else {
-                vec![cls]
+                vec![Arc::new(cls)]
             }
         }
         None => {
@@ -407,10 +415,10 @@ fn resolve_named_type(
 
             // ── stdClass fallback ──────────────────────────────────
             if short == "stdClass" {
-                return vec![ClassInfo {
+                return vec![Arc::new(ClassInfo {
                     name: atom("stdClass"),
                     ..ClassInfo::default()
-                }];
+                })];
             }
 
             vec![]

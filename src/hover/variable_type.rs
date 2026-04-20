@@ -980,7 +980,7 @@ fn resolve_expression_to_classes(
     current_class: &ClassInfo,
     all_classes: &[Arc<ClassInfo>],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
-) -> Vec<ClassInfo> {
+) -> Vec<Arc<ClassInfo>> {
     // Simple variable: try to resolve its type.
     if expr_text.starts_with('$') && !expr_text.contains("->") && !expr_text.contains("::") {
         // Try @var annotation.
@@ -995,7 +995,7 @@ fn resolve_expression_to_classes(
             );
         }
         // Try variable resolution.
-        let types = ResolvedType::into_classes(
+        let types = ResolvedType::into_arced_classes(
             crate::completion::variable::resolution::resolve_variable_types(
                 expr_text,
                 current_class,

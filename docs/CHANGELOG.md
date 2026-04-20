@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Closure and arrow function parameter inference.** Untyped closure and arrow function parameters are inferred from the enclosing call's callable signature, including through method chains that return `static`. Generic type substitution flows through to inferred parameters (e.g. a `callable(T)` parameter on a `Repository<Product>` resolves `T` to `Product`).
 - **Editing responsiveness.** Classes evicted from the resolved-class cache after a file edit are now eagerly re-populated in dependency order, eliminating lazy resolution delays for diagnostics and completions.
 - **Virtual member resolution.** Virtual member providers (PHPDoc mixins, Laravel model, Eloquent Builder) now resolve completely on every class, eliminating cases where mixins or Eloquent accessors were missing after edits.
-- **Faster analysis.** String interning, O(1) method lookup, and reduced redundant work cut analysis time significantly on large projects.
+- **Faster analysis.** String interning, O(1) method lookup, Arc-shared class metadata through the resolution pipeline, and reduced redundant work cut analysis time significantly on large projects.
 
 ### Fixed
 

@@ -465,10 +465,10 @@ fn resolve_target_classes_expr_inner_impl(
                 && let Some(ref parent_name) = cc.parent_class
             {
                 if let Some(cls) = find_class_by_name(all_classes, parent_name) {
-                    return vec![ResolvedType::from_class(cls.as_ref().clone())];
+                    return vec![ResolvedType::from_arc(Arc::clone(cls))];
                 }
                 return class_loader(parent_name)
-                    .map(|arc| ResolvedType::from_class(Arc::unwrap_or_clone(arc)))
+                    .map(ResolvedType::from_arc)
                     .into_iter()
                     .collect();
             }
@@ -533,7 +533,7 @@ fn resolve_target_classes_expr_inner_impl(
                     );
                     ResolvedType::extend_unique(
                         &mut results,
-                        resolved.into_iter().map(ResolvedType::from_class).collect(),
+                        resolved.into_iter().map(ResolvedType::from_arc).collect(),
                     );
                 }
                 if !results.is_empty() {
@@ -543,17 +543,17 @@ fn resolve_target_classes_expr_inner_impl(
 
             owner_classes
                 .into_iter()
-                .map(|arc| ResolvedType::from_class(Arc::unwrap_or_clone(arc)))
+                .map(ResolvedType::from_arc)
                 .collect()
         }
 
         // ── Bare class name ─────────────────────────────────────
         SubjectExpr::ClassName(name) => {
             if let Some(cls) = find_class_by_name(all_classes, name) {
-                return vec![ResolvedType::from_class(cls.as_ref().clone())];
+                return vec![ResolvedType::from_arc(Arc::clone(cls))];
             }
             class_loader(name)
-                .map(|arc| ResolvedType::from_class(Arc::unwrap_or_clone(arc)))
+                .map(ResolvedType::from_arc)
                 .into_iter()
                 .collect()
         }
@@ -561,10 +561,10 @@ fn resolve_target_classes_expr_inner_impl(
         // ── `new ClassName` (without trailing call parens) ───────
         SubjectExpr::NewExpr { class_name } => {
             if let Some(cls) = find_class_by_name(all_classes, class_name) {
-                return vec![ResolvedType::from_class(cls.as_ref().clone())];
+                return vec![ResolvedType::from_arc(Arc::clone(cls))];
             }
             class_loader(class_name)
-                .map(|arc| ResolvedType::from_class(Arc::unwrap_or_clone(arc)))
+                .map(ResolvedType::from_arc)
                 .into_iter()
                 .collect()
         }
@@ -584,15 +584,10 @@ fn resolve_target_classes_expr_inner_impl(
             if let Some(h) = hint
                 && classes.iter().any(|c| !c.template_params.is_empty())
             {
-                let class_vec: Vec<ClassInfo> =
-                    classes.into_iter().map(Arc::unwrap_or_clone).collect();
-                return ResolvedType::from_classes_with_hint(class_vec, h);
+                return ResolvedType::from_classes_with_hint(classes, h);
             }
 
-            classes
-                .into_iter()
-                .map(|arc| ResolvedType::from_class(Arc::unwrap_or_clone(arc)))
-                .collect()
+            classes.into_iter().map(ResolvedType::from_arc).collect()
         }
 
         // ── Property chain ──────────────────────────────────────
@@ -607,10 +602,7 @@ fn resolve_target_classes_expr_inner_impl(
                     class_loader,
                 );
 
-                ClassInfo::extend_unique_arc(
-                    &mut arc_results,
-                    resolved.into_iter().map(Arc::new).collect(),
-                );
+                ClassInfo::extend_unique_arc(&mut arc_results, resolved);
             }
 
             // ── Property-level narrowing ────────────────────────
@@ -645,7 +637,7 @@ fn resolve_target_classes_expr_inner_impl(
 
             arc_results
                 .into_iter()
-                .map(|arc| ResolvedType::from_class(Arc::unwrap_or_clone(arc)))
+                .map(ResolvedType::from_arc)
                 .collect()
         }
 
@@ -669,7 +661,7 @@ fn resolve_target_classes_expr_inner_impl(
                             class_loader,
                         )
                     {
-                        return resolved.into_iter().map(ResolvedType::from_class).collect();
+                        return resolved.into_iter().map(ResolvedType::from_arc).collect();
                     }
                 }
                 // If raw-type approach didn't work, fall back to resolving
@@ -782,7 +774,7 @@ fn resolve_target_classes_expr_inner_impl(
                 all_classes,
                 class_loader,
             ) {
-                return resolved.into_iter().map(ResolvedType::from_class).collect();
+                return resolved.into_iter().map(ResolvedType::from_arc).collect();
             }
             // Segment walk failed — the base type does not have
             // array-shape, generic, or iterable annotations that
@@ -803,10 +795,10 @@ fn resolve_target_classes_expr_inner_impl(
         | SubjectExpr::FunctionCall(_) => {
             let text = expr.to_subject_text();
             if let Some(cls) = find_class_by_name(all_classes, &text) {
-                return vec![ResolvedType::from_class(cls.as_ref().clone())];
+                return vec![ResolvedType::from_arc(Arc::clone(cls))];
             }
             class_loader(&text)
-                .map(|arc| ResolvedType::from_class(Arc::unwrap_or_clone(arc)))
+                .map(ResolvedType::from_arc)
                 .into_iter()
                 .collect()
         }
@@ -1262,7 +1254,7 @@ fn resolve_variable_fallback(
                             for cls in resolved {
                                 ResolvedType::push_unique(
                                     &mut class_string_results,
-                                    ResolvedType::from_class(cls),
+                                    ResolvedType::from_arc(cls),
                                 );
                             }
                         }
@@ -1281,7 +1273,7 @@ fn resolve_variable_fallback(
                 for cls in resolved {
                     ResolvedType::push_unique(
                         &mut class_string_results,
-                        ResolvedType::from_class(cls),
+                        ResolvedType::from_arc(cls),
                     );
                 }
             }

@@ -24,6 +24,8 @@
 ///     union type, preserving generic element types from PHPDoc.
 ///   - `is_string($var)`, `is_int($var)`, `is_bool($var)`, etc. —
 ///     narrows to the corresponding scalar type.
+use std::sync::Arc;
+
 use crate::atom::Atom;
 use crate::php_type::PhpType;
 use crate::types::{AssertionKind, ClassInfo, ParameterInfo, ResolvedType, TypeAssertion};
@@ -68,7 +70,8 @@ pub(crate) fn resolve_class_names_to_union(
             ctx.all_classes,
             ctx.class_loader,
         );
-        for cls in resolved {
+        for arc_cls in resolved {
+            let cls = Arc::unwrap_or_clone(arc_cls);
             if !union.iter().any(|c: &ClassInfo| c.name == cls.name) {
                 union.push(cls);
             }
@@ -232,12 +235,15 @@ pub(in crate::completion) fn apply_instanceof_inclusion(
     ctx: &VarResolutionCtx<'_>,
     results: &mut Vec<ClassInfo>,
 ) {
-    let narrowed = super::resolution::type_hint_to_classes_typed(
+    let narrowed: Vec<ClassInfo> = super::resolution::type_hint_to_classes_typed(
         ty,
         &ctx.current_class.name,
         ctx.all_classes,
         ctx.class_loader,
-    );
+    )
+    .into_iter()
+    .map(Arc::unwrap_or_clone)
+    .collect();
     if narrowed.is_empty() {
         // The instanceof target class could not be resolved (e.g. it
         // lives inside a phar that we cannot index).  The developer
@@ -333,12 +339,15 @@ pub(in crate::completion) fn apply_instanceof_exclusion(
     ctx: &VarResolutionCtx<'_>,
     results: &mut Vec<ClassInfo>,
 ) {
-    let excluded = super::resolution::type_hint_to_classes_typed(
+    let excluded: Vec<ClassInfo> = super::resolution::type_hint_to_classes_typed(
         ty,
         &ctx.current_class.name,
         ctx.all_classes,
         ctx.class_loader,
-    );
+    )
+    .into_iter()
+    .map(Arc::unwrap_or_clone)
+    .collect();
     if !excluded.is_empty() {
         results.retain(|r| !excluded.iter().any(|e| e.name == r.name));
     }
