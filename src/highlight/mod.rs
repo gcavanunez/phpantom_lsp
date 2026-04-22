@@ -83,6 +83,7 @@ impl Backend {
                     self.highlight_keyword(symbol_map, content, *ssp_kind, span.start, uri)
                 }
             }
+            SymbolKind::NamespaceDeclaration { .. } => Vec::new(),
         };
 
         if highlights.is_empty() {

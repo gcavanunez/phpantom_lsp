@@ -25,7 +25,6 @@ within the same impact tier.
 
 | #   | Item                                                                             | Impact | Effort |
 | --- | -------------------------------------------------------------------------------- | ------ | ------ |
-| F9  | [Namespace renaming](todo/lsp-features.md#f9-namespace-renaming)                 | Medium | Medium |
 | D10 | [PHPMD diagnostic proxy](todo/diagnostics.md#d10-phpmd-diagnostic-proxy)         | Low    | Medium |
 |     | **Release 0.8.0**                                                                |        |        |
 

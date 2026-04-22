@@ -193,6 +193,7 @@ impl Backend {
                     Vec::new()
                 }
             }
+            SymbolKind::NamespaceDeclaration { .. } => Vec::new(),
         }
     }
 
