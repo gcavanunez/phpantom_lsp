@@ -3545,6 +3545,14 @@ class ClosureScopeInferenceDemo
     }
 }
 
+// ── Global Keyword ─────────────────────────────────────────────────────────
+
+$globalPen = new Pen();
+
+function globalKeywordDemo(): void {
+    global $globalPen;
+    $globalPen->write();                  // Pen — resolved from top-level scope via `global`
+}
 
 // ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 // ┃  SCAFFOLDING — Supporting definitions below this line.              ┃
@@ -6320,6 +6328,11 @@ function runDemoAssertions(): void
         }
     };
     $scopeWorker();
+
+    // ── Global keyword ─────────────────────────────────────────────────
+    global $globalPen;
+    assert($globalPen instanceof Pen, '$globalPen must be Pen at top level');
+    globalKeywordDemo();
 
     echo "All assertions passed.\n";
 }

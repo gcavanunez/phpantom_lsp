@@ -59,23 +59,33 @@ variable's value.
 
 ---
 
-## 19. Binary expression type inference
+## 19. Binary expression literal-value precision
 
-phpactor infers result types for binary expressions. This is low
-priority for completion but could improve hover:
+Type-level binary expression inference is implemented and ported from
+phpactor as fixtures in `binary_expression/`. PHPantom resolves the
+*type* of each operator (e.g. `1 + 2` → `int|float`,
+`'a' . 'b'` → `string`, `1 === 1` → `bool`). What remains is
+phpactor's literal-value precision — resolving constant expressions
+to their concrete values:
 
-| Category | phpactor ref | Example |
-|----------|-------------|---------|
-| Arithmetic | `binary-expression/arithmetic.test` | `1 + 2` → `3` |
-| Concatenation | `binary-expression/concat.test` | `'a' . 'b'` → `"ab"` |
-| Comparison | `binary-expression/compare.scalar.test` | `1 === 1` → `true` |
-| Logical | `binary-expression/logical.test` | `true && false` → `false` |
-| Bitwise | `binary-expression/bitwise.test` | `1 & 2` → `0` |
-| Array union | `binary-expression/array-union.test` | `$a + $b` → combined shape |
-| instanceof expr | `binary-expression/type.test` | `$x instanceof Foo` → `bool` |
+| Category | phpactor ref | PHPantom | phpactor |
+|----------|-------------|----------|---------|
+| Arithmetic | `binary-expression/arithmetic.test` | `int\|float` | `2`, `1`, `4`, … |
+| Concatenation | `binary-expression/concat.test` | `string` | `"ab"` |
+| Comparison | `binary-expression/compare.scalar.test` | `bool` | `true`/`false` |
+| Logical | `binary-expression/logical.test` | `bool` | `true`/`false` |
+| Bitwise | `binary-expression/bitwise.test` | `int` | `0`, `1`, `5`, … |
+| Array union | `binary-expression/array-union.test` | `array` | combined shape |
 
-**Effort: High** — these are all new. Low impact on completion.
-Not a priority unless hover accuracy matters.
+**Effort: Medium** — requires a constant-expression evaluator.
+Fixtures ported at type level:
+`binary_expression/arithmetic.fixture`,
+`binary_expression/array_union.fixture`,
+`binary_expression/bitwise.fixture`,
+`binary_expression/comparison.fixture`,
+`binary_expression/concat.fixture`,
+`binary_expression/logical.fixture`,
+`binary_expression/instanceof.fixture`.
 
 ---
 
@@ -109,20 +119,6 @@ type, and unioning the results. Ignored fixture created at
 
 ---
 
-## 22. `global` keyword
-
-Variables imported with `global $var` inside functions should be
-accessible with their original type.
-
-**phpactor ref:** `global/global_keyword.test`
-
-**Effort: Low-Medium** — the `global` declaration is tracked for
-definition lookup but the type of the outer-scope variable is not
-propagated. Ignored fixture created at
-`variable/global_keyword.fixture`.
-
----
-
 ## Summary by effort
 
 ### Low-Medium effort (need minor code changes)
@@ -130,7 +126,6 @@ propagated. Ignored fixture created at
 | # | Item | phpactor ref |
 |---|------|-------------|
 | 10 | Variable-variable `${$bar}` | `variable/braced_expression.test` |
-| 22 | `global` keyword type propagation | `global/global_keyword.test` |
 
 ### Medium effort (new features needed)
 
@@ -139,9 +134,9 @@ propagated. Ignored fixture created at
 | 8 | Array mutation tracking (conditional/unknown key) | `assignment/array_2.test`, `assignment/unknown_key.test` |
 | 21 | Return statement type inference | `return-statement/*.test` |
 
-### High effort / low priority
+### Low priority
 
 | # | Item | phpactor ref |
 |---|------|-------------|
-| 19 | Binary expression types | `binary-expression/*.test` |
+| 19 | Binary expression literal-value precision | `binary-expression/*.test` |
 | 20 | Postfix increment/decrement | `postfix-update/*.test` |

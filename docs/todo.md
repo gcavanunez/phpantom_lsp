@@ -183,8 +183,8 @@ unlikely to move the needle for most users.
 | N3  | Fine-tuned GGUF sidecar model                                                                                                                                               | Medium      | Very High   |
 |     | **[Phpactor Test Parity](todo/phpactor-test-parity.md)**                                                                                                                    |             |             |
 | Q16 | Variable-variable `${$bar}` resolution                                                                                                                                      | Low         | Low-Medium  |
-| Q17 | `global` keyword variable access                                                                                                                                            | Low         | Low-Medium  |
+
 | Q19 | Array mutation tracking (conditional/unknown-key scenarios)                                                                                                                  | Low         | Medium      |
 | Q20 | Return statement body type inference                                                                                                                                        | Low         | Medium      |
-| Q21 | Binary expression type inference (arithmetic, concat, …)                                                                                                                    | Low         | High        |
+
 | Q22 | Postfix increment / decrement literal types                                                                                                                                 | Low         | Low         |

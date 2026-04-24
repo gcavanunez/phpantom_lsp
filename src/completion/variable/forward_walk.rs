@@ -1403,6 +1403,7 @@ fn walk_top_level_statements<'a, 'b: 'a>(
         loaders: diag_ctx.loaders,
         resolved_class_cache: diag_ctx.resolved_class_cache,
         enclosing_return_type: None,
+        top_level_scope: None,
     };
 
     let mut top_level_scope = ScopeState::new();
@@ -1542,6 +1543,7 @@ fn analyze_function_body<'b>(
         loaders: diag_ctx.loaders,
         resolved_class_cache: diag_ctx.resolved_class_cache,
         enclosing_return_type: None,
+        top_level_scope: None,
     };
 
     let mut scope = ScopeState::new();
@@ -1702,6 +1704,10 @@ pub(crate) struct ForwardWalkCtx<'a> {
     /// The `@return` type of the enclosing function/method, if known.
     /// Used for generator yield inference.
     pub enclosing_return_type: Option<PhpType>,
+    /// Pre-computed top-level scope for resolving `global` variable imports.
+    /// When a function body contains `global $x;`, the walker looks up
+    /// `$x` in this map to seed the local scope with the top-level type.
+    pub top_level_scope: Option<HashMap<String, Vec<ResolvedType>>>,
 }
 
 impl<'a> ForwardWalkCtx<'a> {
@@ -1721,6 +1727,7 @@ impl<'a> ForwardWalkCtx<'a> {
             loaders: self.loaders,
             resolved_class_cache: self.resolved_class_cache,
             enclosing_return_type: self.enclosing_return_type.clone(),
+            top_level_scope: self.top_level_scope.clone(),
         }
     }
 
@@ -1748,6 +1755,7 @@ impl<'a> ForwardWalkCtx<'a> {
             loaders: self.loaders,
             resolved_class_cache: self.resolved_class_cache,
             enclosing_return_type: self.enclosing_return_type.clone(),
+            top_level_scope: self.top_level_scope.clone(),
             branch_aware: false,
             match_arm_narrowing: HashMap::new(),
             scope_var_resolver: Some(scope_resolver),
@@ -2057,6 +2065,19 @@ pub(crate) fn resolve_in_top_level<'b>(
     } else {
         None
     }
+}
+
+/// Walk top-level statements to build a scope of variable types for
+/// `global` keyword resolution.  This is a lightweight walk that only
+/// processes expression-level assignments (and skips class/function/
+/// interface/enum/trait bodies, which have isolated scopes).
+pub(crate) fn walk_top_level_for_globals<'b>(
+    statements: impl Iterator<Item = &'b Statement<'b>>,
+    scope: &mut ScopeState,
+    ctx: &ForwardWalkCtx<'_>,
+) {
+    seed_superglobals(scope);
+    walk_body_forward(statements, scope, ctx);
 }
 
 // ─── Generator yield reverse inference ──────────────────────────────────────
@@ -2468,6 +2489,22 @@ fn process_statement<'b>(
         }
         Statement::Namespace(ns) => {
             walk_body_forward(ns.statements().iter(), scope, ctx);
+        }
+        Statement::Global(global) => {
+            for var in global.variables.iter() {
+                if let Variable::Direct(dv) = var {
+                    let var_name = dv.name.to_string();
+                    if let Some(top_scope) = &ctx.top_level_scope {
+                        if let Some(types) = top_scope.get(&var_name) {
+                            scope.set(var_name, types.clone());
+                        } else {
+                            scope.set_empty(var_name);
+                        }
+                    } else {
+                        scope.set_empty(var_name);
+                    }
+                }
+            }
         }
         Statement::Return(ret) => {
             if let Some(val) = ret.value {
@@ -3641,8 +3678,28 @@ fn resolve_rhs_with_scope<'b>(
             return vec![ResolvedType::from_type_string(PhpType::int())];
         }
 
-        // Arithmetic: -, *, /, ** are always numeric.  + is excluded
-        // because PHP overloads it for array union.
+        // Addition (+): PHP overloads this for array union vs numeric
+        // addition.  If either operand resolves to an array type, the
+        // result is array; otherwise it's int|float.
+        if matches!(binary.operator, BinaryOperator::Addition(_)) {
+            let lhs_types = resolve_rhs_with_scope(binary.lhs, scope, ctx);
+            let rhs_types = resolve_rhs_with_scope(binary.rhs, scope, ctx);
+            let either_is_array = lhs_types
+                .iter()
+                .chain(rhs_types.iter())
+                .any(|rt| rt.type_string.is_array_like());
+            if either_is_array {
+                return vec![ResolvedType::from_type_string(PhpType::Named(
+                    "array".to_string(),
+                ))];
+            }
+            return vec![ResolvedType::from_type_string(PhpType::Union(vec![
+                PhpType::int(),
+                PhpType::float(),
+            ]))];
+        }
+
+        // Arithmetic: -, *, /, ** are always numeric.
         if matches!(
             binary.operator,
             BinaryOperator::Subtraction(_)
@@ -3769,6 +3826,7 @@ fn process_destructuring_assignment<'b>(
             loaders: ctx.loaders,
             resolved_class_cache: ctx.resolved_class_cache,
             enclosing_return_type: ctx.enclosing_return_type.clone(),
+            top_level_scope: ctx.top_level_scope.clone(),
             branch_aware: false,
             match_arm_narrowing: HashMap::new(),
             scope_var_resolver: Some(&scope_resolver),
@@ -3926,6 +3984,7 @@ fn process_pass_by_ref<'b>(
             loaders: ctx.loaders,
             resolved_class_cache: ctx.resolved_class_cache,
             enclosing_return_type: ctx.enclosing_return_type.clone(),
+            top_level_scope: ctx.top_level_scope.clone(),
             branch_aware: false,
             match_arm_narrowing: HashMap::new(),
             scope_var_resolver: Some(&scope_resolver),
@@ -4304,6 +4363,7 @@ fn process_assert_narrowing<'b>(
             loaders: ctx.loaders,
             resolved_class_cache: ctx.resolved_class_cache,
             enclosing_return_type: ctx.enclosing_return_type.clone(),
+            top_level_scope: ctx.top_level_scope.clone(),
             branch_aware: false,
             match_arm_narrowing: HashMap::new(),
             scope_var_resolver: Some(&scope_resolver),
@@ -6688,6 +6748,7 @@ fn build_var_ctx<'a>(
         loaders: ctx.loaders,
         resolved_class_cache: ctx.resolved_class_cache,
         enclosing_return_type: ctx.enclosing_return_type.clone(),
+        top_level_scope: ctx.top_level_scope.clone(),
         branch_aware: false,
         match_arm_narrowing: HashMap::new(),
         scope_var_resolver: Some(scope_resolver),

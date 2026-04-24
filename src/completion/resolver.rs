@@ -200,6 +200,10 @@ pub(crate) struct VarResolutionCtx<'a> {
     /// if known.  Used inside generator bodies to reverse-infer variable
     /// types from `Generator<TKey, TValue, TSend, TReturn>`.
     pub enclosing_return_type: Option<PhpType>,
+    /// Pre-computed top-level scope for resolving `global` variable imports.
+    /// When a function body contains `global $x;`, the walker looks up
+    /// `$x` in this map to seed the local scope with the top-level type.
+    pub top_level_scope: Option<HashMap<String, Vec<crate::types::ResolvedType>>>,
     /// Legacy flag: historically selected branch-aware resolution for
     /// hover vs union-all resolution for completion.  The forward
     /// walker now inherently produces position-accurate types, so both
@@ -266,6 +270,7 @@ impl<'a> VarResolutionCtx<'a> {
             loaders: self.loaders,
             resolved_class_cache: self.resolved_class_cache,
             enclosing_return_type: self.enclosing_return_type.clone(),
+            top_level_scope: self.top_level_scope.clone(),
             branch_aware: self.branch_aware,
             match_arm_narrowing: self.match_arm_narrowing.clone(),
             scope_var_resolver: self.scope_var_resolver,
@@ -291,6 +296,7 @@ impl<'a> VarResolutionCtx<'a> {
             loaders: self.loaders,
             resolved_class_cache: self.resolved_class_cache,
             enclosing_return_type: self.enclosing_return_type.clone(),
+            top_level_scope: self.top_level_scope.clone(),
             branch_aware: self.branch_aware,
             match_arm_narrowing,
             scope_var_resolver: self.scope_var_resolver,
@@ -1355,6 +1361,7 @@ fn apply_property_narrowing(
                 loaders: Loaders::with_function(rctx.function_loader),
                 resolved_class_cache: crate::virtual_members::active_resolved_class_cache(),
                 enclosing_return_type: None,
+                top_level_scope: None,
                 branch_aware: false,
                 match_arm_narrowing: HashMap::new(),
                 scope_var_resolver: None,

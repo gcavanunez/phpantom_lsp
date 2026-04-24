@@ -149,6 +149,7 @@ pub(crate) fn resolve_variable_types(
             loaders,
             resolved_class_cache: active_cache,
             enclosing_return_type: None,
+            top_level_scope: None,
             branch_aware: false,
             match_arm_narrowing: HashMap::new(),
 
@@ -197,6 +198,59 @@ pub(in crate::completion) fn resolve_variable_in_statements<'b>(
     // Collect so we can iterate twice: once to check class bodies,
     // once (if needed) to walk top-level statements.
     let stmts: Vec<&Statement> = statements.collect();
+
+    // Pre-compute top-level variable scope so that `global $x` inside
+    // function bodies can look up `$x`'s type from the file's top level.
+    let top_level_scope = if ctx.top_level_scope.is_none() {
+        let tl_fw_ctx = super::forward_walk::ForwardWalkCtx {
+            current_class: ctx.current_class,
+            all_classes: ctx.all_classes,
+            content: ctx.content,
+            cursor_offset: u32::MAX,
+            class_loader: ctx.class_loader,
+            loaders: ctx.loaders,
+            resolved_class_cache: ctx.resolved_class_cache,
+            enclosing_return_type: None,
+            top_level_scope: None,
+        };
+        let mut tl_scope = super::forward_walk::ScopeState::new();
+        super::forward_walk::walk_top_level_for_globals(
+            stmts.iter().copied(),
+            &mut tl_scope,
+            &tl_fw_ctx,
+        );
+        if tl_scope.locals.is_empty() {
+            None
+        } else {
+            Some(tl_scope.locals)
+        }
+    } else {
+        ctx.top_level_scope.clone()
+    };
+
+    // Shadow ctx with one that carries the top-level scope, reusing
+    // the existing `with_cursor_offset` helper to copy all fields.
+    let ctx_with_tls;
+    let ctx: &VarResolutionCtx<'_> = if top_level_scope.is_some() && ctx.top_level_scope.is_none() {
+        ctx_with_tls = VarResolutionCtx {
+            var_name: ctx.var_name,
+            current_class: ctx.current_class,
+            all_classes: ctx.all_classes,
+            content: ctx.content,
+            cursor_offset: ctx.cursor_offset,
+            class_loader: ctx.class_loader,
+            loaders: ctx.loaders,
+            resolved_class_cache: ctx.resolved_class_cache,
+            enclosing_return_type: ctx.enclosing_return_type.clone(),
+            top_level_scope,
+            branch_aware: ctx.branch_aware,
+            match_arm_narrowing: ctx.match_arm_narrowing.clone(),
+            scope_var_resolver: ctx.scope_var_resolver,
+        };
+        &ctx_with_tls
+    } else {
+        ctx
+    };
 
     for &stmt in &stmts {
         match stmt {
@@ -294,6 +348,7 @@ pub(in crate::completion) fn resolve_variable_in_statements<'b>(
             loaders: ctx.loaders,
             resolved_class_cache: ctx.resolved_class_cache,
             enclosing_return_type: None,
+            top_level_scope: None,
         };
         if let Some(fw_results) =
             super::forward_walk::resolve_in_top_level(ctx.var_name, stmts.iter().copied(), &fw_ctx)
@@ -560,6 +615,7 @@ fn try_resolve_in_function(
         loaders: ctx.loaders,
         resolved_class_cache: ctx.resolved_class_cache,
         enclosing_return_type: enclosing_ret,
+        top_level_scope: ctx.top_level_scope.clone(),
     };
     Some(
         super::forward_walk::resolve_in_function_body(ctx.var_name, func, &fw_ctx)
@@ -682,6 +738,7 @@ fn resolve_variable_in_members<'b>(
                         loaders: ctx.loaders,
                         resolved_class_cache: ctx.resolved_class_cache,
                         enclosing_return_type: enclosing_ret,
+                        top_level_scope: ctx.top_level_scope.clone(),
                     };
                     let method_name_str = method.name.value.to_string();
                     let is_static = method.modifiers.contains_static();
@@ -752,6 +809,7 @@ fn resolve_abstract_method_param(
             loaders: ctx.loaders,
             resolved_class_cache: ctx.resolved_class_cache,
             enclosing_return_type: None,
+            top_level_scope: ctx.top_level_scope.clone(),
         };
 
         return super::forward_walk::resolve_param_type(

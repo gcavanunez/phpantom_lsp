@@ -1392,6 +1392,7 @@ impl Backend {
 
                     let var_ctx = VarResolutionCtx {
                         var_name: "",
+                        top_level_scope: None,
                         current_class: current_class_info,
                         all_classes: &file_ctx.classes,
                         content,

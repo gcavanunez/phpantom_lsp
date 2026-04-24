@@ -51,6 +51,7 @@ pub(in crate::completion) fn resolve_class_string_targets(
                 loaders: Loaders::default(),
                 resolved_class_cache: crate::virtual_members::active_resolved_class_cache(),
                 enclosing_return_type: None,
+                top_level_scope: None,
                 branch_aware: false,
                 match_arm_narrowing: Default::default(),
                 scope_var_resolver: None,
