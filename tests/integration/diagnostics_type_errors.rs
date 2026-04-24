@@ -3549,3 +3549,98 @@ function test(): void {
         "Should not flag closure passed to callable|null param, got: {msgs:?}"
     );
 }
+
+/// B28: When the return type of the outermost method call is an unresolvable
+/// class (not in the project), the resolver must not fall through and report
+/// the type of the *argument* passed into that method instead.
+#[test]
+fn no_false_positive_for_nested_call_with_unresolvable_return_type() {
+    use crate::common::create_psr4_workspace;
+
+    let files = vec![
+        (
+            "src/ArtifactList.php",
+            r#"<?php
+namespace App;
+
+/** @implements \Iterator<int, mixed> */
+class ArtifactList implements \Iterator {
+    public function current(): mixed { return null; }
+    public function key(): int { return 0; }
+    public function next(): void {}
+    public function rewind(): void {}
+    public function valid(): bool { return false; }
+}
+"#,
+        ),
+        (
+            "src/Source.php",
+            r#"<?php
+namespace App;
+
+class Source {
+    public function getClasses(): ArtifactList {
+        return new ArtifactList();
+    }
+}
+"#,
+        ),
+        (
+            "src/ClassNode.php",
+            r#"<?php
+namespace App;
+
+class ClassNode {
+    /** @param \PDepend\Source\AST\ASTClass $node */
+    public function __construct(\PDepend\Source\AST\ASTClass $node) {}
+}
+"#,
+        ),
+        (
+            "src/TestCase.php",
+            r#"<?php
+namespace App;
+
+use PDepend\Source\AST\ASTNode;
+
+class TestCase {
+    private function parseTestCaseSource(): Source {
+        return new Source();
+    }
+
+    /** @return \PDepend\Source\AST\ASTNode */
+    private function getNodeForCallingTestCase(\Iterator $nodes): ASTNode {
+        /** @var ASTNode */
+        return $nodes->current();
+    }
+
+    protected function getClass(): ClassNode {
+        return new ClassNode(
+            $this->getNodeForCallingTestCase(
+                $this->parseTestCaseSource()->getClasses()
+            )
+        );
+    }
+}
+"#,
+        ),
+    ];
+
+    let composer = r#"{"autoload":{"psr-4":{"App\\":"src/"}}}"#;
+    let (backend, dir) = create_psr4_workspace(composer, &files);
+    let uri = format!("file://{}/src/TestCase.php", dir.path().display());
+    let content = files[3].1;
+    let mut diags = Vec::new();
+    backend.collect_type_error_diagnostics(&uri, content, &mut diags);
+    let msgs = type_error_messages(&diags);
+    // The argument to ClassNode::__construct is the return value of
+    // getNodeForCallingTestCase which returns ASTNode.  The diagnostic
+    // must NOT say "got ArtifactList" (the type of the argument passed
+    // *into* getNodeForCallingTestCase).
+    for msg in &msgs {
+        assert!(
+            !msg.contains("ArtifactList"),
+            "Nested call resolved to inner argument type instead of outermost return type: {msg}"
+        );
+    }
+}

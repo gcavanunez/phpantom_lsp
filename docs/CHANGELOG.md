@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Method-level template resolution through generic wrappers.** When a method declares `@template T` with `@param Iterator<T> $nodes` and `@return T`, passing an argument like `ASTArtifactList<ASTClass>` (which implements `Iterator<int|string, ASTClass>`) now correctly resolves `T` to `ASTClass`. Previously the resolver returned the raw class name or unsubstituted template parameter, causing false-positive argument type mismatch diagnostics on nested call chains.
 - **Foreach over nested generic array access.** Iterating over an array-access expression like `foreach ($this->rules[$key] as $rule)` where the property is typed `array<string, list<Rule>>` now correctly infers `$rule` as `Rule`. Previously the element type was lost because generic array types like `list<Rule>` were incorrectly classified as scalar during value extraction.
 - **Type narrowing.** Falsy guard clauses (`if (!$var) { throw; }`) now strip both `false` and `null` from the variable's type, not just `null`.
 - **Name resolution.** Template parameter bounds (`@template T of SomeClass`) are now resolved through use statements to FQNs during parsing, fixing cross-file mixin and generic resolution that previously failed on aliased type names.

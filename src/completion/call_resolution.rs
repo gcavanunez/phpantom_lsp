@@ -22,7 +22,7 @@
 /// - [`Backend::resolve_callable_target`]: resolves a call expression
 ///   string to a [`ResolvedCallableTarget`] with label, parameters, and
 ///   return type (used by signature help and named-argument completion).
-/// - [`Backend::resolve_call_return_types_expr`]: resolves the return
+/// - [`Backend::resolve_call_return_types_expr_with_hint`]: resolves the return
 ///   type of a structured [`SubjectExpr`] callee + argument text to
 ///   zero or more `ClassInfo` values (used by the completion chain).
 /// - [`Backend::resolve_method_return_types_with_args`]: resolves a
@@ -862,9 +862,10 @@ impl Backend {
     /// [`SubjectExpr::Variable`], or [`SubjectExpr::NewExpr`].
     /// Any other variant falls through to `resolve_target_classes_expr`.
     ///
-    /// Like [`resolve_call_return_types_expr`](Self::resolve_call_return_types_expr)
-    /// but also captures the raw return type hint (before class resolution)
-    /// into `return_type_hint_out` when provided.  This preserves generic
+    /// Resolves the return type of a structured [`SubjectExpr`] callee +
+    /// argument text.  Optionally captures the raw return type hint
+    /// (with template substitutions applied) into `return_type_hint_out`
+    /// when provided.  This preserves generic
     /// type parameters (e.g. `HasMany<Translation, Tag>`) that would
     /// otherwise be lost when converting to `Vec<Arc<ClassInfo>>`.
     pub(crate) fn resolve_call_return_types_expr_with_hint(
@@ -891,11 +892,17 @@ impl Backend {
                 let mut results = Vec::new();
 
                 for owner in &lhs_classes {
+                    let split_args = split_text_args(text_args);
+                    let arg_refs = split_args.to_vec();
+                    let template_subs =
+                        Self::build_method_template_subs(owner, method_name, &arg_refs, ctx);
+
                     // Capture the return type hint from the first owner
-                    // that has the method, before class resolution loses
-                    // generic parameters.  The resolve_class_fully call
-                    // is cached, so this doesn't duplicate work done by
-                    // resolve_method_return_types_with_args below.
+                    // that has the method.  Apply template substitutions
+                    // so that generic return types like `T` are resolved
+                    // to their concrete types (e.g. `ASTClass`).  Without
+                    // this, callers that use the hint for downstream
+                    // template binding would see unsubstituted params.
                     if !hint_captured && let Some(ref mut hint_out) = return_type_hint_out {
                         let merged = crate::virtual_members::resolve_class_fully_maybe_cached(
                             owner,
@@ -904,16 +911,16 @@ impl Backend {
                         );
                         if let Some(m) = merged.get_method_ci(method_name) {
                             if let Some(ref ret) = m.return_type {
-                                **hint_out = Some(ret.clone());
+                                let substituted = if !template_subs.is_empty() {
+                                    ret.substitute(&template_subs)
+                                } else {
+                                    ret.clone()
+                                };
+                                **hint_out = Some(substituted);
                             }
                             hint_captured = true;
                         }
                     }
-
-                    let split_args = split_text_args(text_args);
-                    let arg_refs = split_args.to_vec();
-                    let template_subs =
-                        Self::build_method_template_subs(owner, method_name, &arg_refs, ctx);
                     let var_resolver = build_var_resolver(ctx);
                     let mr_ctx = MethodReturnCtx {
                         all_classes: ctx.all_classes,
@@ -1242,17 +1249,6 @@ impl Backend {
                 callee_classes
             }
         }
-    }
-
-    /// Thin wrapper around [`resolve_call_return_types_expr_with_hint`]
-    /// that discards the return type hint.  Existing callers that don't
-    /// need generic type preservation use this.
-    pub(crate) fn resolve_call_return_types_expr(
-        callee: &SubjectExpr,
-        text_args: &str,
-        ctx: &ResolutionCtx<'_>,
-    ) -> Vec<Arc<ClassInfo>> {
-        Self::resolve_call_return_types_expr_with_hint(callee, text_args, ctx, None)
     }
 
     /// Resolve a method call's return type, taking into account PHPStan
@@ -1771,7 +1767,128 @@ impl Backend {
                             subs.insert(tpl_name.to_string(), inner.clone());
                             continue;
                         }
-                        subs.insert(tpl_name.to_string(), resolved_type);
+
+                        // For non-array-like generic wrappers (e.g.
+                        // `Iterator<T>`, `Traversable<T>`), try to
+                        // extract the positional generic arg through
+                        // the class hierarchy.  When the argument type
+                        // is a class that implements/extends the wrapper
+                        // interface with concrete generic args, use
+                        // those args instead of the raw class name.
+                        //
+                        // 1. If the resolved type is itself Generic with
+                        //    a matching wrapper name, extract directly.
+                        // 2. Otherwise resolve the type to a class and
+                        //    check implements_generics / extends_generics
+                        //    for the wrapper interface.
+                        let extracted = (|| -> Option<PhpType> {
+                            // Direct match: resolved type is already
+                            // `Wrapper<..., ConcreteArg, ...>`.
+                            if let PhpType::Generic(name, args) = &resolved_type {
+                                let short = crate::util::short_name(name);
+                                let wrapper_short = crate::util::short_name(wrapper_name);
+                                if short == wrapper_short {
+                                    // When the param hint has fewer
+                                    // generic args than the resolved
+                                    // type (e.g. `Iterator<T>` vs
+                                    // `Iterator<int, ASTClass>`), the
+                                    // single param-hint arg represents
+                                    // the value/last type.
+                                    let param_generic_count = param_hint
+                                        .and_then(|h| match h {
+                                            PhpType::Generic(_, a) => Some(a.len()),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(1);
+                                    if param_generic_count == 1 && args.len() > 1 {
+                                        return args.last().cloned();
+                                    }
+                                    return args.get(tpl_position).cloned();
+                                }
+                            }
+
+                            // Hierarchy lookup: resolve the type to a
+                            // class and search its implements_generics
+                            // and extends_generics for the wrapper.
+                            let base_name = resolved_type.base_name()?;
+                            let cls = (ctx.class_loader)(base_name)?;
+                            let merged = crate::virtual_members::resolve_class_fully_maybe_cached(
+                                &cls,
+                                ctx.class_loader,
+                                ctx.resolved_class_cache,
+                            );
+                            let wrapper_short = crate::util::short_name(wrapper_name);
+
+                            // Build a substitution map from the class's
+                            // template params to the concrete generic
+                            // args from the resolved type.  E.g. when
+                            // the resolved type is
+                            // `ASTArtifactList<ASTClass>` and the class
+                            // declares `@template T of ASTArtifact`,
+                            // this maps `T → ASTClass`.  Without this,
+                            // the `@implements Iterator<int|string, T>`
+                            // would return the raw `T` instead of the
+                            // concrete `ASTClass`.
+                            let class_tpl_subs: HashMap<String, PhpType> =
+                                if let PhpType::Generic(_, concrete_args) = &resolved_type {
+                                    merged
+                                        .template_params
+                                        .iter()
+                                        .zip(concrete_args.iter())
+                                        .map(|(name, ty)| (name.to_string(), ty.clone()))
+                                        .collect()
+                                } else {
+                                    HashMap::new()
+                                };
+
+                            // Search implements_generics first, then
+                            // extends_generics.
+                            for (iface_name, args) in merged
+                                .implements_generics
+                                .iter()
+                                .chain(merged.extends_generics.iter())
+                            {
+                                let iface_short = crate::util::short_name(iface_name);
+                                if iface_short != wrapper_short {
+                                    continue;
+                                }
+                                if args.is_empty() {
+                                    continue;
+                                }
+
+                                // Apply class-level template subs so
+                                // that e.g. `Iterator<int|string, T>`
+                                // becomes `Iterator<int|string, ASTClass>`.
+                                let args: Vec<PhpType> = if !class_tpl_subs.is_empty() {
+                                    args.iter().map(|a| a.substitute(&class_tpl_subs)).collect()
+                                } else {
+                                    args.clone()
+                                };
+
+                                let param_generic_count = param_hint
+                                    .and_then(|h| match h {
+                                        PhpType::Generic(_, a) => Some(a.len()),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(1);
+                                // When the @param hint has a single
+                                // generic arg but the @implements
+                                // clause has multiple, the single arg
+                                // represents the value (last) type.
+                                if param_generic_count == 1 && args.len() > 1 {
+                                    return args.last().cloned();
+                                }
+                                return args.get(tpl_position).cloned();
+                            }
+
+                            None
+                        })();
+
+                        if let Some(concrete) = extracted {
+                            subs.insert(tpl_name.to_string(), concrete);
+                        } else {
+                            subs.insert(tpl_name.to_string(), resolved_type);
+                        }
                     }
                 }
                 TemplateBindingMode::CallableReturnType => {
@@ -1982,8 +2099,27 @@ fn resolve_expression_to_type(text: &str, ctx: &ResolutionCtx<'_>) -> Option<Php
         // (which preserves scalars).
         SubjectExpr::CallExpr { callee, args_text } => {
             // Try class-bearing resolution first (handles non-scalar returns).
-            let classes = Backend::resolve_call_return_types_expr(callee, args_text, ctx);
+            // Use the _with_hint variant to capture the raw return type
+            // (which preserves generic parameters like `ASTArtifactList<ASTClass>`).
+            // Without this, generic args are lost and downstream template
+            // substitution resolves to unsubstituted template params.
+            let mut return_hint: Option<PhpType> = None;
+            let classes = Backend::resolve_call_return_types_expr_with_hint(
+                callee,
+                args_text,
+                ctx,
+                Some(&mut return_hint),
+            );
             if let Some(first) = classes.first() {
+                // Prefer the return type hint (preserves generics) over
+                // the bare class FQN.  Fall back to FQN when no hint
+                // was captured or when the hint is a raw template name.
+                if let Some(ref hint) = return_hint
+                    && !hint.is_untyped()
+                    && !hint.is_mixed()
+                {
+                    return Some(hint.clone());
+                }
                 return Some(PhpType::Named(first.fqn().to_string()));
             }
 
