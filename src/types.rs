@@ -2159,13 +2159,27 @@ impl ResolvedType {
 
         // Add entries that narrowing introduced (e.g. instanceof
         // narrows to a new class that wasn't in the original set).
+        let mut added_new = false;
         for cls in classes {
             if !results
                 .iter()
                 .any(|rt| rt.class_info.as_ref().is_some_and(|c| c.fqn() == cls.fqn()))
             {
                 results.push(ResolvedType::from_class(cls));
+                added_new = true;
             }
+        }
+
+        // When narrowing introduced concrete class types (e.g. via
+        // `instanceof`), drop leftover `mixed` non-class entries.
+        // `mixed` is kept by the `None => true` retain branch above
+        // because it has no `class_info`, but once narrowing has
+        // constrained the value to a specific class, `mixed` is no
+        // longer accurate and would cause false-positive diagnostics
+        // after branch merges (where subsumption lets `mixed` swallow
+        // the narrowed class type).
+        if added_new {
+            results.retain(|rt| !(rt.class_info.is_none() && rt.type_string.is_mixed()));
         }
     }
 

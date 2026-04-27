@@ -4837,3 +4837,43 @@ class MyService {
         diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// B29 — merge_branch must not let `mixed` subsume narrowed class types
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// After `assert($data instanceof \stdClass)`, inserting any `if` block
+/// (even `if (true) {}`) before a member access must not cause `$data`
+/// to lose its narrowed type.  The branch merge used to let `mixed`
+/// (from the pre-narrowed scope) subsume `stdClass`.
+#[test]
+fn assert_instanceof_survives_if_block_merge() {
+    let backend = create_test_backend();
+    {
+        let mut cfg = backend.config();
+        cfg.diagnostics.unresolved_member_access = Some(true);
+        backend.set_config(cfg);
+    }
+    let uri = "file:///test.php";
+    let text = r#"<?php
+class Test {
+    public function handle(string $raw): void {
+        $data = json_decode($raw);
+        assert($data instanceof \stdClass);
+
+        if (true) {
+        }
+
+        if (!is_string($data->status)) {
+            throw new \RuntimeException('bad');
+        }
+    }
+}
+"#;
+    let diags = unknown_member_diagnostics_with_scope_cache(&backend, uri, text);
+    assert!(
+        diags.is_empty(),
+        "assert instanceof should survive branch merge; $data->status should resolve. Got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
