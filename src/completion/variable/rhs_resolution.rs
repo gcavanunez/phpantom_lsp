@@ -1402,6 +1402,29 @@ pub(crate) fn build_function_template_subs(
                     subs.insert(tpl_name.to_string(), concrete);
                     continue;
                 }
+                // Array literal argument for array-like wrappers:
+                // `[1, 2, 3]` for `@param array<T>` → infer T from elements.
+                if is_array_like_wrapper(wrapper_name)
+                    && arg_text.starts_with('[')
+                    && arg_text.ends_with(']')
+                {
+                    let inner = arg_text[1..arg_text.len() - 1].trim();
+                    if !inner.is_empty() {
+                        let elems =
+                            crate::completion::conditional_resolution::split_text_args(inner);
+                        // For `array<T>` (position 0 with 1 generic arg) or
+                        // `array<K, V>` (position 1 = value), infer from
+                        // element values.  For position 0 in a 2-arg generic
+                        // (the key), infer from keys if available.
+                        if let Some(elem) = elems.first()
+                            && let Some(resolved_type) =
+                                Backend::resolve_arg_text_to_type(elem.trim(), rctx)
+                        {
+                            subs.insert(tpl_name.to_string(), resolved_type);
+                            continue;
+                        }
+                    }
+                }
                 // Special case: unwrap class-string<class-string<T>> to class-string<T>
                 if wrapper_name == "class-string"
                     && tpl_position == 0

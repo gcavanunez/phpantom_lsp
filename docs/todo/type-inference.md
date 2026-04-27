@@ -493,14 +493,16 @@ existing `build_function_template_subs` / `build_method_template_subs`
 machinery into the inlay hint path. Integration tests document the
 desired behaviour.
 
-**Step 2 (remaining — see B27):** The `CallSite` matching logic
-does not yet find the parent call site for all AST shapes. The
-offset comparison between `UntypedClosureSite` offsets and
-`CallSite.args_start`/`args_end` fails in practice, leaving
-`call_args_text` as `None`. Without it, template parameters fall
-back to their upper bound (`mixed`) via the fill-in-unbound logic,
-and `is_mixed()` filters the hint. Fixing the matching condition
-in `emit_closure_hints` (tracked in B27) completes the feature.
+**Step 2 (done):** The `CallSite` matching logic works correctly
+for offset comparison. The actual issue was that
+`build_function_template_subs` did not handle array literal
+arguments (e.g. `[1, 2, 3]`) for `GenericWrapper` binding mode.
+The `GenericWrapper("array", 0)` arm only resolved `$variable`
+arguments via `resolve_arg_variable_raw_type`, skipping literals.
+Fixed by adding array-literal element inference in the
+`GenericWrapper` arm of `build_function_template_subs`, so
+`each([1, 2, 3], fn($x) => ...)` now infers `T = int` and shows
+the correct type hint for `$x`.
 
 **References:**
 - PHPStan: `GenericFunctionsReturnTypeExtension`, argument-based

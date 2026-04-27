@@ -369,47 +369,4 @@ statement. Possible causes:
 Once the root cause is understood, the re-entry guard can be removed
 in favour of a proper fix.
 
-## B27 — CallSite matching in `emit_closure_hints` fails to find the parent call for template substitution
-
-**Symptom:** When a function has `@template T` with a callable
-parameter typed `callable(T): T`, the closure parameter inlay
-hints show no type (T falls back to `mixed` and is filtered)
-instead of the concrete type inferred from sibling arguments.
-
-**Root cause:** `emit_closure_hints` in `inlay_hints.rs` tries to
-find the matching `CallSite` for each `UntypedClosureSite` so it
-can extract the full argument text and pass it to
-`resolve_callable_target_with_args` for template substitution.
-The matching logic compares `call_expression` strings and checks
-whether any closure offset falls within the call site's
-`(args_start, args_end)` range.  In practice, the match fails —
-`call_args_text` ends up `None`, so no template substitution
-occurs.  The fallback-to-bounds logic then maps every unbound
-template parameter to `mixed`, and `is_mixed()` filters the hint.
-
-**Where to fix:** Debug the offset comparison in the CallSite
-matching block of `emit_closure_hints`.  The infrastructure is
-already in place (the method accepts `call_sites` and builds
-`call_args_text`); only the matching condition needs fixing.
-Likely causes:
-
-1. The `UntypedClosureSite` offsets (param variable offsets and
-   close-paren offset) may all point inside the *closure's* own
-   parameter list, which is nested inside the call's argument
-   range but the byte offsets may not satisfy the `> args_start`
-   / `< args_end` comparison due to off-by-one or encoding
-   differences.
-2. The `call_expression` string stored in `UntypedClosureSite`
-   may differ subtly from the one in `CallSite` (e.g. trailing
-   whitespace, different casing for method calls).
-
-Once the matching works, the existing `build_function_template_subs`
-/ `build_method_template_subs` machinery handles the actual
-inference and substitution automatically.
-
-**Affected features:** Inlay hints for closure/arrow-function
-parameters when the callable type contains template parameters.
-Also affects completion, hover, and signature help inside closure
-bodies through the same callable type resolution path.
-
 
