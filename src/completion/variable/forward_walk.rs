@@ -54,6 +54,147 @@ use crate::parser::{extract_hint_type, with_parsed_program};
 use crate::php_type::PhpType;
 use crate::types::{AccessKind, ClassInfo, ResolvedType};
 
+// ─── Hover scope cache (Phase 3) ────────────────────────────────────────────
+//
+// When multiple hover requests arrive for the same file content (e.g. a
+// test file with 80+ `assertType()` calls), each request would otherwise
+// trigger a full forward walk of the method body from statement 1 to the
+// cursor position.  That produces O(n²) total work.
+//
+// The hover scope cache amortises this to O(n) per method body: the first
+// hover that hits a given method walks the **full** body once (cursor at
+// u32::MAX) and stores the resulting `ScopeSnapshotMap`.  Subsequent
+// hovers on the same file content look up the pre-computed snapshots in
+// O(log N) time via a `BTreeMap::range` search — no re-walk at all.
+//
+// Cache invalidation: the key is a 64-bit FNV-1a hash of the full content
+// string.  This is robust against memory reuse (two different test contents
+// that happen to land at the same address would produce different hashes),
+// while remaining cheap to compute (single pass, no allocation).
+//
+// The hover cache must not interfere with the diagnostic scope cache:
+// - It is only consulted / populated when `is_diagnostic_scope_active()`
+//   returns `false`.
+// - `build_diagnostic_scopes` never touches `HOVER_SCOPE_CACHE`.
+
+struct HoverScopeCache {
+    /// FNV-1a hash of the content string used to build this cache.
+    /// When the content changes (different hash), the cache is reset.
+    content_hash: u64,
+    /// method_span_start → full-body scope snapshot map.
+    methods: HashMap<u32, ScopeSnapshotMap>,
+}
+
+/// Compute a fast 64-bit FNV-1a hash of a byte slice.
+fn fnv1a_hash(data: &[u8]) -> u64 {
+    const OFFSET: u64 = 14695981039346656037;
+    const PRIME: u64 = 1099511628211;
+    let mut hash = OFFSET;
+    for &b in data {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+thread_local! {
+    static HOVER_SCOPE_CACHE: RefCell<Option<HoverScopeCache>> =
+        const { RefCell::new(None) };
+}
+
+/// Ensure the hover scope cache is active and valid for `content`.
+///
+/// If the cache already exists for the same content hash, this is a no-op
+/// (the existing snapshots remain valid).  If the hash changed (content was
+/// replaced), the cache is reset to empty so stale snapshots from the
+/// previous content are discarded.
+///
+/// This must not be called while a diagnostic scope pass is in progress.
+pub(crate) fn activate_hover_scope_cache(content: &str) {
+    let content_hash = fnv1a_hash(content.as_bytes());
+    HOVER_SCOPE_CACHE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        match borrow.as_ref() {
+            Some(cache) if cache.content_hash == content_hash => {
+                // Cache is already valid for this content — nothing to do.
+            }
+            _ => {
+                *borrow = Some(HoverScopeCache {
+                    content_hash,
+                    methods: HashMap::new(),
+                });
+            }
+        }
+    });
+}
+
+/// Returns `true` when the hover scope cache is active.
+fn is_hover_scope_cache_active() -> bool {
+    HOVER_SCOPE_CACHE.with(|cell| cell.borrow().is_some())
+}
+
+/// Look up a variable's types from the hover scope cache for a specific
+/// method body.
+///
+/// Returns `Some(types)` when a snapshot at-or-before `offset` exists for
+/// the method, `None` when the method hasn't been cached yet.
+fn lookup_hover_scope(
+    method_span_start: u32,
+    var_name: &str,
+    offset: u32,
+) -> Option<Vec<ResolvedType>> {
+    HOVER_SCOPE_CACHE.with(|cell| {
+        let borrow = cell.borrow();
+        let cache = borrow.as_ref()?;
+        let snapshots = cache.methods.get(&method_span_start)?;
+        // Find the snapshot at-or-before `offset`.
+        let (_snap_offset, snap) = snapshots.range(..=offset).next_back()?;
+        // Only return Some when the variable is explicitly present in the
+        // snapshot.  A missing key means the variable had not been assigned
+        // at this point in the walk — return None so the caller falls back
+        // to the standard walk path (which handles assignment-site hovering,
+        // parameter inference, etc.).
+        snap.get(var_name).cloned()
+    })
+}
+
+/// Returns `true` when the hover scope cache already has a snapshot map
+/// for the given method body.
+fn hover_scope_has_method(method_span_start: u32) -> bool {
+    HOVER_SCOPE_CACHE.with(|cell| {
+        let borrow = cell.borrow();
+        borrow
+            .as_ref()
+            .is_some_and(|c| c.methods.contains_key(&method_span_start))
+    })
+}
+
+/// Store a complete scope snapshot map for a method body in the hover
+/// scope cache.
+fn populate_hover_scope_cache_for_method(method_span_start: u32, snapshots: ScopeSnapshotMap) {
+    HOVER_SCOPE_CACHE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        if let Some(ref mut cache) = *borrow {
+            cache.methods.insert(method_span_start, snapshots);
+        }
+    });
+}
+
+/// Extract and return the current contents of the diagnostic scope cache,
+/// replacing it with an empty map.
+///
+/// Used by `build_method_snapshots_via_diag_cache` to harvest the
+/// snapshots that were recorded by a temporary diagnostic-scope walk.
+fn take_diagnostic_scope_map() -> ScopeSnapshotMap {
+    DIAGNOSTIC_SCOPE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        match borrow.as_mut() {
+            Some(map) => std::mem::take(map),
+            None => BTreeMap::new(),
+        }
+    })
+}
+
 // ─── Diagnostic scope cache (Phase 2) ───────────────────────────────────────
 //
 // During a diagnostic pass, `build_diagnostic_scopes` walks every
@@ -2068,6 +2209,117 @@ pub(crate) fn resolve_in_method_body<'b>(
     is_static: bool,
     ctx: &ForwardWalkCtx<'_>,
 ) -> Option<Vec<ResolvedType>> {
+    // Collect iterators up front so they can be reused across the cache
+    // populate path and the standard walk path without ownership issues.
+    let params_vec: Vec<&'b FunctionLikeParameter<'b>> = parameters.collect();
+    let stmts_vec: Vec<&'b Statement<'b>> = body_statements.collect();
+
+    // ── Hover scope cache fast path ──────────────────────────────────────
+    // When the hover scope cache is active and already has snapshots for
+    // this method, serve the result directly from the pre-computed map
+    // without re-walking the body.  This turns O(n) re-walks into O(log N)
+    // BTreeMap range lookups for every hover after the first on a method.
+    //
+    // Only used when the diagnostic scope cache is not active — diagnostics
+    // have their own cache and the two must not interfere.
+    if !is_diagnostic_scope_active()
+        && hover_scope_has_method(method_span_start)
+        && let Some(types) = lookup_hover_scope(method_span_start, var_name, ctx.cursor_offset)
+    {
+        // Generator yield inference is a last-resort fallback that
+        // doesn't depend on the walk, so it's safe to try here too.
+        if types.is_empty()
+            && let Some(inferred) = try_generator_yield_inference(var_name, ctx)
+        {
+            return Some(inferred);
+        }
+        return Some(types);
+    }
+    // The method IS in the cache but this variable had no snapshot
+    // at-or-before cursor_offset (i.e. it was never assigned before
+    // this point).  Fall through to the standard walk so the caller
+    // gets `None` rather than a spurious empty-vec.
+
+    // ── Populate hover cache via a full-body walk ────────────────────────
+    // When the hover cache is active but doesn't yet have snapshots for
+    // this method, walk the full body once (cursor at u32::MAX) to build
+    // all snapshots, store them, then serve the result from the map.
+    // Subsequent hovers on the same method skip the walk entirely.
+    //
+    // Only populate when the method is NOT already cached.  When it IS
+    // cached but the variable was not found at-or-before the cursor (the
+    // fast path above fell through), we must reach the standard walk below
+    // so that closure-internal variables, assignment-site hovers, and
+    // other cases handled by the existing walk logic still work.
+    if !is_diagnostic_scope_active()
+        && is_hover_scope_cache_active()
+        && !hover_scope_has_method(method_span_start)
+    {
+        // Activate a temporary diagnostic scope so that walk_body_forward
+        // records snapshots at every statement boundary.
+        let _diag_guard = with_diagnostic_scope_cache();
+
+        // Build a full-walk context (cursor at u32::MAX = walk entire body).
+        let full_ctx = ForwardWalkCtx {
+            cursor_offset: u32::MAX,
+            current_class: ctx.current_class,
+            all_classes: ctx.all_classes,
+            content: ctx.content,
+            class_loader: ctx.class_loader,
+            loaders: ctx.loaders,
+            resolved_class_cache: ctx.resolved_class_cache,
+            enclosing_return_type: ctx.enclosing_return_type.clone(),
+            top_level_scope: ctx.top_level_scope.clone(),
+        };
+
+        let mut scope = ScopeState::new();
+        if !is_static {
+            seed_this(&mut scope, ctx.current_class);
+        }
+        let method_name = method_ctx.map(|(n, _)| n);
+        let has_scope_attr = method_ctx.is_some_and(|(_, s)| s);
+
+        seed_params(
+            &mut scope,
+            params_vec.iter().copied(),
+            method_span_start,
+            method_name,
+            has_scope_attr,
+            &full_ctx,
+        );
+
+        // Record the scope at the method body start.
+        record_scope_snapshot(method_span_start, &scope);
+
+        // Walk the full body to populate DIAGNOSTIC_SCOPE with snapshots.
+        walk_body_for_diagnostics(stmts_vec.iter().copied(), &mut scope, &full_ctx);
+
+        // Harvest the snapshots from the temporary diagnostic scope.
+        let snapshots = take_diagnostic_scope_map();
+
+        // The _diag_guard drop will clear DIAGNOSTIC_SCOPE; store
+        // snapshots in the hover cache before that happens (we already
+        // took ownership of the map above).
+        populate_hover_scope_cache_for_method(method_span_start, snapshots);
+
+        // Now look up the result from the freshly-populated hover cache.
+        // When the variable IS found in a snapshot, return it directly.
+        // When NOT found (e.g. cursor is at/before first assignment, or
+        // variable is inside a closure body not visible in outer scope),
+        // fall through to the standard walk below so those cases are
+        // handled correctly.
+        if let Some(types) = lookup_hover_scope(method_span_start, var_name, ctx.cursor_offset) {
+            if types.is_empty()
+                && let Some(inferred) = try_generator_yield_inference(var_name, ctx)
+            {
+                return Some(inferred);
+            }
+            return Some(types);
+        }
+        // Variable not found in cache — fall through to standard walk.
+    }
+
+    // ── Standard walk (diagnostics path or hover cache not active) ───────
     let mut scope = ScopeState::new();
 
     // Seed `$this` for non-static class methods.
@@ -2080,7 +2332,7 @@ pub(crate) fn resolve_in_method_body<'b>(
     let has_scope_attr = method_ctx.is_some_and(|(_, s)| s);
     seed_params(
         &mut scope,
-        parameters,
+        params_vec.iter().copied(),
         method_span_start,
         method_name,
         has_scope_attr,
@@ -2088,7 +2340,7 @@ pub(crate) fn resolve_in_method_body<'b>(
     );
 
     // Walk the body forward.
-    walk_body_forward(body_statements, &mut scope, ctx);
+    walk_body_forward(stmts_vec.iter().copied(), &mut scope, ctx);
 
     // Read the target variable from the scope.
     // Return `Some(types)` when the variable exists in scope (even if
@@ -7306,6 +7558,16 @@ fn apply_null_narrowing_truthy<'b>(
     scope: &mut ScopeState,
     ctx: &ForwardWalkCtx<'_>,
 ) {
+    // Decompose `&&` chains so that `isset($a) && isset($b)` narrows
+    // both variables, and `$x !== null && $y !== null` works too.
+    let operands = collect_and_chain_operands(condition);
+    if operands.len() > 1 {
+        for operand in &operands {
+            apply_null_narrowing_truthy(operand, scope, ctx);
+        }
+        return;
+    }
+
     // Check for `$x !== null` or `$x != null` or `null !== $x` etc.
     if let Some(var_name) = extract_non_null_check_var(condition) {
         // For array access keys, narrow the shape on the base variable.
@@ -7315,6 +7577,21 @@ fn apply_null_narrowing_truthy<'b>(
             seed_synthetic_key_if_needed(&var_name, scope, ctx);
             strip_null_from_scope(&var_name, scope);
         }
+    }
+    // `isset($x)` — truthy branch means $x is not null: strip null.
+    // Handles multiple args: `isset($a, $b)` strips null from both.
+    for var_name in extract_isset_vars(condition) {
+        if let Some((base, key)) = split_array_access_key(&var_name) {
+            strip_null_from_array_shape_key(base, key, scope);
+        } else {
+            seed_synthetic_key_if_needed(&var_name, scope, ctx);
+            strip_null_from_scope(&var_name, scope);
+        }
+    }
+    // `!isset($x)` — truthy branch means $x is null: narrow to null.
+    for var_name in extract_not_isset_vars(condition) {
+        seed_synthetic_key_if_needed(&var_name, scope, ctx);
+        narrow_to_null_in_scope(&var_name, scope);
     }
     // Check for `$x === null` or `$x == null` — narrow to null only.
     if let Some(var_name) = extract_null_equality_check_var(condition) {
@@ -7354,6 +7631,21 @@ fn apply_null_narrowing_inverse<'b>(
     if let Some(var_name) = extract_falsy_check_var(condition) {
         strip_null_from_scope(&var_name, scope);
     }
+    // `isset($x)` — inverse (else) means $x was null: narrow to null.
+    for var_name in extract_isset_vars(condition) {
+        seed_synthetic_key_if_needed(&var_name, scope, ctx);
+        narrow_to_null_in_scope(&var_name, scope);
+    }
+    // `!isset($x)` — inverse (guard after `!isset` return) means $x
+    // is not null: strip null.
+    for var_name in extract_not_isset_vars(condition) {
+        if let Some((base, key)) = split_array_access_key(&var_name) {
+            strip_null_from_array_shape_key(base, key, scope);
+        } else {
+            seed_synthetic_key_if_needed(&var_name, scope, ctx);
+            strip_null_from_scope(&var_name, scope);
+        }
+    }
 }
 
 /// Extract variable name from `$x !== null` or `null !== $x` patterns.
@@ -7381,24 +7673,54 @@ fn extract_non_null_check_var(expr: &Expression<'_>) -> Option<String> {
             }
             None
         }
-        // `isset($x)` — parsed as a Call in mago
-        Expression::Call(Call::Function(fc)) if matches!(fc.function, Expression::Identifier(ident) if ident.value() == "isset") =>
-        {
-            if !negated {
-                for arg in fc.argument_list.arguments.iter() {
-                    let arg_expr = match arg {
-                        Argument::Positional(a) => a.value,
-                        Argument::Named(a) => a.value,
-                    };
-                    if let Some(name) = expr_to_var_name(arg_expr) {
-                        return Some(name);
-                    }
-                }
-            }
-            None
-        }
         _ => None,
     }
+}
+
+/// Extract all variable names from an `isset(…)` call (non-negated).
+/// Handles simple variables (`$x`) and property/array access keys
+/// (`$obj->prop`, `$arr["key"]`).  Returns an empty vec when the
+/// expression is not an `isset()` call, or when it is negated.
+fn extract_isset_vars(expr: &Expression<'_>) -> Vec<String> {
+    let (inner, negated) = narrowing::unwrap_condition_negation(expr);
+    if negated {
+        return vec![];
+    }
+    // `isset()` is a language construct, parsed as Expression::Construct(Construct::Isset).
+    let Expression::Construct(Construct::Isset(isset)) = inner else {
+        return vec![];
+    };
+    let mut vars = Vec::new();
+    for value in isset.values.iter() {
+        if let Some(name) =
+            expr_to_var_name(value).or_else(|| narrowing::expr_to_subject_key(value))
+        {
+            vars.push(name);
+        }
+    }
+    vars
+}
+
+/// Extract all variable names from a `!isset(…)` call (negated isset).
+/// Returns an empty vec when the expression is not a negated `isset()`.
+fn extract_not_isset_vars(expr: &Expression<'_>) -> Vec<String> {
+    let (inner, negated) = narrowing::unwrap_condition_negation(expr);
+    if !negated {
+        return vec![];
+    }
+    // `isset()` is a language construct, parsed as Expression::Construct(Construct::Isset).
+    let Expression::Construct(Construct::Isset(isset)) = inner else {
+        return vec![];
+    };
+    let mut vars = Vec::new();
+    for value in isset.values.iter() {
+        if let Some(name) =
+            expr_to_var_name(value).or_else(|| narrowing::expr_to_subject_key(value))
+        {
+            vars.push(name);
+        }
+    }
+    vars
 }
 
 /// Extract variable name from `$x === null` or `null === $x` patterns.
@@ -7431,18 +7753,8 @@ fn extract_falsy_check_var(expr: &Expression<'_>) -> Option<String> {
         Expression::UnaryPrefix(prefix) if prefix.operator.is_not() => {
             expr_to_var_name(prefix.operand)
         }
-        // `empty($x)` — parsed as a Call in mago
-        Expression::Call(Call::Function(fc)) if matches!(fc.function, Expression::Identifier(ident) if ident.value() == "empty") => {
-            if let Some(arg) = fc.argument_list.arguments.first() {
-                let arg_expr = match arg {
-                    Argument::Positional(a) => a.value,
-                    Argument::Named(a) => a.value,
-                };
-                expr_to_var_name(arg_expr)
-            } else {
-                None
-            }
-        }
+        // `empty($x)` — language construct, parsed as Expression::Construct(Construct::Empty).
+        Expression::Construct(Construct::Empty(empty)) => expr_to_var_name(empty.value),
         _ => None,
     }
 }
@@ -7654,6 +7966,15 @@ fn apply_guard_clause_null_narrowing<'b>(
     }
     if let Some(var_name) = extract_falsy_check_var(if_stmt.condition) {
         strip_falsy_from_scope(&var_name, scope);
+    }
+    // `if (!isset($x)) { return; }` — after the guard, $x is not null.
+    for var_name in extract_not_isset_vars(if_stmt.condition) {
+        if let Some((base, key)) = split_array_access_key(&var_name) {
+            strip_null_from_array_shape_key(base, key, scope);
+        } else {
+            seed_synthetic_key_if_needed(&var_name, scope, ctx);
+            strip_null_from_scope(&var_name, scope);
+        }
     }
     // `if ($x !== null)` with return doesn't narrow after — the
     // remaining code is the null path.  This is handled by the

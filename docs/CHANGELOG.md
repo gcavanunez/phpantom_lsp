@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`isset()` narrowing.** `isset($x)` in a condition now strips `null` from the variable's type in the truthy branch (matching `$x !== null` semantics). `!isset($x)` narrows to `null` only. Both simple variables and property access (`$obj->prop`) are supported, and multiple arguments (`isset($a, $b)`) narrow all listed variables. Guard clauses (`if (!isset($x)) { return; }`) strip null from the variable in the code that follows.
+- **Hover scales linearly on large files.** Processing many hover requests on the same file (e.g. a test suite with 80+ assertion calls) no longer takes O(n²) time. The first hover on a method body walks it once and caches scope snapshots; every subsequent hover on the same file content is an O(log n) lookup with no re-walk.
+
 - **`parent::__construct()` with `@extends` generics.** Calling `parent::__construct($arg)` in a child class that specifies `@extends Parent<Concrete>` no longer produces false-positive type errors for the substituted parameter types.
 - **Array access on bare `array` and `mixed` types.** Accessing a key on a parameter typed as plain `array` (e.g. `$params['key']`) now resolves to `mixed` instead of an empty type, eliminating false-positive type errors downstream (e.g. `$x = $params['key'] ?? null` followed by an `is_string()` guard).
 - **Analyzer and LSP no longer hang on files with deeply nested loops.** Files with multiple levels of foreach/while/for inside if-branches no longer cause exponential blowup.

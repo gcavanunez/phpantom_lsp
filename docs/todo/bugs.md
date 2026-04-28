@@ -7,23 +7,7 @@ pipeline so it produces correct data. Downstream consumers
 (diagnostics, hover, completion, definition) should never need
 to second-guess upstream output.
 
-## B6. Superlinear hover scaling on large single files
 
-**Discovered:** Psalm `ArrayFunctionCallTest.php` porting (Phase 3.5B).
-
-A 1095-line PHP file with 88 `assertType()` calls (each requiring a
-hover) takes 126s to process. Splitting into two ~550-line halves takes
-11s + 14s = 25s total. The 5x slowdown suggests O(n*m) or worse
-behavior where the forward walker or type resolution restarts from the
-file beginning for each hover, and/or resolved types are not cached
-between hover requests on the same file content.
-
-**Repro:** Run the extraction script on `ArrayFunctionCallTest.php`
-and place the output in `tests/psalm_assertions/`, then run the
-assert_type_runner.
-
-**Expected:** Processing time should scale roughly linearly with file
-size and assertion count.
 
 ## B7. `empty()` narrowing resolves to `null` instead of `mixed|null`
 
@@ -83,21 +67,6 @@ binary expressions:
 168, 183-188, 218-224, 229-242, 247-250) and
 `tests/psalm_assertions/binary_operation.php` (lines 10, 17, 56,
 68-69, 87, 100, 165, 175-176).
-
-## B9. `isset()` narrowing not implemented
-
-**Discovered:** SKIP audit of
-`tests/phpstan_nsrt/isset-narrowing.php`.
-
-`isset($x)` in a condition should strip `null` from the variable's
-type (like `$x !== null`). Currently the variable retains its
-nullable type through the truthy branch. This affects 14 assertions
-across property access, array access, and simple variable patterns.
-
-**Tests:** All 18 SKIPs in `tests/phpstan_nsrt/isset-narrowing.php`.
-
-**When fixed:** Remove the SKIPs and verify
-`cargo nextest run "run_assert_type::isset-narrowing"` passes.
 
 ## B10. First-class callable invocation return types
 

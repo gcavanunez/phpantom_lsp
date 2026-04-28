@@ -23,6 +23,7 @@ use crate::types::{AccessKind, ClassInfo, ResolvedType};
 use crate::util::short_name;
 
 use crate::completion::resolver::Loaders;
+use crate::completion::variable::forward_walk::activate_hover_scope_cache;
 use crate::completion::variable::resolution::resolve_variable_types_branch_aware;
 
 /// Context for closure parameter type resolution in hover.
@@ -171,6 +172,28 @@ pub(crate) fn resolve_variable_type(
             &dummy_class
         }
     };
+    // Activate the hover scope cache so that repeated hovers on the same
+    // file content reuse pre-computed method body snapshots instead of
+    // re-walking the body from scratch each time.  The cache is keyed by
+    // a hash of the content, so it is automatically invalidated when the
+    // file content changes.
+    //
+    // NOTE: Do not activate the hover cache when the cursor is inside a
+    // self-assignment RHS (e.g. `$x = $x->transform()`).  In that case
+    // the forward walk must run with the exact cursor position so it stops
+    // BEFORE processing the assignment and returns the pre-assignment type.
+    // The hover cache always returns the snapshot at-or-before the cursor,
+    // which for a cursor inside an assignment statement may be the snapshot
+    // BEFORE the assignment — returning the pre-assignment (parameter) type
+    // rather than the post-@var-cast type.  That is actually correct for
+    // variables and works for most cases, but the specific interaction with
+    // `@var` casts and the `var_override` / `ast_result` comparison logic
+    // in this function can produce incorrect results.  Skip the cache for
+    // this edge case to preserve the existing (correct) behaviour.
+    if !is_cursor_in_self_assignment_rhs(content, cursor_offset as usize, var_name) {
+        activate_hover_scope_cache(content);
+    }
+
     let resolved = resolve_variable_types_branch_aware(
         var_name,
         effective_class,

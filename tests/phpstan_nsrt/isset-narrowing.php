@@ -26,7 +26,7 @@ class Holder
 function issetNarrowsNullable(?Foo $nullable): void
 {
 	if (isset($nullable)) {
-		assertType('Foo', $nullable); // SKIP — isset narrowing not yet implemented, returns ?Foo
+		assertType('Foo', $nullable);
 	}
 }
 
@@ -36,7 +36,7 @@ function issetNarrowsNullable(?Foo $nullable): void
 function notIssetNarrowsToNull(?Foo $nullable): void
 {
 	if (!isset($nullable)) {
-		assertType('null', $nullable); // SKIP — isset narrowing not yet implemented, returns ?Foo
+		assertType('null', $nullable);
 	}
 }
 
@@ -46,9 +46,9 @@ function notIssetNarrowsToNull(?Foo $nullable): void
 function issetElseBranch(?Foo $nullable): void
 {
 	if (isset($nullable)) {
-		assertType('Foo', $nullable); // SKIP — isset narrowing not yet implemented, returns ?Foo
+		assertType('Foo', $nullable);
 	} else {
-		assertType('null', $nullable); // SKIP — isset narrowing not yet implemented, returns ?Foo
+		assertType('null', $nullable);
 	}
 }
 
@@ -61,7 +61,7 @@ function issetEarlyReturn(?Foo $nullable): void
 		return;
 	}
 
-	assertType('Foo', $nullable); // SKIP — isset narrowing not yet implemented, returns ?Foo
+	assertType('Foo', $nullable);
 }
 
 /**
@@ -71,11 +71,11 @@ function issetEarlyReturn(?Foo $nullable): void
 function multipleIsset(?Foo $a, ?Bar $b): void
 {
 	if (isset($a)) {
-		assertType('Foo', $a); // SKIP — isset narrowing not yet implemented, returns ?Foo
+		assertType('Foo', $a);
 	}
 
 	if (isset($b)) {
-		assertType('Bar', $b); // SKIP — isset narrowing not yet implemented, returns ?Bar
+		assertType('Bar', $b);
 	}
 }
 
@@ -86,8 +86,8 @@ function multipleIsset(?Foo $a, ?Bar $b): void
 function issetBothParams(?Foo $a, ?Bar $b): void
 {
 	if (isset($a) && isset($b)) {
-		assertType('Foo', $a); // SKIP — isset narrowing not yet implemented, returns ?Foo
-		assertType('Bar', $b); // SKIP — isset narrowing not yet implemented, returns ?Bar
+		assertType('Foo', $a);
+		assertType('Bar', $b);
 	}
 }
 
@@ -97,13 +97,13 @@ function issetBothParams(?Foo $a, ?Bar $b): void
 function nullCoalescingBasic(?Foo $nullable): void
 {
 	$result = $nullable ?? new Bar();
-	assertType('Bar|Foo', $result); // SKIP — null coalescing union resolution not yet implemented
+	assertType('Bar|Foo', $result);
 }
 
 function issetOnProperty(Holder $holder): void
 {
 	if (isset($holder->prop)) {
-		assertType('Foo', $holder->prop); // SKIP — property narrowing through isset not yet implemented
+		assertType('Foo', $holder->prop);
 	}
 }
 
@@ -113,7 +113,7 @@ function issetOnProperty(Holder $holder): void
 function issetNarrowsString(?string $nullable): void
 {
 	if (isset($nullable)) {
-		assertType('string', $nullable); // SKIP — isset narrowing not yet implemented, returns string|null
+		assertType('string', $nullable);
 	}
 }
 
@@ -123,7 +123,7 @@ function issetNarrowsString(?string $nullable): void
 function issetNarrowsInt(?int $nullable): void
 {
 	if (isset($nullable)) {
-		assertType('int', $nullable); // SKIP — isset narrowing not yet implemented, returns int|null
+		assertType('int', $nullable);
 	}
 }
 
@@ -134,7 +134,7 @@ function issetAssignment(?Foo $nullable): void
 {
 	if (isset($nullable)) {
 		$foo = $nullable;
-		assertType('Foo', $foo); // SKIP — isset narrowing not yet implemented, returns ?Foo
+		assertType('Foo', $foo);
 	}
 }
 
@@ -144,11 +144,11 @@ function issetAssignment(?Foo $nullable): void
 function issetNegatedEarlyReturnElse(?Foo $nullable): void
 {
 	if (isset($nullable)) {
-		assertType('Foo', $nullable); // SKIP — isset narrowing not yet implemented, returns ?Foo
+		assertType('Foo', $nullable);
 		return;
 	}
 
-	assertType('null', $nullable); // SKIP — isset narrowing not yet implemented, returns ?Foo
+	assertType('null', $nullable);
 }
 
 /**
@@ -157,7 +157,7 @@ function issetNegatedEarlyReturnElse(?Foo $nullable): void
 function issetOnUnionWithNull($union): void
 {
 	if (isset($union)) {
-		assertType('Bar|Foo', $union); // SKIP — isset narrowing not yet implemented, returns Foo
+		assertType('Bar|Foo', $union);
 	}
 }
 
@@ -167,6 +167,6 @@ function issetOnUnionWithNull($union): void
 function issetNarrowsArray(?array $nullable): void
 {
 	if (isset($nullable)) {
-		assertType('array', $nullable); // SKIP — isset narrowing not yet implemented, returns array|null
+		assertType('array', $nullable);
 	}
 }
