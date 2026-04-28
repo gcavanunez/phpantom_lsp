@@ -20,46 +20,46 @@ class Bar
 
 function multiAssignNull(): void {
 	$foo = $bar = $baz = null;
-	assertType('null', $foo); // SKIP
-	assertType('null', $bar); // SKIP
-	assertType('null', $baz); // SKIP
+	assertType('null', $foo);
+	assertType('null', $bar);
+	assertType('null', $baz);
 }
 
 function multiAssignInt(): void {
 	$a = $b = $c = 42;
-	assertType('int', $a); // SKIP
-	assertType('int', $b); // SKIP
-	assertType('int', $c); // SKIP
+	assertType('int', $a);
+	assertType('int', $b);
+	assertType('int', $c);
 }
 
 function multiAssignString(): void {
 	$a = $b = 'hello';
-	assertType('string', $a); // SKIP
-	assertType('string', $b); // SKIP
+	assertType('string', $a);
+	assertType('string', $b);
 }
 
 function multiAssignFloat(): void {
 	$a = $b = 3.14;
-	assertType('float', $a); // SKIP
-	assertType('float', $b); // SKIP
+	assertType('float', $a);
+	assertType('float', $b);
 }
 
 function multiAssignBool(): void {
 	$a = $b = true;
-	assertType('bool', $a); // SKIP
-	assertType('bool', $b); // SKIP
+	assertType('bool', $a);
+	assertType('bool', $b);
 }
 
 function multiAssignObject(): void {
 	$a = $b = new Foo();
-	assertType('Foo', $a); // SKIP
-	assertType('Foo', $b); // SKIP
+	assertType('Foo', $a);
+	assertType('Foo', $b);
 }
 
 function multiAssignFromParam(int $x): void {
 	$a = $b = $x;
-	assertType('int', $a); // SKIP
-	assertType('int', $b); // SKIP
+	assertType('int', $a);
+	assertType('int', $b);
 }
 
 /**
@@ -67,24 +67,24 @@ function multiAssignFromParam(int $x): void {
  */
 function multiAssignUnion($union): void {
 	$a = $b = $union;
-	assertType('Foo|Bar', $a); // SKIP
-	assertType('Foo|Bar', $b); // SKIP
+	assertType('Foo|Bar', $a);
+	assertType('Foo|Bar', $b);
 }
 
 function reassignAfterChain(): void {
 	$a = $b = 1;
-	assertType('int', $a); // SKIP
-	assertType('int', $b); // SKIP
+	assertType('int', $a);
+	assertType('int', $b);
 
 	$a = 'changed';
 	assertType('string', $a);
-	assertType('int', $b); // SKIP
+	assertType('int', $b);
 }
 
 function multiAssignArray(): void {
 	$a = $b = [1, 2, 3];
-	assertType('array', $a); // SKIP
-	assertType('array', $b); // SKIP
+	assertType('list<int>', $a);
+	assertType('list<int>', $b);
 }
 
 /**
@@ -92,6 +92,6 @@ function multiAssignArray(): void {
  */
 function multiAssignNullable(?string $nullable): void {
 	$a = $b = $nullable;
-	assertType('string|null', $a); // SKIP
-	assertType('string|null', $b); // SKIP
+	assertType('string|null', $a);
+	assertType('string|null', $b);
 }

@@ -54,7 +54,7 @@ class Foo
 		assertType('bool|null', $isNullable);
 		assertType('VarAnnotations\Foo', $self);
 		assertType('float', $invalidInteger);
-		// SKIP: PHPantom does not resolve static(ClassName) syntax
+		
 		// assertType('static(VarAnnotations\Foo)', $static);
 	}
 

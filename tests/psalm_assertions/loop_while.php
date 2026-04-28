@@ -36,7 +36,7 @@ namespace PsalmTest_loop_while_2 {
         $a = $a->parent;
     }
 
-    assertType('B', $a); // SKIP — while loop doesn't narrow type via instanceof loop condition
+    assertType('B', $a); // SKIP
 }
 
 // Test: objectValueWithInstanceofProperty
@@ -63,7 +63,7 @@ namespace PsalmTest_loop_while_3 {
 
     $b = $a->parent;
 
-    assertType('A', $a); // SKIP — while loop doesn't narrow type via property instanceof check
+    assertType('A', $a);
     assertType('A|B', $b);
 }
 
@@ -88,7 +88,7 @@ namespace PsalmTest_loop_while_4 {
         $a = $a->parent;
     }
 
-    assertType('null', $a); // SKIP — while loop doesn't narrow nullable to null after falsy exit
+    assertType('null', $a); // SKIP
 }
 
 // Test: objectValueWithAnd
@@ -112,7 +112,7 @@ namespace PsalmTest_loop_while_5 {
         $a = $a->parent;
     }
 
-    assertType('A|null', $a); // SKIP — while loop with compound condition doesn't widen type
+    assertType('A|null', $a); // SKIP
 }
 
 // Test: whileTrueWithBreak
@@ -149,6 +149,6 @@ namespace PsalmTest_loop_while_7 {
       $a = $a->a;
     };
 
-    assertType('null', $a); // SKIP — while loop doesn't narrow nullable to null after falsy exit
+    assertType('null', $a); // SKIP
 }
 

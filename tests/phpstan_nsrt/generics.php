@@ -341,7 +341,7 @@ function testFunctionTemplates($int, $string, $float): void
 	assertType('int', identity($int));
 	assertType('string', identity($string));
 	assertType('DateTime', identity(new \DateTime()));
-	assertType('float|int', pick($int, $float)); // SKIP union widening may differ
+	assertType('float|int', pick($int, $float)); // SKIP
 	assertType('int', pick($int, $int));
 }
 
@@ -385,10 +385,10 @@ function testClassLevelExtends(): void
 function testImplementsSubstitution(): void
 {
 	$sc = new StringContainer();
-	assertType('string', $sc->get()); // SKIP @implements generic substitution
+	assertType('string', $sc->get());
 
 	$ic = new IntContainer();
-	assertType('int', $ic->get()); // SKIP @implements generic substitution
+	assertType('int', $ic->get());
 }
 
 // ============================================================
@@ -437,8 +437,8 @@ function testBoundedClassExtends(): void
 function testMethodLevelTemplate(): void
 {
 	$w = new Wrapper();
-	assertType('int', $w->identity(42)); // SKIP method-level template with literal arg
-	assertType('string', $w->identity('hello')); // SKIP method-level template with literal arg
+	assertType('int', $w->identity(42));
+	assertType('string', $w->identity('hello'));
 	assertType('DateTime', $w->identity(new \DateTime()));
 	assertType('User', $w->identity(new User()));
 }
@@ -453,13 +453,13 @@ function testConstructorInference(): void
 	// through subsequent method calls. These are speculative.
 
 	$box = new Box(42);
-	assertType('int', $box->getValue()); // SKIP constructor template inference
+	assertType('int', $box->getValue());
 
 	$box2 = new Box(new User());
-	assertType('User', $box2->getValue()); // SKIP constructor template inference
+	assertType('User', $box2->getValue());
 
 	$box3 = new Box('hello');
-	assertType('string', $box3->getValue()); // SKIP constructor template inference
+	assertType('string', $box3->getValue());
 }
 
 // ============================================================
@@ -479,10 +479,10 @@ function unbox($box)
 function testGenericParamResolution(): void
 {
 	$dtBox = new DateTimeBox();
-	assertType('DateTime', unbox($dtBox)); // SKIP function-level class generic param inference
+	assertType('DateTime', unbox($dtBox)); // SKIP
 
 	$intBox = new IntBox();
-	assertType('int', unbox($intBox)); // SKIP function-level class generic param inference
+	assertType('int', unbox($intBox)); // SKIP
 }
 
 // ============================================================
@@ -496,7 +496,7 @@ function testGenericParamResolution(): void
  */
 function traced($a)
 {
-	assertType('T (function GenericsTest\traced(), argument)', $a); // SKIP template trace
+	assertType('T (function GenericsTest\traced(), argument)', $a); // SKIP
 	return $a;
 }
 
@@ -541,8 +541,8 @@ function makePair($key, $value)
 
 function testTwoTemplateFn(): void
 {
-	assertType('array<string, int>', makePair('a', 1)); // SKIP shape vs array
-	assertType('array<int, User>', makePair(0, new User())); // SKIP shape vs array
+	assertType('array<string, int>', makePair('a', 1));
+	assertType('array<int, User>', makePair(0, new User()));
 }
 
 // ============================================================

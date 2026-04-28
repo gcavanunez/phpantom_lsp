@@ -120,12 +120,12 @@ function doFoo(
 	assertType('array', $arrayParameterOther);
 	assertType('MethodPhpDocsNamespace\Lorem', $objectRelative);
 	assertType('int|null', $nullableInteger);
-	// SKIP: use alias resolution not supported in single-file fixtures
+	
 	// assertType('SomeNamespace\Amet|null', $nullableObject);
 	// assertType('SomeNamespace\Amet|null', $anotherNullableObject);
 	assertType('null', $nullType);
 	assertType('MethodPhpDocsNamespace\Bar', $barObject->doBar());
-	// SKIP: native type hint `Bar` overridden by `@param Foo` instead of being more specific
+	
 	// assertType('MethodPhpDocsNamespace\Bar', $conflictedObject);
 	assertType('MethodPhpDocsNamespace\Baz', $moreSpecifiedObject);
 	assertType('MethodPhpDocsNamespace\Baz', $moreSpecifiedObject->doFluent());
@@ -133,9 +133,9 @@ function doFoo(
 	assertType('MethodPhpDocsNamespace\Baz', $moreSpecifiedObject->doFluentArray()[0]);
 	assertType('resource', $resource);
 	assertType('void', $voidParameter);
-	// SKIP: use alias resolution not supported in single-file fixtures
+	
 	// assertType('SomeNamespace\Consecteur', $useWithoutAlias);
-	// SKIP: PHPantom resolves literal true/false to bool
+	
 	// assertType('true', $true);
 	// assertType('false', $false);
 	// assertType('true', $boolTrue);

@@ -51,10 +51,10 @@ class Bar extends Foo
 		assertType('string', self::PRIVATE_TYPE);
 		assertType('int', self::EXTRA);
 
-		assertType('int', self::NO_TYPE); // SKIP — inherited constant access not resolved
-		assertType('float', self::FLOAT_CONST); // SKIP
-		assertType('bool', self::BOOL_CONST); // SKIP
-		assertType('null', self::NULL_CONST); // SKIP
+		assertType('int', self::NO_TYPE);
+		assertType('float', self::FLOAT_CONST);
+		assertType('bool', self::BOOL_CONST);
+		assertType('null', self::NULL_CONST);
 	}
 
 }
@@ -69,8 +69,8 @@ class Baz extends Foo
 	{
 		assertType('int', self::TYPE);
 
-		assertType('int', self::NO_TYPE); // SKIP — inherited constant access not resolved
-		assertType('float', self::FLOAT_CONST); // SKIP
+		assertType('int', self::NO_TYPE);
+		assertType('float', self::FLOAT_CONST);
 	}
 
 }
@@ -122,12 +122,12 @@ class InheritedConstants extends Foo
 
 	public function accessInherited()
 	{
-		assertType('int', self::NO_TYPE); // SKIP — inherited constant access not resolved
-		assertType('string', self::TYPE); // SKIP
-		assertType('float', self::FLOAT_CONST); // SKIP
-		assertType('bool', self::BOOL_CONST); // SKIP
-		assertType('null', self::NULL_CONST); // SKIP
-		assertType('array', self::ARRAY_CONST); // SKIP
+		assertType('int', self::NO_TYPE);
+		assertType('string', self::TYPE);
+		assertType('float', self::FLOAT_CONST);
+		assertType('bool', self::BOOL_CONST);
+		assertType('null', self::NULL_CONST);
+		assertType('array', self::ARRAY_CONST);
 	}
 
 }

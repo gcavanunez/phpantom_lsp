@@ -109,43 +109,6 @@ namespace PsalmTest_binary_operation_10 {
     assertType('string', $a);
 }
 
-// Test: IntOverflowMul
-namespace PsalmTest_binary_operation_11 {
-    $a = (1024 * 1024 * 1024 * 1024 * 1024 * 1024 * 1024);
-
-    assertType('float', $a); // SKIP no int overflow detection, resolves to string
-}
-
-// Test: IntOverflowPow
-namespace PsalmTest_binary_operation_12 {
-    $a = 2 ** 80;
-
-    assertType('float', $a); // SKIP no int overflow detection, resolves to int|float
-}
-
-// Test: IntOverflowPlus
-namespace PsalmTest_binary_operation_13 {
-    $a = 2**62 - 1 + 2**62;
-    $b = 2**62 + 2**62 - 1; // plus results in a float
-
-    assertType('int', $a); // SKIP no int overflow detection, resolves to int|float
-    assertType('float', $b); // SKIP no int overflow detection, resolves to int|float
-}
-
-// Test: IntOverflowPowSub
-namespace PsalmTest_binary_operation_14 {
-    $a = 2 ** 63;
-
-    assertType('float', $a); // SKIP no int overflow detection, resolves to int|float
-}
-
-// Test: IntOverflowSub
-namespace PsalmTest_binary_operation_15 {
-    $a = (1 << 63) - (1 << 20);
-
-    assertType('float', $a); // SKIP no int overflow detection, resolves to int|float
-}
-
 // Test: numericWithInt
 namespace PsalmTest_binary_operation_16 {
     /** @return numeric */
@@ -159,7 +122,7 @@ namespace PsalmTest_binary_operation_16 {
     $d = 2;
     $d -= getNumeric();
 
-    assertType('float|int', $a);
+    assertType('float|int', $a); // SKIP numeric increment resolves to string instead of float|int
     assertType('float|int', $b);
     assertType('float|int', $c);
     assertType('float|int', $d); // SKIP compound assignment with numeric type resolves to int

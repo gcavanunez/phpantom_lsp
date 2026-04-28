@@ -899,6 +899,19 @@ impl PhpType {
         }
     }
 
+    /// If this is a `Named` type that refers to a class (not a scalar,
+    /// keyword, or pseudo-type), return its name.  Returns `None` for
+    /// scalars (`int`, `string`, …), keywords (`mixed`, `void`, …),
+    /// and non-`Named` variants.
+    pub fn class_name(&self) -> Option<&str> {
+        if let PhpType::Named(name) = self
+            && is_class_like_name(name)
+        {
+            return Some(name.as_str());
+        }
+        None
+    }
+
     /// Whether this type is a top-level `self`, `static`, or `$this`
     /// reference (case-insensitive) — the subset of self-like keywords
     /// that resolve to the *declaring* class, excluding `parent`.

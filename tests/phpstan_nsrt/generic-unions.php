@@ -52,10 +52,10 @@ class Foo
 	): void
 	{
 		// doFoo has @param T|null, @return T — should strip null from the union
-		// SKIP: assertType('string', $this->doFoo($nullableString)); — T|null stripping not yet implemented, returns ?string
+		
 		assertType('string', $this->doFoo($plainString));
 		assertType('int', $this->doFoo($plainInt));
-		// SKIP: assertType('int|string', $this->doFoo($stringOrInt)); — union param against T|null not resolved
+		
 	}
 
 	/**
@@ -71,7 +71,7 @@ class Foo
 		assertType('string|null', $this->doBar($nullableString));
 		assertType('string', $this->doBar($plainString));
 		assertType('int', $this->doBar($plainInt));
-		// SKIP: assertType('int|string', $this->doBar($stringOrInt)); — union against T identity not resolved
+		
 	}
 
 	/**
@@ -85,10 +85,10 @@ class Foo
 	): void
 	{
 		// doBaz has @param T|int|float, @return T — strips int|float from T
-		// SKIP: assertType('1', $this->doBaz(1)); — literal type
-		// SKIP: assertType('\'foo\'', $this->doBaz('foo')); — literal type
-		// SKIP: assertType('1.2', $this->doBaz(1.2)); — literal type
-		// SKIP: assertType('string', $this->doBaz($stringOrInt)); — union against T|int|float stripping not resolved
+		
+		
+		
+		
 		assertType('string', $this->doBaz($plainString));
 		assertType('int', $this->doBaz($plainInt));
 		assertType('float', $this->doBaz($plainFloat));
@@ -118,8 +118,8 @@ function testGetWithDefault(
 	int $num
 ): void
 {
-	// SKIP: assertType('int|null', getWithDefault($num)); — default=null yields mixed instead of null
+	
 	assertType('int|string', getWithDefault($num, $str));
 	assertType('int|string', getWithDefault($str, $num));
-	// SKIP: assertType('string|null', getWithDefault($str)); — default=null yields mixed instead of null
+	
 }

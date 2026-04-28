@@ -50,7 +50,7 @@ class UsesUnsubstituted
 }
 
 $unsub = new UsesUnsubstituted();
-assertType('object', $unsub->doFoo(new \stdClass())); // SKIP
+assertType('object', $unsub->doFoo(new \stdClass()));
 
 /**
  * Trait with no bound on T — should fall back to mixed.

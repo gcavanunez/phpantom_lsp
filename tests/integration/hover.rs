@@ -9159,6 +9159,34 @@ function test(): void {
 }
 
 #[test]
+fn hover_class_hierarchy_union_simplified_after_instanceof_reassignment() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class ClassResolvesBack {
+    public static function getA(): self { return new self(); }
+}
+class ClassResolvesBackChild extends ClassResolvesBack {}
+function test(): void {
+    $a = ClassResolvesBack::getA();
+    if ($a instanceof ClassResolvesBackChild) {
+        $a = new ClassResolvesBackChild;
+    }
+    $a;
+}
+"#;
+    // After the if block, both branches produce a type assignable to
+    // ClassResolvesBack, so the union should collapse to the parent.
+    let hover = hover_at(&backend, uri, content, 10, 4).expect("expected hover");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("ClassResolvesBack") && !text.contains("ClassResolvesBackChild"),
+        "after instanceof + reassignment, $a should be ClassResolvesBack, got: {}",
+        text
+    );
+}
+
+#[test]
 fn hover_is_string_narrows_union_to_string() {
     let backend = create_test_backend();
     let uri = "file:///test.php";

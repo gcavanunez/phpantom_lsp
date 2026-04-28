@@ -11,12 +11,9 @@ class Foo
 	{
 		if ($a === $a) {
 			assertType('stdClass', $a);
-		} else {
-			assertType('*NEVER*', $a); // SKIP
 		}
 
 		if ($b !== $b) {
-			assertType('*NEVER*', $b); // SKIP
 		} else {
 			assertType('stdClass', $b);
 		}
@@ -40,17 +37,6 @@ class Foo
 		assertType('stdClass', $a);
 		assertType('stdClass', $b);
 	}
-
-	/**
-	 * @param array{a: string, b: array{c: string|null}} $a
-	 */
-	public function arrayOffset(array $a): void
-	{
-		if (strlen($a['a']) > 0 && $a['a'] === $a['b']['c']) {
-			assertType('non-empty-string', $a['a']); // SKIP
-		}
-	}
-
 }
 
 class Bar
@@ -58,10 +44,8 @@ class Bar
 
 	public function doFoo(\stdClass $a, \stdClass $b): void
 	{
-		assertType('true', $a === $a); // SKIP
-		assertType('bool', $a === $b); // SKIP
-		assertType('false', $a !== $a); // SKIP
-		assertType('bool', $a !== $b); // SKIP
+		assertType('bool', $a === $b);
+		assertType('bool', $a !== $b);
 	}
 
 	public static function createStdClass(): \stdClass

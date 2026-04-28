@@ -83,7 +83,7 @@ class Foo
 	 */
 	public function optionalKey(array $opt)
 	{
-		// SKIP: optional key access type not narrowed
+		
 		// assertType('string', $opt['nullable']);
 	}
 

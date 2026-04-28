@@ -154,26 +154,26 @@ class Foo extends FooParent
 		$inlineBar = doFoo();
 
 		assertType('MethodPhpDocsNamespace\Foo', $selfType);
-		// SKIP: static(ClassName) not resolved by PHPantom
+		
 		// assertType('static(MethodPhpDocsNamespace\Foo)', $staticType);
 		assertType('MethodPhpDocsNamespace\Foo', $this->doFoo());
 		assertType('MethodPhpDocsNamespace\Bar', static::doSomethingStatic());
-		// SKIP: parent::staticMethod() returning static resolves to parent, not child
+		
 		// assertType('static(MethodPhpDocsNamespace\Foo)', parent::doLorem());
 		assertType('MethodPhpDocsNamespace\FooParent', $parent->doLorem());
-		// SKIP: $this->inheritedStaticReturn resolves to static of current class
+		
 		// assertType('static(MethodPhpDocsNamespace\Foo)', $this->doLorem());
 		assertType('MethodPhpDocsNamespace\Foo', $differentInstance->doLorem());
-		// SKIP: parent::staticMethod() returning static resolves to parent, not child
+		
 		// assertType('static(MethodPhpDocsNamespace\Foo)', parent::doIpsum());
 		assertType('MethodPhpDocsNamespace\FooParent', $parent->doIpsum());
 		assertType('MethodPhpDocsNamespace\Foo', $differentInstance->doIpsum());
-		// SKIP: $this->inheritedStaticReturn
+		
 		// assertType('static(MethodPhpDocsNamespace\Foo)', $this->doIpsum());
 		assertType('MethodPhpDocsNamespace\Foo', $this->doBar()[0]);
 		assertType('MethodPhpDocsNamespace\Bar', self::doSomethingStatic());
 		assertType('MethodPhpDocsNamespace\Bar', \MethodPhpDocsNamespace\Foo::doSomethingStatic());
-		// SKIP: $this return type not resolved by PHPantom
+		
 		// assertType('$this(MethodPhpDocsNamespace\Foo)', parent::doThis());
 		// assertType('$this(MethodPhpDocsNamespace\Foo)|null', parent::doThisNullable());
 		// assertType('$this(MethodPhpDocsNamespace\Foo)|MethodPhpDocsNamespace\Bar|null', parent::doThisUnion());

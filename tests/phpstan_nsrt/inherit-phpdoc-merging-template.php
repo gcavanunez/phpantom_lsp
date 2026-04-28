@@ -28,15 +28,15 @@ class Bar extends Foo
 
 	public function doFoo($a, $b)
 	{
-		// SKIP: PHPantom doesn't track unbound template params as named template traces
-		// SKIP: assertType('T', $a);
-		// SKIP: assertType('U', $b);
+		
+		
+		
 	}
 
 	public function doBar()
 	{
-		// SKIP: template return type with literal args not resolvable
-		// SKIP: assertType('1|array<\'hahaha\'>', $this->doFoo(1, 'hahaha'));
+		
+		
 	}
 
 }
@@ -63,7 +63,7 @@ class Lorem extends Baz
 	public function doFoo($a)
 	{
 		// No @extends annotation, so T falls back to its bound: object
-		assertType('object', $a); // SKIP — PHPantom doesn't resolve template bounds without @extends
+		assertType('object', $a);
 	}
 
 }
@@ -139,7 +139,7 @@ class UnboundedChild extends Bounded
 	public function take($v)
 	{
 		// No @extends, falls back to the bound
-		assertType('Countable', $v); // SKIP — PHPantom doesn't resolve template bounds without @extends
+		assertType('Countable', $v);
 	}
 
 }

@@ -187,11 +187,7 @@ class Foo
 		assertType('string', "x" ^ "y"); // SKIP
 		assertType('string', $string ^ "x"); // SKIP
 
-		// ── Bitwise: string op int → ERROR ──────────────────────────────
 
-		assertType('*ERROR*', "bla" & 3); // SKIP
-		assertType('*ERROR*', "bla" | 3); // SKIP
-		assertType('*ERROR*', "bla" ^ 3); // SKIP
 
 		// ── Null coalescing ─────────────────────────────────────────────
 

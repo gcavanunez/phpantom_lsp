@@ -124,7 +124,7 @@ class ClassResolvesBack {
 			$a = new ClassResolvesBackChild;
 		}
 
-		assertType('ClassResolvesBack', $a); // SKIP — type not restored to base after instanceof + reassignment
+		assertType('ClassResolvesBack', $a);
 	}
 
 	public static function getA(): ClassResolvesBack {

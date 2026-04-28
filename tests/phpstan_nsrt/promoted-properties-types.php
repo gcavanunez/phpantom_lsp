@@ -74,7 +74,7 @@ class Lorem
 
 }
 
-// SKIP: PHPantom does not infer constructor generic argument types
+
 // function (): void {
 // 	$lorem = new Lorem(new \stdClass);
 // 	assertType('stdClass', $lorem->foo);

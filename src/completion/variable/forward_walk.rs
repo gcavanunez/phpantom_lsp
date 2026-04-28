@@ -1750,6 +1750,86 @@ impl ScopeState {
     }
 }
 
+/// Simplify unions in a scope by collapsing child/parent class pairs.
+///
+/// When merging branches produces a union like `Child | Parent` where
+/// `Child extends Parent`, the union is redundant — every value of
+/// type `Child` is also a `Parent`.  This collapses such unions to
+/// the broadest (parent) type.
+///
+/// Only operates on variables that have exactly two `ResolvedType`
+/// entries with named class types.  More complex unions (3+ members,
+/// scalars, generics) are left unchanged.
+fn simplify_class_hierarchy_unions(
+    scope: &mut ScopeState,
+    class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
+) {
+    let keys: Vec<String> = scope.locals.keys().cloned().collect();
+    for key in keys {
+        let types = match scope.locals.get(&key) {
+            Some(t) if t.len() == 2 => t,
+            _ => continue,
+        };
+
+        // Extract class names from the two ResolvedType entries.
+        let name_a = match types[0].type_string.class_name() {
+            Some(n) => n,
+            None => continue,
+        };
+        let name_b = match types[1].type_string.class_name() {
+            Some(n) => n,
+            None => continue,
+        };
+
+        // Check if one is a subclass of the other.
+        if is_subclass_of(name_a, name_b, class_loader) {
+            // A extends B → keep B (the parent).
+            scope.locals.get_mut(&key).unwrap().remove(0);
+        } else if is_subclass_of(name_b, name_a, class_loader) {
+            // B extends A → keep A (the parent).
+            scope.locals.get_mut(&key).unwrap().remove(1);
+        }
+    }
+}
+
+/// Check whether `child` is a subclass (direct or transitive) of
+/// `parent` by walking the inheritance chain via the class loader.
+///
+/// Returns `false` if either class cannot be loaded or if there is
+/// no inheritance relationship.  Limits the chain walk to 20 steps
+/// to avoid infinite loops on cyclic hierarchies.
+fn is_subclass_of(
+    child: &str,
+    parent: &str,
+    class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
+) -> bool {
+    if child.eq_ignore_ascii_case(parent) {
+        return false; // same class, not a subclass
+    }
+    let mut current = child.to_string();
+    for _ in 0..20 {
+        let cls = match class_loader(&current) {
+            Some(c) => c,
+            None => return false,
+        };
+        // Check implemented interfaces at every level.
+        for iface in &cls.interfaces {
+            if iface.as_str().eq_ignore_ascii_case(parent) {
+                return true;
+            }
+        }
+        if let Some(ref p) = cls.parent_class {
+            if p.as_str().eq_ignore_ascii_case(parent) {
+                return true;
+            }
+            current = p.to_string();
+        } else {
+            return false;
+        }
+    }
+    false
+}
+
 /// Context for the forward walk.
 ///
 /// Bundles the immutable context that every statement/expression handler
@@ -4810,6 +4890,10 @@ fn process_if_statement_body<'b>(
         for s in &surviving_scopes[1..] {
             merged.merge_branch(s);
         }
+        // Simplify unions where a child class is merged with its
+        // parent — e.g. `ClassResolvesBackChild | ClassResolvesBack`
+        // collapses to `ClassResolvesBack`.
+        simplify_class_hierarchy_unions(&mut merged, ctx.class_loader);
         *scope = merged;
     }
 
@@ -4828,6 +4912,10 @@ fn process_if_statement_body<'b>(
         apply_condition_narrowing_inverse(if_stmt.condition, scope, ctx);
         apply_guard_clause_null_narrowing(if_stmt, scope, ctx);
     }
+
+    // Also simplify after single-scope assignment (guard clause path
+    // may have added narrowed types that were already collapsed above,
+    // but the guard clause section may re-introduce unions).
 
     // Remove synthetic property access keys that were seeded by
     // condition narrowing inside branches.  These represent narrowed

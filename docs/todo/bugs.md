@@ -7,38 +7,6 @@ pipeline so it produces correct data. Downstream consumers
 (diagnostics, hover, completion, definition) should never need
 to second-guess upstream output.
 
-## B5. Type not restored to base class after instanceof + reassignment
-
-**Discovered:** Psalm `TypeReconciliation/ConditionalTest.php` porting.
-
-```php
-$a = getA(); // returns ClassResolvesBack
-if ($a instanceof ClassResolvesBackChild) {
-    $a = new ClassResolvesBackChild;
-}
-```
-After the if block, `$a` should be `ClassResolvesBack` (both
-branches produce a value assignable to ClassResolvesBack). Currently
-resolves as `ClassResolvesBackChild|ClassResolvesBack`.
-
-**Test:** `tests/phpstan_nsrt/psalm-conditional.php` (SKIP on
-`ClassResolvesBack`).
-
-**When fixed:** Remove the `// SKIP` from the `ClassResolvesBack`
-assertion in `tests/phpstan_nsrt/psalm-conditional.php` and verify
-it passes.
-
-## Bulk un-SKIP after fixes
-
-Beyond B1-B5, there are 116 additional `// SKIP` markers across
-`tests/psalm_assertions/*.php` covering broader gaps (generic
-substitution, loop narrowing, @method resolution, etc.). These are
-tracked in the test-porting plan under Phase 5G. When working on
-any type engine improvement, grep for `// SKIP` in the assertion
-files to find tests that may now pass. Run
-`cargo nextest run --test assert_type_runner --no-fail-fast` with
-the SKIP removed to verify.
-
 ## B6. Superlinear hover scaling on large single files
 
 **Discovered:** Psalm `ArrayFunctionCallTest.php` porting (Phase 3.5B).
@@ -81,3 +49,94 @@ namespace PsalmTest_type_reconciliation_empty_1 {
     }
 }
 ```
+
+## B8. Binary expression type inference gaps
+
+**Discovered:** SKIP audit across `tests/phpstan_nsrt/binary.php`
+and `tests/psalm_assertions/binary_operation.php`.
+
+The hover/forward-walk pipeline does not resolve types for many
+binary expressions:
+
+- **String concatenation with int LHS:** `$integer . $string`
+  resolves to no type instead of `string`.
+- **Spaceship operator:** `'foo' <=> 'bar'` resolves to no type
+  instead of `int`.
+- **Bitwise on strings:** `"x" & "y"`, `$string & "x"`, `~"a"`
+  resolve to `int` instead of `string`. PHP applies bitwise ops
+  character-by-character when both operands are strings.
+- **Logical operators:** `true && false`, `true || false`,
+  `true xor false`, `!true` resolve to no type instead of `bool`.
+  `xor` on bools resolves to `int` instead of `bool`.
+- **Compound assignment:** `/=`, `*=`, `%=`, `**=`, `<<=`, `&=`,
+  `|=`, `^=` resolve to no type instead of the correct result type.
+- **Mixed arithmetic:** `1 + $mixed`, `$mixed / 1` resolve to no
+  type instead of `float|int`.
+- **Exponent:** `4 ** 5` resolves to `int|float` instead of `int`
+  (when both operands are non-negative integers).
+- **Numeric string increment:** `$a = "123"; $a++` resolves to
+  `string` instead of `float|int`.
+- **String concat compound:** `$d -= getNumeric()` with numeric
+  return resolves to `int` instead of `float|int`.
+
+**Tests:** SKIPs in `tests/phpstan_nsrt/binary.php` (lines 153,
+168, 183-188, 218-224, 229-242, 247-250) and
+`tests/psalm_assertions/binary_operation.php` (lines 10, 17, 56,
+68-69, 87, 100, 165, 175-176).
+
+## B9. `isset()` narrowing not implemented
+
+**Discovered:** SKIP audit of
+`tests/phpstan_nsrt/isset-narrowing.php`.
+
+`isset($x)` in a condition should strip `null` from the variable's
+type (like `$x !== null`). Currently the variable retains its
+nullable type through the truthy branch. This affects 14 assertions
+across property access, array access, and simple variable patterns.
+
+**Tests:** All 18 SKIPs in `tests/phpstan_nsrt/isset-narrowing.php`.
+
+**When fixed:** Remove the SKIPs and verify
+`cargo nextest run "run_assert_type::isset-narrowing"` passes.
+
+## B10. First-class callable invocation return types
+
+**Discovered:** SKIP audit of
+`tests/phpstan_nsrt/static-late-binding.php`.
+
+`Foo::method(...)` creates a `Closure` from a method, and
+`Foo::method(...)()` immediately invokes it. The return type of the
+invocation should match the method's return type. Currently hover
+returns no type for these expressions.
+
+This also affects `static::method(...)()`, `self::method(...)()`,
+`parent::method(...)()`, and `$this->method(...)()`.
+
+**Tests:** SKIPs in `tests/phpstan_nsrt/static-late-binding.php`
+(lines 72-78, 88, 90-97).
+
+## B11. Unbound template parameter resolves to raw name instead of `mixed`
+
+**Discovered:** SKIP audit of
+`tests/phpstan_nsrt/generic-traits.php`.
+
+When a class uses a trait with `@template T` but does not provide a
+concrete type via `@use`, the template parameter `T` should resolve
+to its bound (or `mixed` if unbounded). Currently it resolves to
+the raw name `T`.
+
+**Test:** `tests/phpstan_nsrt/generic-traits.php` line 78.
+
+## Bulk un-SKIP after fixes
+
+There are `// SKIP` markers across `tests/phpstan_nsrt/*.php` and
+`tests/psalm_assertions/*.php` covering gaps in the type engine.
+When working on any type engine improvement, grep for `// SKIP` in
+the assertion files to find tests that may now pass. Run
+`cargo nextest run --test assert_type_runner --no-fail-fast` with
+the SKIP removed to verify.
+
+Some SKIPs are **out of scope** for an LSP (value-range tracking,
+int overflow detection, constant-expression folding, `*NEVER*`
+after impossible conditions, `*ERROR*` diagnostics). These should
+just be removed from the test files.
