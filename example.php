@@ -2489,6 +2489,14 @@ class FirstClassCallableDemo
         $make = makePen(...);
         $pen = $make();
         $pen->color();                    // assigned result from callable invocation
+
+        // Immediate invocation: method(...)() returns the method's return type
+        makePen(...)()->write();          // function first-class callable invoked immediately
+        Pen::make(...)()->color();        // static method first-class callable invoked immediately
+        $src->dispatch(...)()->write();   // instance method first-class callable invoked immediately
+
+        $immediate = Pen::make(...)();
+        $immediate->color();              // assigned result from immediate static callable invocation
     }
 }
 
@@ -6230,6 +6238,14 @@ function runDemoAssertions(): void
     assert($methodCallable instanceof \Closure, '$obj->method(...) must be a Closure');
     $methodResult = $methodCallable();
     assert($methodResult instanceof Pen, 'dispatch(...)() must return Pen');
+
+    // Immediate invocation: method(...)() returns the method's return type
+    $immediateFunc = makePen(...)();
+    assert($immediateFunc instanceof Pen, 'makePen(...)() immediate must return Pen');
+    $immediateStatic = Pen::make(...)();
+    assert($immediateStatic instanceof Pen, 'Pen::make(...)() immediate must return Pen');
+    $immediateMethod = $src2->dispatch(...)();
+    assert($immediateMethod instanceof Pen, '$obj->dispatch(...)() immediate must return Pen');
 
     // ── Class alias (use ... as) ────────────────────────────────────────
     $aliasProfile = new Profile($userForProfile);

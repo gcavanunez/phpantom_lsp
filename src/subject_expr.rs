@@ -372,6 +372,13 @@ impl SubjectExpr {
 fn parse_callee(call_body: &str) -> SubjectExpr {
     let call_body = call_body.trim();
 
+    // ── First-class callable invocation: `Foo::method(...)()` ───
+    // When a first-class callable like `method(...)` is immediately
+    // invoked, the return type equals the original method's return
+    // type.  Strip the trailing `(...)` so the callee resolves as a
+    // normal method/function call.
+    let call_body = call_body.strip_suffix("(...)").unwrap_or(call_body);
+
     // ── Parenthesized expression: `($this->prop)`, `($var)` ─────
     // Strip balanced outer parens so the inner expression is parsed
     // normally.  This handles `($this->formatter)()` etc.

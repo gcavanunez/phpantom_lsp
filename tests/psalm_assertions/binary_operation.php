@@ -7,14 +7,14 @@
 namespace PsalmTest_binary_operation_1 {
     $a = 5 + 4;
 
-    assertType('int', $a); // SKIP literal arithmetic resolves to int|float instead of int
+    assertType('int', $a);
 }
 
 // Test: differingNumericTypesAdditionInWeakMode
 namespace PsalmTest_binary_operation_2 {
     $a = 5 + 4.1;
 
-    assertType('float', $a); // SKIP literal arithmetic resolves to int|float instead of float
+    assertType('float', $a);
 }
 
 // Test: modulo
@@ -53,7 +53,7 @@ namespace PsalmTest_binary_operation_5 {
     assertType('int', $c);
     assertType('int', $d);
     assertType('int', $e);
-    assertType('string', $f); // SKIP bitwise op on strings resolves to int instead of string
+    assertType('string', $f);
 }
 
 // Test: booleanXor
@@ -65,8 +65,8 @@ namespace PsalmTest_binary_operation_6 {
 
     assertType('int', $a);
     assertType('int', $b);
-    assertType('bool', $c); // SKIP xor on bools resolves to int instead of bool
-    assertType('bool', $d); // SKIP xor on bools resolves to int instead of bool
+    assertType('bool', $c);
+    assertType('bool', $d);
 }
 
 // Test: floatIncrement
@@ -84,7 +84,7 @@ namespace PsalmTest_binary_operation_7 {
 namespace PsalmTest_binary_operation_8 {
     $b = 4 ** 5;
 
-    assertType('int', $b); // SKIP exponent resolves to int|float instead of int
+    assertType('int', $b);
 }
 
 // Test: bitwiseNot
@@ -97,7 +97,7 @@ namespace PsalmTest_binary_operation_9 {
     assertType('int', $a);
     assertType('int', $b);
     assertType('int', $c);
-    assertType('string', $d); // SKIP bitwise not on string resolves to int instead of string
+    assertType('string', $d);
 }
 
 // Test: stringIncrementSuppressed
@@ -122,10 +122,10 @@ namespace PsalmTest_binary_operation_16 {
     $d = 2;
     $d -= getNumeric();
 
-    assertType('float|int', $a); // SKIP numeric increment resolves to string instead of float|int
+    assertType('float|int', $a);
     assertType('float|int', $b);
     assertType('float|int', $c);
-    assertType('float|int', $d); // SKIP compound assignment with numeric type resolves to int
+    assertType('float|int', $d);
 }
 
 // Test: NumericStringIncrementLiteral
@@ -135,7 +135,7 @@ namespace PsalmTest_binary_operation_17 {
     $a++;
     ++$b;
 
-    assertType('float|int', $a); // SKIP string increment resolves to string instead of float|int
-    assertType('float|int', $b); // SKIP string increment resolves to string instead of float|int
+    assertType('float|int', $a);
+    assertType('float|int', $b);
 }
 

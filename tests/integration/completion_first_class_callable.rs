@@ -999,3 +999,127 @@ async fn test_first_class_callable_in_namespace_resolves_via_stubs() {
         names,
     );
 }
+
+// ─── Immediate first-class callable invocation: method(...)() ───────────────
+
+#[tokio::test]
+async fn test_first_class_callable_immediate_static_invocation() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/fcc_immediate_static.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class User {\n",
+        "    public function getName(): string { return ''; }\n",
+        "    public function getAge(): int { return 0; }\n",
+        "}\n",
+        "class Factory {\n",
+        "    public static function createUser(): User { return new User(); }\n",
+        "}\n",
+        "class Service {\n",
+        "    public function run(): void {\n",
+        "        $user = Factory::createUser(...)();\n",
+        "        $user->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 11: `        $user->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 11, 15).await;
+    let names = method_names(&items);
+    assert!(
+        names.contains(&"getName"),
+        "Expected getName in {:?}",
+        names,
+    );
+    assert!(names.contains(&"getAge"), "Expected getAge in {:?}", names);
+}
+
+#[tokio::test]
+async fn test_first_class_callable_immediate_instance_invocation() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/fcc_immediate_instance.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Order {\n",
+        "    public function getTotal(): float { return 0.0; }\n",
+        "    public function getStatus(): string { return ''; }\n",
+        "}\n",
+        "class Service {\n",
+        "    public function makeOrder(): Order { return new Order(); }\n",
+        "    public function run(): void {\n",
+        "        $order = $this->makeOrder(...)();\n",
+        "        $order->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 9: `        $order->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 9, 16).await;
+    let names = method_names(&items);
+    assert!(
+        names.contains(&"getTotal"),
+        "Expected getTotal in {:?}",
+        names,
+    );
+    assert!(
+        names.contains(&"getStatus"),
+        "Expected getStatus in {:?}",
+        names,
+    );
+}
+
+#[tokio::test]
+async fn test_first_class_callable_immediate_self_invocation() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/fcc_immediate_self.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Product {\n",
+        "    public function getTitle(): string { return ''; }\n",
+        "}\n",
+        "class Builder {\n",
+        "    public static function build(): Product { return new Product(); }\n",
+        "    public function run(): void {\n",
+        "        $p = self::build(...)();\n",
+        "        $p->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 8: `        $p->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 8, 12).await;
+    let names = method_names(&items);
+    assert!(
+        names.contains(&"getTitle"),
+        "Expected getTitle in {:?}",
+        names,
+    );
+}
+
+#[tokio::test]
+async fn test_first_class_callable_immediate_function_invocation() {
+    let backend = create_test_backend();
+    let uri = Url::parse("file:///test/fcc_immediate_func.php").unwrap();
+
+    let src = concat!(
+        "<?php\n",
+        "class Config {\n",
+        "    public function get(string $key): string { return ''; }\n",
+        "}\n",
+        "function loadConfig(): Config { return new Config(); }\n",
+        "class App {\n",
+        "    public function run(): void {\n",
+        "        $cfg = loadConfig(...)();\n",
+        "        $cfg->\n",
+        "    }\n",
+        "}\n",
+    );
+
+    // Line 8: `        $cfg->`  cursor after `->`
+    let items = complete_at(&backend, &uri, src, 8, 14).await;
+    let names = method_names(&items);
+    assert!(names.contains(&"get"), "Expected get in {:?}", names);
+}

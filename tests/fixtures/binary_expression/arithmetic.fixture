@@ -1,12 +1,12 @@
-// test: arithmetic operators resolve to int|float
+// test: arithmetic operators resolve based on operand types
 // feature: hover
 // Adapted from phpactor binary-expression/arithmetic.test
-// expect_hover: $add => int|float
-// expect_hover: $sub => int|float
-// expect_hover: $mul => int|float
+// expect_hover: $add => int
+// expect_hover: $sub => int
+// expect_hover: $mul => int
 // expect_hover: $div => int|float
 // expect_hover: $mod => int
-// expect_hover: $pow => int|float
+// expect_hover: $pow => int
 ---
 <?php
 

@@ -1731,6 +1731,62 @@ fn resolve_rhs_function_call<'b>(
     let class_loader = ctx.class_loader;
     let function_loader = ctx.function_loader();
 
+    // ── First-class callable invocation: `Foo::method(...)()` ───
+    // When the callee is a partial application (first-class callable),
+    // invoking it with `()` returns the underlying method's return
+    // type.  Delegate to the matching call-resolution path.
+    if let Expression::PartialApplication(pa) = func_call.function {
+        use mago_syntax::ast::ast::partial_application::PartialApplication;
+        match pa {
+            PartialApplication::StaticMethod(sma) => {
+                // Build a synthetic StaticMethodCall and resolve it.
+                let synthetic = mago_syntax::ast::ast::call::StaticMethodCall {
+                    class: sma.class,
+                    double_colon: sma.double_colon,
+                    method: sma.method.clone(),
+                    argument_list: func_call.argument_list.clone(),
+                };
+                return resolve_rhs_static_call(&synthetic, ctx);
+            }
+            PartialApplication::Method(ma) => {
+                return resolve_rhs_method_call_inner(
+                    ma.object,
+                    &ma.method,
+                    &func_call.argument_list,
+                    ctx,
+                );
+            }
+            PartialApplication::Function(fa) => {
+                // `strlen(...)()` — resolve the inner function name.
+                if let Expression::Identifier(ident) = fa.function {
+                    let name = ident.value().to_string();
+                    let function_loader = ctx.function_loader();
+                    if let Some(fl) = function_loader
+                        && let Some(func_info) = fl(&name)
+                        && let Some(ref ret) = func_info.return_type
+                    {
+                        let resolved =
+                            crate::completion::type_resolution::type_hint_to_classes_typed(
+                                ret,
+                                &ctx.current_class.name,
+                                ctx.all_classes,
+                                ctx.class_loader,
+                            );
+                        if !resolved.is_empty() {
+                            return ResolvedType::from_classes_with_hint(resolved, ret.clone());
+                        }
+                        return vec![resolved_type_with_lookup(
+                            ret.clone(),
+                            &ctx.current_class.name,
+                            ctx.all_classes,
+                            ctx.class_loader,
+                        )];
+                    }
+                }
+            }
+        }
+    }
+
     let func_name = match func_call.function {
         Expression::Identifier(ident) => Some(ident.value().to_string()),
         _ => None,
@@ -1884,12 +1940,16 @@ fn resolve_rhs_function_call<'b>(
     }
 
     // ── Source-scanning fallback for named function calls ────
-    // When no function_loader is available (e.g. raw-type pipeline,
-    // test backends without PSR-4), scan the source text for the
-    // function's docblock @return annotation.  This covers standalone
-    // function calls when no function_loader is available.
+    // When the function_loader is unavailable or could not resolve the
+    // function (e.g. multi-namespace files where the file-level namespace
+    // differs from the function's namespace), scan the source text for
+    // the function's docblock @return annotation.
+    let loader_found = func_name
+        .as_ref()
+        .and_then(|name| function_loader.and_then(|fl| fl(name)))
+        .is_some();
     if let Some(ref name) = func_name
-        && function_loader.is_none()
+        && !loader_found
         && let Some(ret) =
             crate::completion::source::helpers::extract_function_return_from_source(name, content)
     {

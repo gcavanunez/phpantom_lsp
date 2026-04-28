@@ -3030,6 +3030,75 @@ fn process_expression_statement<'b>(
 
     // Process assert narrowing.
     process_assert_narrowing(expr, scope, ctx);
+
+    // Process increment/decrement: $a++, ++$a, $a--, --$a.
+    process_increment_decrement(expr, scope, ctx);
+}
+
+/// Process increment/decrement expressions (`$a++`, `++$a`, `$a--`, `--$a`).
+///
+/// For numeric types (int, float), the type is preserved.
+/// For numeric strings, the result becomes `int|float`.
+/// For general strings, PHP increments alphabetically (stays string).
+fn process_increment_decrement<'b>(
+    expr: &'b Expression<'b>,
+    scope: &mut ScopeState,
+    _ctx: &ForwardWalkCtx<'_>,
+) {
+    use mago_syntax::ast::unary::{UnaryPostfixOperator, UnaryPrefixOperator};
+
+    let var_expr = match expr {
+        Expression::UnaryPostfix(postfix) => match &postfix.operator {
+            UnaryPostfixOperator::PostIncrement(_) | UnaryPostfixOperator::PostDecrement(_) => {
+                postfix.operand
+            }
+        },
+        Expression::UnaryPrefix(prefix) => match &prefix.operator {
+            UnaryPrefixOperator::PreIncrement(_) | UnaryPrefixOperator::PreDecrement(_) => {
+                prefix.operand
+            }
+            _ => return,
+        },
+        _ => return,
+    };
+
+    let var_name = match var_expr {
+        Expression::Variable(Variable::Direct(dv)) => dv.name.to_string(),
+        _ => return,
+    };
+
+    let existing = scope.get(&var_name).to_vec();
+    if existing.is_empty() {
+        return;
+    }
+
+    // Check if the type is numeric or a numeric-string (including
+    // literal string values like '123').  If so, increment produces
+    // int|float because PHP converts numeric strings to numbers.
+    let current_type = ResolvedType::types_joined(&existing);
+    let is_numeric_like = {
+        let lower = current_type.to_string().to_ascii_lowercase();
+        lower == "numeric" || lower == "numeric-string"
+    } || current_type.is_subtype_of(&PhpType::Named("numeric-string".into()));
+    if is_numeric_like {
+        scope.set(
+            var_name,
+            vec![ResolvedType::from_type_string(PhpType::Union(vec![
+                PhpType::int(),
+                PhpType::float(),
+            ]))],
+        );
+    } else if current_type.is_string_literal() {
+        // Non-numeric string literal: PHP increments alphabetically
+        // (e.g. "a" → "b"), so the result is still a string but no
+        // longer the same literal value.  Widen to `string`.
+        scope.set(
+            var_name,
+            vec![ResolvedType::from_type_string(PhpType::string())],
+        );
+    }
+    // For int, float, plain string: the type stays the same
+    // (PHP preserves the type for numeric increment/decrement).
 }
 
 /// Get the byte offset of an expression (used for cursor comparisons).
@@ -3878,6 +3947,9 @@ fn process_assignment_expr<'b>(
 ) {
     if let Expression::Assignment(assignment) = expr {
         if !assignment.operator.is_assign() {
+            // Compound assignment: $x op= expr.
+            // The type depends on the operator.
+            process_compound_assignment(assignment, scope, ctx);
             return;
         }
 
@@ -3939,12 +4011,205 @@ fn process_assignment_expr<'b>(
             return;
         }
 
-        let rhs_types = resolve_rhs_with_scope(assignment.rhs, scope, ctx);
+        let mut rhs_types = resolve_rhs_with_scope(assignment.rhs, scope, ctx);
+        // When the RHS is a numeric string literal (e.g. "123", '4.5'),
+        // refine the type from `string` to `numeric-string` so that
+        // downstream increment/decrement inference can detect it.
+        if let Expression::Literal(Literal::String(lit_str)) = assignment.rhs {
+            let raw = lit_str.raw.to_string();
+            let unquoted = raw
+                .strip_prefix('\'')
+                .or_else(|| raw.strip_prefix('"'))
+                .and_then(|s| s.strip_suffix('\'').or_else(|| s.strip_suffix('"')))
+                .unwrap_or(&raw);
+            if unquoted.parse::<i64>().is_ok() || unquoted.parse::<f64>().is_ok() {
+                for rt in &mut rhs_types {
+                    if rt.type_string.is_subtype_of(&PhpType::string()) {
+                        rt.type_string = PhpType::Named("numeric-string".into());
+                    }
+                }
+            }
+        }
         if !rhs_types.is_empty() {
             scope.set(lhs_name, rhs_types);
         } else if !scope.contains(&lhs_name) {
             scope.set_empty(lhs_name);
         }
+    }
+}
+
+/// Process compound assignment operators (`+=`, `-=`, `/=`, `*=`, etc.).
+///
+/// The result type depends on the operator kind:
+/// - `.=` → string
+/// - `%=` → int
+/// - `<<=`, `>>=`, `&=`, `|=`, `^=` → int
+/// - `+=`, `-=`, `*=`, `/=`, `**=` → int|float
+/// - `??=` → union of LHS non-null type and RHS type
+fn process_compound_assignment<'b>(
+    assignment: &'b Assignment<'b>,
+    scope: &mut ScopeState,
+    ctx: &ForwardWalkCtx<'_>,
+) {
+    use mago_syntax::ast::assignment::AssignmentOperator;
+
+    let var_name = match assignment.lhs {
+        Expression::Variable(Variable::Direct(dv)) => dv.name.to_string(),
+        _ => return,
+    };
+
+    let result_type = match &assignment.operator {
+        AssignmentOperator::Concat(_) => PhpType::string(),
+        AssignmentOperator::Modulo(_) => PhpType::int(),
+        AssignmentOperator::LeftShift(_)
+        | AssignmentOperator::RightShift(_)
+        | AssignmentOperator::BitwiseAnd(_)
+        | AssignmentOperator::BitwiseOr(_)
+        | AssignmentOperator::BitwiseXor(_) => PhpType::int(),
+        AssignmentOperator::Addition(_)
+        | AssignmentOperator::Subtraction(_)
+        | AssignmentOperator::Multiplication(_)
+        | AssignmentOperator::Division(_)
+        | AssignmentOperator::Exponentiation(_) => {
+            let lhs_types = scope.get(&var_name).to_vec();
+            let rhs_types = resolve_rhs_with_scope(assignment.rhs, scope, ctx);
+            let is_division = matches!(assignment.operator, AssignmentOperator::Division(_));
+            infer_arithmetic_result_type(&lhs_types, &rhs_types, is_division)
+        }
+        AssignmentOperator::Coalesce(_) => {
+            // ??= : result is union of LHS (stripped of null) and RHS.
+            let rhs_types = resolve_rhs_with_scope(assignment.rhs, scope, ctx);
+            let rhs_type = if rhs_types.is_empty() {
+                PhpType::mixed()
+            } else {
+                ResolvedType::types_joined(&rhs_types)
+            };
+            let lhs_types = scope.get(&var_name);
+            if lhs_types.is_empty() {
+                rhs_type
+            } else {
+                let lhs_type = ResolvedType::types_joined(lhs_types);
+                let non_null = lhs_type.non_null_type().unwrap_or(lhs_type.clone());
+                PhpType::Union(vec![non_null, rhs_type])
+            }
+        }
+        AssignmentOperator::Assign(_) => return, // already handled
+    };
+
+    scope.set(var_name, vec![ResolvedType::from_type_string(result_type)]);
+}
+
+/// Unwrap parenthesized expressions to their inner expression.
+fn unwrap_parens<'a>(expr: &'a Expression<'a>) -> &'a Expression<'a> {
+    match expr {
+        Expression::Parenthesized(p) => unwrap_parens(p.expression),
+        other => other,
+    }
+}
+
+/// Classify a resolved operand as `int`, `float`, or unknown for
+/// arithmetic type promotion.
+///
+/// Returns `Some(true)` for float, `Some(false)` for int/bool,
+/// `None` when the type is mixed or otherwise ambiguous.
+/// Handles unions and nullable types by classifying each member.
+fn classify_numeric_operand(types: &[ResolvedType]) -> Option<bool> {
+    if types.is_empty() {
+        return None;
+    }
+    let mut saw_float = false;
+    let mut saw_int = false;
+    for rt in types {
+        classify_php_type(&rt.type_string, &mut saw_float, &mut saw_int)?;
+    }
+    if saw_float && saw_int {
+        // Both int-like and float-like members present (e.g. int|float
+        // union) — the runtime result could be either, so return None
+        // to fall back to the conservative int|float.
+        None
+    } else if saw_float {
+        Some(true)
+    } else if saw_int {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Recursively classify a `PhpType` as int-like or float-like.
+///
+/// Returns `None` (and short-circuits) if any member is ambiguous
+/// (mixed, string, object, etc.).  Updates `saw_float` and `saw_int`
+/// flags for known numeric members.  `null` members are ignored
+/// since they coerce to 0 in arithmetic context.
+fn classify_php_type(ty: &PhpType, saw_float: &mut bool, saw_int: &mut bool) -> Option<()> {
+    match ty {
+        PhpType::Named(n) => {
+            let lower = n.to_ascii_lowercase();
+            if lower == "float" || lower == "double" || lower == "real" {
+                *saw_float = true;
+            } else if lower == "int"
+                || lower == "integer"
+                || lower == "bool"
+                || lower == "boolean"
+                || lower == "true"
+                || lower == "false"
+            {
+                *saw_int = true;
+            } else if lower == "numeric" || lower == "number" {
+                *saw_int = true;
+                *saw_float = true;
+            } else if lower == "null" {
+                // null coerces to 0 (int) in arithmetic; ignore it
+                // so that `int|null` classifies as int-like.
+            } else {
+                return None; // mixed, string, object, etc.
+            }
+            Some(())
+        }
+        PhpType::Union(members) => {
+            for member in members {
+                classify_php_type(member, saw_float, saw_int)?;
+            }
+            Some(())
+        }
+        PhpType::Nullable(inner) => {
+            // ?T is T|null — classify the inner type, ignore null.
+            classify_php_type(inner, saw_float, saw_int)
+        }
+        _ => None,
+    }
+}
+
+/// Infer the result type of an arithmetic operation based on operand
+/// types, following PHP's numeric type promotion rules.
+///
+/// - `int op int` → `int` (for `+`, `-`, `*`, `**`)
+/// - `int op float` or `float op int` → `float`
+/// - `float op float` → `float`
+/// - `int / int` → `int|float` (division can produce either)
+/// - Anything else → `int|float`
+fn infer_arithmetic_result_type(
+    lhs_types: &[ResolvedType],
+    rhs_types: &[ResolvedType],
+    is_division: bool,
+) -> PhpType {
+    let lhs = classify_numeric_operand(lhs_types);
+    let rhs = classify_numeric_operand(rhs_types);
+    match (lhs, rhs) {
+        // Both are known int (not float): int op int.
+        (Some(false), Some(false)) => {
+            if is_division {
+                // int / int can return float (e.g. 7/2 = 3.5).
+                PhpType::Union(vec![PhpType::int(), PhpType::float()])
+            } else {
+                PhpType::int()
+            }
+        }
+        // At least one float, the other is known: result is float.
+        (Some(true), Some(_)) | (Some(_), Some(true)) => PhpType::float(),
+        // One or both operands are unknown: fall back to int|float.
+        _ => PhpType::Union(vec![PhpType::int(), PhpType::float()]),
     }
 }
 
@@ -3972,6 +4237,55 @@ fn resolve_rhs_with_scope<'b>(
         && assignment.operator.is_assign()
     {
         return resolve_rhs_with_scope(assignment.rhs, scope, ctx);
+    }
+
+    // Compound assignment as RHS: `$a = ($x /= 2)` — the value of the
+    // compound assignment is the result after the operation.  Infer the
+    // type from the operator kind.
+    if let Expression::Assignment(assignment) = rhs
+        && !assignment.operator.is_assign()
+    {
+        use mago_syntax::ast::assignment::AssignmentOperator;
+        let result_type = match &assignment.operator {
+            AssignmentOperator::Concat(_) => Some(PhpType::string()),
+            AssignmentOperator::Modulo(_) => Some(PhpType::int()),
+            AssignmentOperator::LeftShift(_)
+            | AssignmentOperator::RightShift(_)
+            | AssignmentOperator::BitwiseAnd(_)
+            | AssignmentOperator::BitwiseOr(_)
+            | AssignmentOperator::BitwiseXor(_) => Some(PhpType::int()),
+            AssignmentOperator::Addition(_)
+            | AssignmentOperator::Subtraction(_)
+            | AssignmentOperator::Multiplication(_)
+            | AssignmentOperator::Division(_)
+            | AssignmentOperator::Exponentiation(_) => {
+                let lhs_types = if let Expression::Variable(Variable::Direct(dv)) = assignment.lhs {
+                    scope.get(dv.name.as_ref()).to_vec()
+                } else {
+                    vec![]
+                };
+                let rhs_types = resolve_rhs_with_scope(assignment.rhs, scope, ctx);
+                let is_division = matches!(assignment.operator, AssignmentOperator::Division(_));
+                Some(infer_arithmetic_result_type(
+                    &lhs_types,
+                    &rhs_types,
+                    is_division,
+                ))
+            }
+            AssignmentOperator::Coalesce(_) => {
+                let rhs_types = resolve_rhs_with_scope(assignment.rhs, scope, ctx);
+                let rhs_type = if rhs_types.is_empty() {
+                    PhpType::mixed()
+                } else {
+                    ResolvedType::types_joined(&rhs_types)
+                };
+                Some(rhs_type)
+            }
+            AssignmentOperator::Assign(_) => None,
+        };
+        if let Some(ty) = result_type {
+            return vec![ResolvedType::from_type_string(ty)];
+        }
     }
 
     // For bare variable references, read directly from scope.
@@ -4058,12 +4372,29 @@ fn resolve_rhs_with_scope<'b>(
                 // return int|float.
                 Some(PhpType::Union(vec![PhpType::int(), PhpType::float()]))
             }
-            UnaryPrefixOperator::BitwiseNot(_) => Some(PhpType::int()),
+            UnaryPrefixOperator::BitwiseNot(_) => None, // handled below
             UnaryPrefixOperator::Not(_) => Some(PhpType::bool()),
             _ => None,
         };
         if let Some(ty) = cast_type {
             return vec![ResolvedType::from_type_string(ty)];
+        }
+    }
+
+    // Bitwise NOT (~): returns string when operand is string, int otherwise.
+    if let Expression::UnaryPrefix(prefix) = rhs {
+        use mago_syntax::ast::unary::UnaryPrefixOperator;
+        if matches!(prefix.operator, UnaryPrefixOperator::BitwiseNot(_)) {
+            let operand_types = resolve_rhs_with_scope(prefix.operand, scope, ctx);
+            let is_string = !operand_types.is_empty()
+                && operand_types
+                    .iter()
+                    .all(|rt| rt.type_string.is_subtype_of(&PhpType::string()));
+            return vec![ResolvedType::from_type_string(if is_string {
+                PhpType::string()
+            } else {
+                PhpType::int()
+            })];
         }
     }
 
@@ -4092,6 +4423,9 @@ fn resolve_rhs_with_scope<'b>(
     // When resolve_rhs_expression returns empty, infer the type
     // purely from the expression structure.  These only fire as a
     // last resort so they never override a more precise result.
+
+    // Unwrap parenthesized expressions for structural inference.
+    let rhs = unwrap_parens(rhs);
 
     // String literals (including interpolated/composite strings).
     if matches!(
@@ -4128,6 +4462,11 @@ fn resolve_rhs_with_scope<'b>(
     if let Expression::Binary(binary) = rhs {
         use mago_syntax::ast::binary::BinaryOperator;
 
+        // Spaceship (<=>): always int (-1, 0, or 1).
+        if matches!(binary.operator, BinaryOperator::Spaceship(_)) {
+            return vec![ResolvedType::from_type_string(PhpType::int())];
+        }
+
         // instanceof, comparison, logical: always bool.
         if binary.operator.is_instanceof()
             || binary.operator.is_comparison()
@@ -4148,7 +4487,7 @@ fn resolve_rhs_with_scope<'b>(
 
         // Addition (+): PHP overloads this for array union vs numeric
         // addition.  If either operand resolves to an array type, the
-        // result is array; otherwise it's int|float.
+        // result is array; otherwise apply numeric type promotion.
         if matches!(binary.operator, BinaryOperator::Addition(_)) {
             let lhs_types = resolve_rhs_with_scope(binary.lhs, scope, ctx);
             let rhs_types = resolve_rhs_with_scope(binary.rhs, scope, ctx);
@@ -4161,13 +4500,12 @@ fn resolve_rhs_with_scope<'b>(
                     "array".to_string(),
                 ))];
             }
-            return vec![ResolvedType::from_type_string(PhpType::Union(vec![
-                PhpType::int(),
-                PhpType::float(),
-            ]))];
+            return vec![ResolvedType::from_type_string(
+                infer_arithmetic_result_type(&lhs_types, &rhs_types, false),
+            )];
         }
 
-        // Arithmetic: -, *, /, ** are always numeric.
+        // Arithmetic: -, *, /, **.
         if matches!(
             binary.operator,
             BinaryOperator::Subtraction(_)
@@ -4175,13 +4513,17 @@ fn resolve_rhs_with_scope<'b>(
                 | BinaryOperator::Division(_)
                 | BinaryOperator::Exponentiation(_)
         ) {
-            return vec![ResolvedType::from_type_string(PhpType::Union(vec![
-                PhpType::int(),
-                PhpType::float(),
-            ]))];
+            let lhs_types = resolve_rhs_with_scope(binary.lhs, scope, ctx);
+            let rhs_types = resolve_rhs_with_scope(binary.rhs, scope, ctx);
+            let is_division = matches!(binary.operator, BinaryOperator::Division(_));
+            return vec![ResolvedType::from_type_string(
+                infer_arithmetic_result_type(&lhs_types, &rhs_types, is_division),
+            )];
         }
 
-        // Bitwise operators (&, |, ^, <<, >>): always int.
+        // Bitwise operators (&, |, ^, <<, >>).
+        // When both operands are strings, PHP applies bitwise ops
+        // character-by-character and returns a string.  Otherwise int.
         if matches!(
             binary.operator,
             BinaryOperator::BitwiseAnd(_)
@@ -4190,6 +4532,27 @@ fn resolve_rhs_with_scope<'b>(
                 | BinaryOperator::LeftShift(_)
                 | BinaryOperator::RightShift(_)
         ) {
+            // Check if both operands are string-typed for &, |, ^.
+            if matches!(
+                binary.operator,
+                BinaryOperator::BitwiseAnd(_)
+                    | BinaryOperator::BitwiseOr(_)
+                    | BinaryOperator::BitwiseXor(_)
+            ) {
+                let lhs_types = resolve_rhs_with_scope(binary.lhs, scope, ctx);
+                let rhs_types = resolve_rhs_with_scope(binary.rhs, scope, ctx);
+                let both_strings = !lhs_types.is_empty()
+                    && !rhs_types.is_empty()
+                    && lhs_types
+                        .iter()
+                        .all(|rt| rt.type_string.is_subtype_of(&PhpType::string()))
+                    && rhs_types
+                        .iter()
+                        .all(|rt| rt.type_string.is_subtype_of(&PhpType::string()));
+                if both_strings {
+                    return vec![ResolvedType::from_type_string(PhpType::string())];
+                }
+            }
             return vec![ResolvedType::from_type_string(PhpType::int())];
         }
     }
@@ -7598,6 +7961,12 @@ fn apply_null_narrowing_truthy<'b>(
         seed_synthetic_key_if_needed(&var_name, scope, ctx);
         narrow_to_null_in_scope(&var_name, scope);
     }
+    // `!empty($x)` — truthy branch means $x is non-empty (truthy):
+    // strip null (and false) from the type.
+    if let Some(var_name) = extract_not_empty_var(condition) {
+        seed_synthetic_key_if_needed(&var_name, scope, ctx);
+        strip_null_from_scope(&var_name, scope);
+    }
 }
 
 /// Apply inverse null narrowing (for guard clause: `if ($x === null) { return; }`).
@@ -7745,6 +8114,17 @@ fn extract_null_equality_check_var(expr: &Expression<'_>) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Extract variable name from `!empty($x)` (negated empty check).
+fn extract_not_empty_var(expr: &Expression<'_>) -> Option<String> {
+    if let Expression::UnaryPrefix(prefix) = expr
+        && prefix.operator.is_not()
+        && let Expression::Construct(Construct::Empty(empty)) = prefix.operand
+    {
+        return expr_to_var_name(empty.value);
+    }
+    None
 }
 
 /// Extract variable name from falsy checks: `!$x`, `empty($x)`.

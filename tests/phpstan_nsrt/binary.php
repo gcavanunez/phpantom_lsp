@@ -67,66 +67,64 @@ class Foo
 		assertType('int|float', -$integer);
 
 		// ── Arithmetic: literal int op int ──────────────────────────────
-		// PHPantom does not constant-fold; all literal arithmetic
-		// produces the union of possible runtime types.
 
-		assertType('int|float', 1 + 1);
-		assertType('int|float', 1 - 1);
+		assertType('int', 1 + 1);
+		assertType('int', 1 - 1);
 		assertType('int|float', 1 / 2);
-		assertType('int|float', 1 * 1);
-		assertType('int|float', 1 ** 1);
+		assertType('int', 1 * 1);
+		assertType('int', 1 ** 1);
 		assertType('int', 1 % 1);
 
 		// ── Arithmetic: literal float op float ──────────────────────────
 
-		assertType('int|float', 1.2 + 1.4);
-		assertType('int|float', 1.2 - 1.4);
-		assertType('int|float', 1.2 / 2.4);
-		assertType('int|float', 1.2 * 1.4);
-		assertType('int|float', 1.2 ** 1.4);
+		assertType('float', 1.2 + 1.4);
+		assertType('float', 1.2 - 1.4);
+		assertType('float', 1.2 / 2.4);
+		assertType('float', 1.2 * 1.4);
+		assertType('float', 1.2 ** 1.4);
 		assertType('int', 3.2 % 2.4);
 
 		// ── Arithmetic: literal int op float ────────────────────────────
 
-		assertType('int|float', 1 + 1.4);
-		assertType('int|float', 1 - 1.4);
-		assertType('int|float', 1 / 2.4);
-		assertType('int|float', 1 * 1.4);
-		assertType('int|float', 1 ** 1.4);
+		assertType('float', 1 + 1.4);
+		assertType('float', 1 - 1.4);
+		assertType('float', 1 / 2.4);
+		assertType('float', 1 * 1.4);
+		assertType('float', 1 ** 1.4);
 		assertType('int', 3 % 2.4);
 
 		// ── Arithmetic: literal float op int ────────────────────────────
 
-		assertType('int|float', 1.2 + 1);
-		assertType('int|float', 1.2 - 1);
-		assertType('int|float', 1.2 / 2);
-		assertType('int|float', 1.2 * 1);
-		assertType('int|float', 1.2 ** 1);
+		assertType('float', 1.2 + 1);
+		assertType('float', 1.2 - 1);
+		assertType('float', 1.2 / 2);
+		assertType('float', 1.2 * 1);
+		assertType('float', 1.2 ** 1);
 		assertType('int', 3.2 % 2);
 
 		// ── Arithmetic: variable int operations ─────────────────────────
 
-		assertType('int|float', $integer * 10);
-		assertType('int|float', $integer ** $integer);
+		assertType('int', $integer * 10);
+		assertType('int', $integer ** $integer);
 		assertType('int|float', $integer / $integer);
-		assertType('int|float', $otherInteger + 1);
-		assertType('int|float', $otherInteger + 1.0);
+		assertType('int', $otherInteger + 1);
+		assertType('float', $otherInteger + 1.0);
 
 		// ── Arithmetic: variable float operations ───────────────────────
 
-		assertType('int|float', $float + $float);
+		assertType('float', $float + $float);
 		assertType('int|float', $float + $number);
 
 		// ── Arithmetic: number type ─────────────────────────────────────
 
-		assertType('float|int', 1 + $number);
-		assertType('float|int', $integer + $number);
-		assertType('float|int', 1 / $number);
+		assertType('int|float', 1 + $number);
+		assertType('int|float', $integer + $number);
+		assertType('int|float', 1 / $number);
 		assertType('int|float', 1.0 / $number);
-		assertType('float|int', $number / 1);
+		assertType('int|float', $number / 1);
 		assertType('int|float', $number / 1.0);
 		assertType('int|float', 1.0 + $number);
-		assertType('float|int', $number + 1);
+		assertType('int|float', $number + 1);
 		assertType('int|float', $number + 1.0);
 
 		// ── Arithmetic: mixed operands ──────────────────────────────────
@@ -138,11 +136,11 @@ class Foo
 
 		// ── Arithmetic: union type operands ─────────────────────────────
 
-		assertType('float|int', $intOrFloat + $intOrFloat);
+		assertType('int|float', $intOrFloat + $intOrFloat);
 
 		// ── Arithmetic: bool operands ───────────────────────────────────
 
-		assertType('int|float', true + false);
+		assertType('int', true + false);
 
 		// ── String concatenation ────────────────────────────────────────
 
@@ -150,7 +148,7 @@ class Foo
 		assertType('string', $string . 'foo');
 		assertType('string', 'foo' . $string);
 		assertType('string', $string . $integer);
-		assertType('string', $integer . $string); // SKIP
+		assertType('string', $integer . $string);
 
 		// ── Comparison operators ────────────────────────────────────────
 
@@ -165,7 +163,7 @@ class Foo
 
 		// ── Spaceship ───────────────────────────────────────────────────
 
-		assertType('int', 'foo' <=> 'bar'); // SKIP
+		assertType('int', 'foo' <=> 'bar');
 
 		// ── Bitwise operators: int operands ─────────────────────────────
 
@@ -178,14 +176,13 @@ class Foo
 		assertType('int', $integer ^ 3);
 
 		// ── Bitwise: string operands ────────────────────────────────────
-		// PHPantom resolves bitwise on two strings as int, not string.
 
-		assertType('string', "x" & "y"); // SKIP
-		assertType('string', $string & "x"); // SKIP
-		assertType('string', "x" | "y"); // SKIP
-		assertType('string', $string | "x"); // SKIP
-		assertType('string', "x" ^ "y"); // SKIP
-		assertType('string', $string ^ "x"); // SKIP
+		assertType('string', "x" & "y");
+		assertType('string', $string & "x");
+		assertType('string', "x" | "y");
+		assertType('string', $string | "x");
+		assertType('string', "x" ^ "y");
+		assertType('string', $string ^ "x");
 
 
 
@@ -208,42 +205,40 @@ class Foo
 		assertType('bool', $foo instanceof \BinaryOperations\NestedNamespace\Foo);
 
 		// ── Logical operators ───────────────────────────────────────────
-		// PHPantom does not resolve logical operator result types via
-		// hover on assigned variables.
+		// `xor`, `and`, `or` have lower precedence than `=` so they
+		// cannot be tested via assertType (the assignment captures the
+		// LHS before the logical operator runs).
 
-		assertType('bool', true && false); // SKIP
-		assertType('bool', true || false); // SKIP
-		assertType('bool', true xor false); // SKIP
-		assertType('bool', $bool xor true); // SKIP
-		assertType('bool', true and false); // SKIP
-		assertType('bool', true or false); // SKIP
-		assertType('bool', !true); // SKIP
+		assertType('bool', true && false);
+		assertType('bool', true || false);
+		assertType('bool', !true);
 
 		// ── Compound assignment ─────────────────────────────────────────
-		// PHPantom does not resolve compound assignment types via hover.
+		// assertType wraps as `$__assert = $x /= 2`, which the hover
+		// path inside class methods does not resolve (compound assignment
+		// as RHS).  These work at namespace level via the forward walker.
 
-		assertType('float|int', $integer1 /= 2); // SKIP
-		assertType('int', $integer2 *= 1); // SKIP
-		assertType('float', $float1 /= 2.4); // SKIP
-		assertType('float', $float2 *= 2.4); // SKIP
-		assertType('float', $integer3 /= 2.4); // SKIP
-		assertType('float', $integer4 *= 2.4); // SKIP
-		assertType('int', $float3 %= 2.4); // SKIP
-		assertType('float', $float4 **= 2.4); // SKIP
-		assertType('float', $float5 /= 2.4); // SKIP
-		assertType('float', $float6 *= 2); // SKIP
-		assertType('int', $integer5 <<= 2.2); // SKIP
-		assertType('int', $integer6 &= 3); // SKIP
-		assertType('int', $integer7 |= 3); // SKIP
-		assertType('int', $integer8 ^= 3); // SKIP
+		assertType('int|float', $integer1 /= 2);
+		assertType('int', $integer2 *= 1);
+		assertType('float', $float1 /= 2.4);
+		assertType('float', $float2 *= 2.4);
+		assertType('float', $integer3 /= 2.4);
+		assertType('float', $integer4 *= 2.4);
+		assertType('int', $float3 %= 2.4);
+		assertType('float', $float4 **= 2.4);
+		assertType('float', $float5 /= 2.4);
+		assertType('float', $float6 *= 2);
+		assertType('int', $integer5 <<= 2.2);
+		assertType('int', $integer6 &= 3);
+		assertType('int', $integer7 |= 3);
+		assertType('int', $integer8 ^= 3);
 
 		// ── Mixed arithmetic with mixed ─────────────────────────────────
-		// PHPantom returns no type for mixed with int literal on LHS.
 
-		assertType('float|int', 1 + $mixed); // SKIP
-		assertType('float|int', 1 / $mixed); // SKIP
-		assertType('float|int', $mixed / 1); // SKIP
-		assertType('float|int', $mixed + 1); // SKIP
+		assertType('float|int', 1 + $mixed);
+		assertType('float|int', 1 / $mixed);
+		assertType('float|int', $mixed / 1);
+		assertType('float|int', $mixed + 1);
 	}
 
 }
