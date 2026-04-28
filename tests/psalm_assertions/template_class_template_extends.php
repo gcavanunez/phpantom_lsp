@@ -173,7 +173,7 @@ namespace PsalmTest_template_class_template_extends_3 {
     $f2 = getItemFromContainer($fc);
 
     assertType('FooContainer', $fc);
-    assertType('Foo', $f1); // SKIP — @template-extends not resolving return type from parent abstract method
+    assertType('Foo', $f1);
     assertType('Foo', $f2); // SKIP — function-level @template not substituted from concrete argument type
 }
 
@@ -223,7 +223,7 @@ namespace PsalmTest_template_class_template_extends_4 {
     $f2 = getItemFromContainer($fc);
 
     assertType('FooContainer', $fc);
-    assertType('Foo', $f1); // SKIP — @extends not resolving return type from parent abstract method
+    assertType('Foo', $f1);
     assertType('Foo', $f2); // SKIP — function-level @template not substituted from concrete argument type
 }
 

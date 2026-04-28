@@ -284,7 +284,7 @@ namespace PsalmTest_magic_method_annotation_10 {
     $e = $d->get();
 
     assertType('B', $b); // SKIP — @method generic not substituted through @implements
-    assertType('B', $c); // SKIP — @method generic not resolved through extended interface
+    assertType('B', $c);
     assertType('B', $e); // SKIP — @method generic not substituted through @extends on class
 }
 

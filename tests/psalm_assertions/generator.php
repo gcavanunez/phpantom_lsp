@@ -83,7 +83,7 @@ namespace PsalmTest_generator_3 {
     }
     $gen2 = $gen->getReturn();
 
-    assertType('Generator<int, int, mixed, int>', $gen); // SKIP — hover returns no type for generator variable
+    assertType('Generator<int, int, mixed, int>', $gen);
     assertType('int', $gen2); // SKIP — hover returns no type for getReturn() result
 }
 

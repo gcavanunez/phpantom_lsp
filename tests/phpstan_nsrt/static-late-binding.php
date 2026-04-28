@@ -75,7 +75,7 @@ class B extends A
         assertType('int', static::retStaticConst(...)());
         assertType('int', parent::retStaticConst(...)());
         assertType('int', $this->retStaticConst(...)());
-        assertType('bool', X::retStaticConst(...)());  // SKIP
+        assertType('bool', X::retStaticConst(...)());
         assertType('mixed', $clUnioned->retStaticConst(...)());
 
         assertType('StaticLateBinding\A', A::retStatic());
@@ -93,7 +93,7 @@ class B extends A
         assertType('static', static::retStatic(...)());  // SKIP
         assertType('static', parent::retStatic(...)());  // SKIP
         assertType('static', $this->retStatic(...)());  // SKIP
-        assertType('bool', X::retStatic(...)());  // SKIP
+        assertType('bool', X::retStatic(...)());
         assertType('mixed', $clUnioned::retStatic(...)());  // SKIP
 
         assertType('A', A::retNonStatic());

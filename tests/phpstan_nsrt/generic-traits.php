@@ -75,7 +75,7 @@ class UsesUnbounded
 }
 
 $unb = new UsesUnbounded();
-assertType('mixed', $unb->getValue(123)); // SKIP
+assertType('mixed', $unb->getValue(123));
 
 /**
  * Two traits with different template substitutions on the same class.

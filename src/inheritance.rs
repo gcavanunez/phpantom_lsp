@@ -425,10 +425,13 @@ pub(crate) fn resolve_class_with_inheritance(
         // so that inherited methods don't leak raw template names.
         if !parent.template_params.is_empty() {
             for param_name in &parent.template_params {
-                if !level_subs.contains_key(param_name.to_string().as_str())
-                    && let Some(bound) = parent.template_param_bounds.get(param_name)
-                {
-                    level_subs.insert(param_name.to_string(), bound.clone());
+                if !level_subs.contains_key(param_name.to_string().as_str()) {
+                    let bound = parent
+                        .template_param_bounds
+                        .get(param_name)
+                        .cloned()
+                        .unwrap_or_else(PhpType::mixed);
+                    level_subs.insert(param_name.to_string(), bound);
                 }
             }
         }
@@ -706,10 +709,13 @@ fn merge_traits_into(
         // → `object`) so inherited methods don't leak raw template names.
         if !trait_info.template_params.is_empty() {
             for param_name in &trait_info.template_params {
-                if !trait_subs.contains_key(param_name.to_string().as_str())
-                    && let Some(bound) = trait_info.template_param_bounds.get(param_name)
-                {
-                    trait_subs.insert(param_name.to_string(), bound.clone());
+                if !trait_subs.contains_key(param_name.to_string().as_str()) {
+                    let bound = trait_info
+                        .template_param_bounds
+                        .get(param_name)
+                        .cloned()
+                        .unwrap_or_else(PhpType::mixed);
+                    trait_subs.insert(param_name.to_string(), bound);
                 }
             }
         }

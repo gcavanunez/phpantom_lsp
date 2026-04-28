@@ -346,7 +346,7 @@ namespace PsalmTest_template_class_template_11 {
     $b = $a->getValue();
 
     assertType('KeyValueContainer<string, int>', $a);
-    assertType('mixed', $b); // SKIP got int, missing @extends means TValue should be mixed but we infer from constructor
+    assertType('mixed', $b);
 }
 
 // Test: mixedTemplatedParamOutDifferentParamName
@@ -409,7 +409,7 @@ namespace PsalmTest_template_class_template_12 {
     $b = $a->getValue();
 
     assertType('KeyValueContainer<string, int>', $a);
-    assertType('mixed', $b); // SKIP got int, missing @extends means TValue should be mixed but we infer from constructor
+    assertType('mixed', $b);
 }
 
 // Test: doesntExtendTemplateAndDoesNotOverride
@@ -561,7 +561,7 @@ namespace PsalmTest_template_class_template_17 {
 
     $a_or_b = $random_collection->get();
 
-    assertType('C<A>|C<B>', $random_collection); // SKIP hover fails for union of generic types from function return
+    assertType('C<A>|C<B>', $random_collection);
     assertType('A|B', $a_or_b); // SKIP hover fails, depends on union generic resolution
 }
 
