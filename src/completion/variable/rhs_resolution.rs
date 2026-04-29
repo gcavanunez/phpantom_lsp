@@ -2874,15 +2874,9 @@ fn resolve_rhs_static_call(
                 // parameters typed as `@param class-string<Foo> $var`
                 // where there is no `$var = Foo::class` assignment.
                 let resolved = resolve_var_types(&var_name, ctx, ctx.cursor_offset);
-                resolved.iter().find_map(|rt| match &rt.type_string {
-                    PhpType::ClassString(Some(inner)) => inner.base_name().map(|s| s.to_string()),
-                    PhpType::Nullable(inner) => match inner.as_ref() {
-                        PhpType::ClassString(Some(cs_inner)) => {
-                            cs_inner.base_name().map(|s| s.to_string())
-                        }
-                        _ => None,
-                    },
-                    PhpType::Union(members) => members.iter().find_map(|m| match m {
+                resolved
+                    .iter()
+                    .find_map(|rt| match &rt.type_string {
                         PhpType::ClassString(Some(inner)) => {
                             inner.base_name().map(|s| s.to_string())
                         }
@@ -2892,10 +2886,28 @@ fn resolve_rhs_static_call(
                             }
                             _ => None,
                         },
+                        PhpType::Union(members) => members.iter().find_map(|m| match m {
+                            PhpType::ClassString(Some(inner)) => {
+                                inner.base_name().map(|s| s.to_string())
+                            }
+                            PhpType::Nullable(inner) => match inner.as_ref() {
+                                PhpType::ClassString(Some(cs_inner)) => {
+                                    cs_inner.base_name().map(|s| s.to_string())
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        }),
                         _ => None,
-                    }),
-                    _ => None,
-                })
+                    })
+                    .or_else(|| {
+                        // Final fallback: `$var::method()` where `$var` is an
+                        // object instance (not a class-string). In PHP you can
+                        // call static methods on an instance reference.
+                        resolved
+                            .iter()
+                            .find_map(|rt| rt.type_string.base_name().map(|s| s.to_string()))
+                    })
             }
         }
         _ => None,

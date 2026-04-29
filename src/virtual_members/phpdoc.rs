@@ -698,6 +698,50 @@ fn collect_mixin_members(
             collector.constants.push(constant.clone());
         }
 
+        // ── Phase: @method/@property tags from the mixin's own docblock ──
+        // `resolve_class_with_inheritance` does NOT include virtual members
+        // from @method/@property tags (to avoid circular provider calls).
+        // Extract them manually so that e.g. `@mixin A` where A declares
+        // `@method $this active()` propagates `active()` to the consumer.
+        if let Some(doc_text) = mixin_class.class_docblock.as_deref()
+            && !doc_text.is_empty()
+        {
+            for mut m in docblock::extract_method_tags(doc_text) {
+                if !collector.dedup.methods.insert(m.name.to_string()) {
+                    continue;
+                }
+                if !subs.is_empty() {
+                    inheritance::apply_substitution_to_method(&mut m, &subs);
+                }
+                m.is_virtual = true;
+                collector.methods.push(m);
+            }
+
+            for (name, type_hint) in docblock::extract_property_tags(doc_text) {
+                if !collector.dedup.properties.insert(name.clone()) {
+                    continue;
+                }
+                let resolved_type = if !subs.is_empty() {
+                    type_hint.map(|t| t.substitute(&subs))
+                } else {
+                    type_hint
+                };
+                collector.properties.push(PropertyInfo {
+                    name: atom(&name),
+                    name_offset: 0,
+                    type_hint: resolved_type,
+                    native_type_hint: None,
+                    description: None,
+                    is_static: false,
+                    visibility: Visibility::Public,
+                    deprecation_message: None,
+                    deprecated_replacement: None,
+                    see_refs: Vec::new(),
+                    is_virtual: true,
+                });
+            }
+        }
+
         // Recurse into mixins declared by the mixin class itself.
         if !mixin_class.mixins.is_empty() {
             collect_mixin_members(

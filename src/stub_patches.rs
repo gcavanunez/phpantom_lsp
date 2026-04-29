@@ -94,6 +94,14 @@
 //!    `@implements ArrayAccess<TKey, TValue>`.
 //!    PHPStan ref: `stubs/WeakMap.stub`
 //!
+//! 10. **`IteratorIterator`** — phpstorm-stubs lack `@template` and `@mixin`.
+//!     PHPStan adds `@template TKey`, `@template TValue`,
+//!     `@template TIterator of Traversable<TKey, TValue>`,
+//!     `@implements OuterIterator<TKey, TValue>`,
+//!     `@mixin TIterator`.  The `@mixin` makes methods from the wrapped
+//!     iterator available on the wrapper.
+//!     PHPStan ref: `stubs/iterable.stub`
+//!
 //! ## Removing patches
 //!
 //! When phpstorm-stubs gains proper annotations for a patched symbol,
@@ -188,6 +196,7 @@ pub fn apply_class_stub_patches(class: &mut ClassInfo) {
         "SplFixedArray" => patch_spl_fixed_array(class),
         "SplObjectStorage" => patch_spl_object_storage(class),
         "WeakMap" => patch_weak_map(class),
+        "IteratorIterator" => patch_iterator_iterator(class),
         _ => {}
     }
 }
@@ -315,6 +324,62 @@ fn patch_weak_map(class: &mut ClassInfo) {
     add_templates(class, &[("TKey", Some("object")), ("TValue", None)]);
     add_implements_generics(class, "Iterator", &["TKey", "TValue"]);
     add_implements_generics(class, "ArrayAccess", &["TKey", "TValue"]);
+}
+
+/// Add `@template TKey`, `@template TValue`,
+/// `@template TIterator of Traversable<TKey, TValue>`,
+/// `@implements OuterIterator<TKey, TValue>`,
+/// `@mixin TIterator`.
+///
+/// PHPStan ref: `stubs/iterable.stub`
+fn patch_iterator_iterator(class: &mut ClassInfo) {
+    if !class.template_params.is_empty() {
+        return;
+    }
+    add_templates(class, &[("TKey", None), ("TValue", None)]);
+    // TIterator has a complex bound `Traversable<TKey, TValue>` — add it
+    // manually since `add_templates` only handles simple string bounds.
+    let t_iter = atom("TIterator");
+    if !class.template_params.contains(&t_iter) {
+        class.template_params.push(t_iter);
+    }
+    class
+        .template_param_bounds
+        .entry(atom("TIterator"))
+        .or_insert_with(|| {
+            PhpType::Generic(
+                "Traversable".to_string(),
+                vec![
+                    PhpType::Named("TKey".to_string()),
+                    PhpType::Named("TValue".to_string()),
+                ],
+            )
+        });
+    add_implements_generics(class, "OuterIterator", &["TKey", "TValue"]);
+    // Add @mixin TIterator so that methods from the wrapped iterator
+    // are available on the wrapper.
+    if !class.mixins.contains(&t_iter) {
+        class.mixins.push(t_iter);
+    }
+    // Patch the constructor: add template binding TIterator → $iterator
+    // so that `new IteratorIterator(new Subject())` infers TIterator = Subject.
+    if let Some(ctor_idx) = class
+        .methods
+        .iter()
+        .position(|m| m.name.as_str() == "__construct")
+    {
+        let mut ctor = (*class.methods[ctor_idx]).clone();
+        let binding = (atom("TIterator"), atom("$iterator"));
+        if !ctor.template_bindings.iter().any(|(t, _)| t == &binding.0) {
+            ctor.template_bindings.push(binding);
+        }
+        // Update the parameter type hint from Traversable to TIterator
+        // so that classify_template_binding recognises a Direct binding.
+        if let Some(param) = ctor.parameters.iter_mut().find(|p| p.name == "$iterator") {
+            param.type_hint = Some(PhpType::Named("TIterator".to_string()));
+        }
+        class.methods.make_mut()[ctor_idx] = std::sync::Arc::new(ctor);
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -650,5 +715,28 @@ mod tests {
 
         assert_eq!(class.template_params, original_params);
         assert!(class.implements_generics.is_empty());
+    }
+
+    #[test]
+    fn iterator_iterator_gets_templates_and_mixin() {
+        let mut class = empty_class("IteratorIterator");
+        apply_class_stub_patches(&mut class);
+
+        assert_eq!(
+            class.template_params,
+            vec![atom("TKey"), atom("TValue"), atom("TIterator")]
+        );
+        assert!(
+            class
+                .implements_generics
+                .iter()
+                .any(|(n, args)| n.as_str() == "OuterIterator" && args.len() == 2),
+            "Should have @implements OuterIterator<TKey, TValue>"
+        );
+        assert_eq!(class.mixins, vec![atom("TIterator")]);
+        assert!(
+            class.template_param_bounds.contains_key(&atom("TIterator")),
+            "TIterator should have a bound"
+        );
     }
 }

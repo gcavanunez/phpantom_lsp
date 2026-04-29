@@ -178,21 +178,6 @@ Several return type patterns are not resolved:
 (lines 43, 64, 83, 121, 132, 146).
 
 
-## B20. Mixin method resolution gaps
-
-**Discovered:** SKIP audit of
-`tests/psalm_assertions/mixin_annotation.php`.
-
-`@mixin` method resolution fails in these cases:
-
-- Static method called on a class that mixes in another class
-- Method on `IteratorIterator` via mixin
-- Mixin method return type not resolved through `static`
-
-**Tests:** SKIPs in `tests/psalm_assertions/mixin_annotation.php`
-(lines 34, 73, 168).
-
-
 ## B21. Remaining static-late-binding and generics gaps
 
 **Discovered:** SKIP audit of

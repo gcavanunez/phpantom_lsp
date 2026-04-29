@@ -31,7 +31,7 @@ namespace PsalmTest_mixin_annotation_1 {
     $b = $child::getInt();
 
     assertType('string', $a);
-    assertType('int', $b); // SKIP — static mixin method return type not resolved
+    assertType('int', $b);
 }
 
 // Test: wrapCustomIterator
@@ -70,7 +70,7 @@ namespace PsalmTest_mixin_annotation_2 {
     $iter = new IteratorIterator(new Subject());
     $b = $iter->index(0);
 
-    assertType('bool', $b); // SKIP — mixin method on IteratorIterator not resolved
+    assertType('bool', $b); // SKIP — IteratorIterator not in fixture runner stubs (feature works with full stubs)
 }
 
 // Test: templatedMixin
@@ -165,6 +165,6 @@ namespace PsalmTest_mixin_annotation_6 {
     $b = new B;
     $c = $b->active();
 
-    assertType('B', $c); // SKIP — mixin method return type not resolved through static
+    assertType('B', $c);
 }
 

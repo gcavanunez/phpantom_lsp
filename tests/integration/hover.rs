@@ -10580,3 +10580,108 @@ if ($a instanceof PropA || $a instanceof PropB) {
         text
     );
 }
+
+#[test]
+fn hover_static_mixin_method_on_instance() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class MixProvider {
+    public static function getInt(): int {
+        return 5;
+    }
+}
+
+/** @mixin MixProvider */
+class MixChild {
+    public function __call(string $name, array $args) {}
+    public static function __callStatic(string $name, array $args) {}
+}
+
+$child = new MixChild();
+$b = $child::getInt();
+"#;
+
+    // Hover on `$b` (line 14, char 0)
+    let hover = hover_at(&backend, uri, content, 14, 1).expect("expected hover");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("int"),
+        "should resolve static mixin method return type: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_mixin_this_return_type() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+/**
+ * @method $this active()
+ */
+class MixinBase {
+    public function __call(string $name, array $arguments) {}
+}
+
+/**
+ * @mixin MixinBase
+ */
+class MixConsumer {
+    public function __call(string $name, array $arguments) {}
+}
+
+$b = new MixConsumer;
+$c = $b->active();
+"#;
+
+    // Hover on `$c` (line 16, char 1)
+    let hover = hover_at(&backend, uri, content, 16, 1).expect("expected hover");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("MixConsumer"),
+        "$this on mixin method should resolve to the consumer class: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_iterator_iterator_mixin_method() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Subject implements Iterator {
+    public function index(int $idx): bool {
+        return true;
+    }
+    public function current(): int { return 2; }
+    public function next(): void {}
+    public function key(): int { return 1; }
+    public function valid(): bool { return false; }
+    public function rewind(): void {}
+}
+
+/**
+ * @template TKey
+ * @template TValue
+ * @template TIterator of Traversable
+ * @mixin TIterator
+ */
+class IteratorIterator {
+    /** @param TIterator $iterator */
+    public function __construct(Traversable $iterator) {}
+}
+
+$iter = new IteratorIterator(new Subject());
+$b = $iter->index(0);
+"#;
+
+    // Hover on `$b` (line 24, char 1)
+    let hover = hover_at(&backend, uri, content, 24, 1).expect("expected hover");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("bool"),
+        "should resolve mixin method return type from wrapped iterator: {}",
+        text
+    );
+}
