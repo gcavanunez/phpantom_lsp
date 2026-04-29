@@ -48,6 +48,7 @@ use mago_syntax::ast::argument::Argument;
 use mago_syntax::ast::sequence::TokenSeparatedSequence;
 use mago_syntax::ast::*;
 
+use crate::atom::{Atom, AtomMap, atom};
 use crate::completion::resolver::{Loaders, VarResolutionCtx};
 use crate::completion::types::narrowing;
 use crate::parser::{extract_hint_type, with_parsed_program};
@@ -154,7 +155,7 @@ fn lookup_hover_scope(
         // at this point in the walk — return None so the caller falls back
         // to the standard walk path (which handles assignment-site hovering,
         // parameter inference, etc.).
-        snap.get(var_name).cloned()
+        snap.get(&atom(var_name)).cloned()
     })
 }
 
@@ -207,7 +208,7 @@ fn take_diagnostic_scope_map() -> ScopeSnapshotMap {
 // types in O(log N) time — no backward scanning, no recursion.
 
 /// Scope snapshot map: byte offset → variable name → resolved types.
-type ScopeSnapshotMap = BTreeMap<u32, HashMap<String, Vec<ResolvedType>>>;
+type ScopeSnapshotMap = BTreeMap<u32, AtomMap<Vec<ResolvedType>>>;
 
 thread_local! {
     /// When `Some`, `lookup_diagnostic_scope` will consult this map.
@@ -286,7 +287,7 @@ pub(crate) fn lookup_diagnostic_scope(var_name: &str, offset: u32) -> Option<Vec
         // determined the variable has no known type here.  Return
         // empty rather than `None` so the caller treats the variable
         // as unresolved at this position.
-        let result = snap.get(var_name).cloned().unwrap_or_default();
+        let result = snap.get(&atom(var_name)).cloned().unwrap_or_default();
         Some(result)
     })
 }
@@ -471,7 +472,7 @@ fn walk_closures_in_expr<'b>(
             // without calling `resolve_variable_types`.
             let this_types = outer_scope.get("$this");
             if !this_types.is_empty() {
-                closure_scope.set("$this".to_string(), this_types.to_vec());
+                closure_scope.set("$this", this_types.to_vec());
             }
 
             // Seed with `use(...)` variables from the outer scope.
@@ -480,7 +481,7 @@ fn walk_closures_in_expr<'b>(
                     let var_name = use_var.variable.name.to_string();
                     let from_outer = outer_scope.get(&var_name);
                     if !from_outer.is_empty() {
-                        closure_scope.set(var_name, from_outer.to_vec());
+                        closure_scope.set(&var_name, from_outer.to_vec());
                     }
                 }
             }
@@ -1000,7 +1001,7 @@ fn seed_closure_params(
         }
 
         if !param_results.is_empty() {
-            scope.seed(pname, param_results);
+            scope.seed(&pname, param_results);
         }
     }
 }
@@ -1024,7 +1025,10 @@ fn infer_callable_params_from_function_fw(
 ) -> Vec<PhpType> {
     let scope_locals = &scope.locals;
     let scope_resolver = |var_name: &str| -> Vec<ResolvedType> {
-        scope_locals.get(var_name).cloned().unwrap_or_default()
+        scope_locals
+            .get(&atom(var_name))
+            .cloned()
+            .unwrap_or_default()
     };
     let var_ctx = ctx.var_ctx_for_with_scope("$__infer", ctx.cursor_offset, &scope_resolver);
     let rctx = var_ctx.as_resolution_ctx();
@@ -1070,7 +1074,10 @@ fn infer_callable_params_from_receiver_fw(
     let obj_text = ctx.content[start..end].trim();
     let scope_locals = &scope.locals;
     let scope_resolver = |var_name: &str| -> Vec<ResolvedType> {
-        scope_locals.get(var_name).cloned().unwrap_or_default()
+        scope_locals
+            .get(&atom(var_name))
+            .cloned()
+            .unwrap_or_default()
     };
     let var_ctx = ctx.var_ctx_for_with_scope("$__infer", obj_start, &scope_resolver);
     let rctx = var_ctx.as_resolution_ctx();
@@ -1553,7 +1560,7 @@ fn seed_this(scope: &mut ScopeState, current_class: &ClassInfo) {
         return;
     }
     scope.set(
-        "$this".to_string(),
+        "$this",
         vec![ResolvedType::from_class(current_class.clone())],
     );
 }
@@ -1791,54 +1798,56 @@ pub(crate) struct ScopeState {
     /// current program point.  Every variable that has been assigned,
     /// declared as a parameter, or bound by a foreach/catch before the
     /// current statement has an entry here.
-    pub locals: HashMap<String, Vec<ResolvedType>>,
+    pub locals: AtomMap<Vec<ResolvedType>>,
 }
 
 impl ScopeState {
     /// Create an empty scope.
     pub fn new() -> Self {
         Self {
-            locals: HashMap::new(),
+            locals: AtomMap::default(),
         }
     }
 
     /// Look up a variable's types.  Returns an empty slice when the
     /// variable has not been assigned.
     pub fn get(&self, var_name: &str) -> &[ResolvedType] {
-        self.locals.get(var_name).map_or(&[], |v| v.as_slice())
+        self.locals
+            .get(&atom(var_name))
+            .map_or(&[], |v| v.as_slice())
     }
 
     /// Check whether a variable exists in scope (even if its type list is empty).
     pub fn contains(&self, var_name: &str) -> bool {
-        self.locals.contains_key(var_name)
+        self.locals.contains_key(&atom(var_name))
     }
 
     /// Insert or overwrite a variable's types.
-    pub fn set(&mut self, var_name: String, types: Vec<ResolvedType>) {
+    pub fn set(&mut self, var_name: &str, types: Vec<ResolvedType>) {
         if types.is_empty() {
             return;
         }
-        self.locals.insert(var_name, types);
+        self.locals.insert(atom(var_name), types);
     }
 
     /// Record that a variable exists in scope with an empty type list.
     /// This prevents the variable from appearing unseen by the forward
     /// walker.
-    pub fn set_empty(&mut self, var_name: String) {
-        self.locals.entry(var_name).or_default();
+    pub fn set_empty(&mut self, var_name: &str) {
+        self.locals.entry(atom(var_name)).or_default();
     }
 
     /// Insert a variable's types from parameter seeding.
-    pub fn seed(&mut self, var_name: String, types: Vec<ResolvedType>) {
+    pub fn seed(&mut self, var_name: &str, types: Vec<ResolvedType>) {
         if types.is_empty() {
             return;
         }
-        self.locals.insert(var_name, types);
+        self.locals.insert(atom(var_name), types);
     }
 
     /// Remove a variable (e.g. after `unset($x)`).
     pub fn remove(&mut self, var_name: &str) {
-        self.locals.remove(var_name);
+        self.locals.remove(&atom(var_name));
     }
 
     /// Merge another scope into `self`.
@@ -1857,7 +1866,7 @@ impl ScopeState {
     /// post-merge scope and pollute subsequent narrowing operations.
     pub fn merge_branch(&mut self, other: &ScopeState) {
         for (name, other_types) in &other.locals {
-            let entry = self.locals.entry(name.clone()).or_default();
+            let entry = self.locals.entry(*name).or_default();
             ResolvedType::extend_unique(entry, other_types.clone());
 
             // Remove entries whose type is subsumed by a broader entry.
@@ -1905,7 +1914,7 @@ fn simplify_class_hierarchy_unions(
     scope: &mut ScopeState,
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
 ) {
-    let keys: Vec<String> = scope.locals.keys().cloned().collect();
+    let keys: Vec<Atom> = scope.locals.keys().copied().collect();
     for key in keys {
         let types = match scope.locals.get(&key) {
             Some(t) if t.len() == 2 => t,
@@ -1999,7 +2008,7 @@ pub(crate) struct ForwardWalkCtx<'a> {
     /// Pre-computed top-level scope for resolving `global` variable imports.
     /// When a function body contains `global $x;`, the walker looks up
     /// `$x` in this map to seed the local scope with the top-level type.
-    pub top_level_scope: Option<HashMap<String, Vec<ResolvedType>>>,
+    pub top_level_scope: Option<AtomMap<Vec<ResolvedType>>>,
 }
 
 impl<'a> ForwardWalkCtx<'a> {
@@ -2625,7 +2634,7 @@ fn seed_params<'b>(
                     vec![ResolvedType::from_type_string(effective)]
                 };
 
-                scope.seed(pname, results);
+                scope.seed(&pname, results);
                 continue;
             }
         }
@@ -2641,12 +2650,12 @@ fn seed_params<'b>(
         );
 
         if !param_results.is_empty() {
-            scope.seed(pname, param_results);
+            scope.seed(&pname, param_results);
         } else {
             // Seed untyped parameters with empty types so they exist
             // in scope.  This allows instanceof narrowing to find them
             // (apply_condition_narrowing iterates scope.locals.keys()).
-            scope.set_empty(pname);
+            scope.set_empty(&pname);
         }
     }
 }
@@ -2947,13 +2956,13 @@ fn process_statement<'b>(
                 if let Variable::Direct(dv) = var {
                     let var_name = dv.name.to_string();
                     if let Some(top_scope) = &ctx.top_level_scope {
-                        if let Some(types) = top_scope.get(&var_name) {
-                            scope.set(var_name, types.clone());
+                        if let Some(types) = top_scope.get(&atom(&var_name)) {
+                            scope.set(&var_name, types.clone());
                         } else {
-                            scope.set_empty(var_name);
+                            scope.set_empty(&var_name);
                         }
                     } else {
-                        scope.set_empty(var_name);
+                        scope.set_empty(&var_name);
                     }
                 }
             }
@@ -3082,7 +3091,7 @@ fn process_increment_decrement<'b>(
     } || current_type.is_subtype_of(&PhpType::Named("numeric-string".into()));
     if is_numeric_like {
         scope.set(
-            var_name,
+            &var_name,
             vec![ResolvedType::from_type_string(PhpType::Union(vec![
                 PhpType::int(),
                 PhpType::float(),
@@ -3093,7 +3102,7 @@ fn process_increment_decrement<'b>(
         // (e.g. "a" → "b"), so the result is still a string but no
         // longer the same literal value.  Widen to `string`.
         scope.set(
-            var_name,
+            &var_name,
             vec![ResolvedType::from_type_string(PhpType::string())],
         );
     }
@@ -3187,7 +3196,7 @@ fn record_match_ternary_snapshots<'b>(
             // truthiness/null narrowing is too broad and can produce
             // incorrect scope snapshots for arbitrary ternaries.
             let has_instanceof = {
-                let var_names: Vec<String> = scope.locals.keys().cloned().collect();
+                let var_names: Vec<Atom> = scope.locals.keys().copied().collect();
                 var_names.iter().any(|vn| {
                     narrowing::try_extract_instanceof(conditional.condition, vn).is_some()
                         || narrowing::try_extract_compound_or_instanceof(conditional.condition, vn)
@@ -3330,7 +3339,7 @@ fn apply_cursor_ternary_narrowing<'b>(
             // Check if the condition contains an instanceof check for
             // any variable currently in scope.
             let has_instanceof = {
-                let var_names: Vec<String> = scope.locals.keys().cloned().collect();
+                let var_names: Vec<Atom> = scope.locals.keys().copied().collect();
                 var_names.iter().any(|vn| {
                     narrowing::try_extract_instanceof(conditional.condition, vn).is_some()
                         || narrowing::try_extract_instanceof_with_negation(
@@ -3679,7 +3688,7 @@ fn try_process_inline_var_override<'b>(
                 continue;
             }
             let resolved = resolve_type_to_resolved_types(php_type, ctx);
-            scope.set(var_name.clone(), resolved);
+            scope.set(var_name, resolved);
         }
         // After processing the immediate docblock, scan backwards for
         // additional standalone docblocks that precede it.  This handles
@@ -3744,14 +3753,14 @@ fn try_process_inline_var_override<'b>(
                 }
 
                 let var_name = dv.name.to_string();
-                scope.set(var_name, resolved);
+                scope.set(&var_name, resolved);
                 // Scan for preceding docblocks.
                 apply_preceding_var_docblocks(&trimmed[..doc_start], scope, ctx);
                 return VarOverrideResult::NoVar;
             }
         } else if let Expression::Variable(Variable::Direct(dv)) = expr {
             let var_name = dv.name.to_string();
-            scope.set(var_name, resolved);
+            scope.set(&var_name, resolved);
             apply_preceding_var_docblocks(&trimmed[..doc_start], scope, ctx);
             return VarOverrideResult::NoVar;
         }
@@ -3777,7 +3786,7 @@ fn resolve_rhs_native_type(
 ) -> Option<PhpType> {
     let scope_snapshot = scope.locals.clone();
     let scope_resolver = move |vn: &str| -> Vec<ResolvedType> {
-        scope_snapshot.get(vn).cloned().unwrap_or_default()
+        scope_snapshot.get(&atom(vn)).cloned().unwrap_or_default()
     };
     let var_ctx = ctx.var_ctx_for_with_scope("$__rhs_check", 0, &scope_resolver);
     super::resolution::extract_native_type_from_rhs(rhs, &var_ctx)
@@ -3804,7 +3813,7 @@ fn apply_preceding_var_docblocks(before: &str, scope: &mut ScopeState, ctx: &For
         }
         for (var_name, php_type) in &vars {
             let resolved = resolve_type_to_resolved_types(php_type, ctx);
-            scope.set(var_name.clone(), resolved);
+            scope.set(var_name, resolved);
         }
         remaining = remaining[..doc_start].trim_end();
     }
@@ -3986,7 +3995,7 @@ fn process_assignment_expr<'b>(
                         .unwrap_or_else(PhpType::array);
                     if !base_type.is_array_shape() {
                         let merged = super::resolution::merge_push_type(&base_type, &value_type);
-                        scope.set(var_name, vec![ResolvedType::from_type_string(merged)]);
+                        scope.set(&var_name, vec![ResolvedType::from_type_string(merged)]);
                     }
                 }
             }
@@ -4031,9 +4040,9 @@ fn process_assignment_expr<'b>(
             }
         }
         if !rhs_types.is_empty() {
-            scope.set(lhs_name, rhs_types);
+            scope.set(&lhs_name, rhs_types);
         } else if !scope.contains(&lhs_name) {
-            scope.set_empty(lhs_name);
+            scope.set_empty(&lhs_name);
         }
     }
 }
@@ -4096,7 +4105,7 @@ fn process_compound_assignment<'b>(
         AssignmentOperator::Assign(_) => return, // already handled
     };
 
-    scope.set(var_name, vec![ResolvedType::from_type_string(result_type)]);
+    scope.set(&var_name, vec![ResolvedType::from_type_string(result_type)]);
 }
 
 /// Unwrap parenthesized expressions to their inner expression.
@@ -4410,7 +4419,10 @@ fn resolve_rhs_with_scope<'b>(
     let dummy_var = "$__rhs";
     let scope_locals = &scope.locals;
     let scope_resolver = |var_name: &str| -> Vec<ResolvedType> {
-        scope_locals.get(var_name).cloned().unwrap_or_default()
+        scope_locals
+            .get(&atom(var_name))
+            .cloned()
+            .unwrap_or_default()
     };
     let var_ctx = ctx.var_ctx_for_with_scope(dummy_var, rhs_offset, &scope_resolver);
 
@@ -4610,7 +4622,10 @@ fn resolve_rhs_via_subject(
 ) -> Vec<ResolvedType> {
     let scope_snapshot = scope.locals.clone();
     let scope_resolver = move |var_name: &str| -> Vec<ResolvedType> {
-        scope_snapshot.get(var_name).cloned().unwrap_or_default()
+        scope_snapshot
+            .get(&atom(var_name))
+            .cloned()
+            .unwrap_or_default()
     };
     let var_ctx = ctx.var_ctx_for_with_scope("$__rhs_subject", 0, &scope_resolver);
     let rctx = var_ctx.as_resolution_ctx();
@@ -4638,7 +4653,10 @@ fn process_destructuring_assignment<'b>(
 ) {
     let scope_snapshot = scope.locals.clone();
     let scope_resolver = |var_name: &str| -> Vec<ResolvedType> {
-        scope_snapshot.get(var_name).cloned().unwrap_or_default()
+        scope_snapshot
+            .get(&atom(var_name))
+            .cloned()
+            .unwrap_or_default()
     };
 
     // Build a temporary VarResolutionCtx just to resolve the RHS type.
@@ -4739,7 +4757,7 @@ fn bind_destructured_pattern<'b>(
                     } else {
                         vec![ResolvedType::from_type_string(vt.clone())]
                     };
-                    scope.set(dv.name.to_string(), resolved_types);
+                    scope.set(dv.name, resolved_types);
                 }
             }
             // Nested pattern: recurse with the extracted element type.
@@ -4793,18 +4811,21 @@ fn process_array_key_assignment<'b>(
         if let Some(keys) = all_string_keys {
             let merged =
                 super::resolution::merge_nested_shape_keys(&base_type, &keys, &value_php_type);
-            scope.set(base_name, vec![ResolvedType::from_type_string(merged)]);
+            scope.set(&base_name, vec![ResolvedType::from_type_string(merged)]);
         } else if key_chain.len() == 1 && !base_type.is_array_shape() {
             let rhs_offset = assignment.span().start.offset;
             let scope_locals = &scope.locals;
             let scope_resolver = |var_name: &str| -> Vec<ResolvedType> {
-                scope_locals.get(var_name).cloned().unwrap_or_default()
+                scope_locals
+                    .get(&atom(var_name))
+                    .cloned()
+                    .unwrap_or_default()
             };
             let rhs_ctx = ctx.var_ctx_for_with_scope("$__idx", rhs_offset, &scope_resolver);
             let key_php_type = super::resolution::infer_array_key_type(key_chain[0], &rhs_ctx);
             let merged =
                 super::resolution::merge_keyed_type(&base_type, &key_php_type, &value_php_type);
-            scope.set(base_name, vec![ResolvedType::from_type_string(merged)]);
+            scope.set(&base_name, vec![ResolvedType::from_type_string(merged)]);
         }
     }
 }
@@ -4827,12 +4848,15 @@ fn process_pass_by_ref<'b>(
     // types like `Type &$param`).
     let scope_snapshot = scope.locals.clone();
     let scope_resolver = |var_name: &str| -> Vec<ResolvedType> {
-        scope_snapshot.get(var_name).cloned().unwrap_or_default()
+        scope_snapshot
+            .get(&atom(var_name))
+            .cloned()
+            .unwrap_or_default()
     };
 
     // Collect all variable names that appear as arguments in this
     // expression, including ones not yet in scope.
-    let mut all_var_names: Vec<String> = scope.locals.keys().cloned().collect();
+    let mut all_var_names: Vec<String> = scope.locals.keys().map(|k| k.to_string()).collect();
     for arg_var in extract_call_arg_variables(expr) {
         if !all_var_names.contains(&arg_var) {
             all_var_names.push(arg_var);
@@ -4859,7 +4883,7 @@ fn process_pass_by_ref<'b>(
         let mut results = before.clone();
         super::resolution::try_apply_pass_by_reference_type(expr, &var_ctx, &mut results, false);
         if results.len() != before.len() {
-            scope.set(var_name.clone(), results);
+            scope.set(&var_name, results);
         }
     }
 
@@ -4892,7 +4916,7 @@ fn seed_superglobals(scope: &mut ScopeState) {
         "$_SESSION",
         "$GLOBALS",
     ] {
-        scope.set(name.to_string(), array_type.clone());
+        scope.set(name, array_type.clone());
     }
 }
 
@@ -5108,7 +5132,7 @@ fn seed_pass_by_ref_primitives<'b>(
         {
             if let Some(type_hint) = &param.type_hint {
                 scope.set(
-                    var_name,
+                    &var_name,
                     vec![ResolvedType::from_type_string(type_hint.clone())],
                 );
             } else {
@@ -5118,7 +5142,7 @@ fn seed_pass_by_ref_primitives<'b>(
                 // array accesses like `$matches[1]` don't fall through
                 // to the backward scanner.
                 scope.set(
-                    var_name,
+                    &var_name,
                     vec![ResolvedType::from_type_string(PhpType::Named(
                         "array".to_string(),
                     ))],
@@ -5198,12 +5222,12 @@ fn process_assert_narrowing<'b>(
                     );
                     if !resolved.is_empty() {
                         scope.set(
-                            var_name,
+                            &var_name,
                             ResolvedType::from_classes_with_hint(resolved, PhpType::Named(name)),
                         );
                     } else {
                         scope.set(
-                            var_name,
+                            &var_name,
                             vec![ResolvedType::from_type_string(PhpType::Named(name))],
                         );
                     }
@@ -5215,9 +5239,12 @@ fn process_assert_narrowing<'b>(
     // Apply assert narrowing to each variable in scope.
     let scope_snapshot = scope.locals.clone();
     let scope_resolver = |var_name: &str| -> Vec<ResolvedType> {
-        scope_snapshot.get(var_name).cloned().unwrap_or_default()
+        scope_snapshot
+            .get(&atom(var_name))
+            .cloned()
+            .unwrap_or_default()
     };
-    let var_names: Vec<String> = scope.locals.keys().cloned().collect();
+    let var_names: Vec<Atom> = scope.locals.keys().copied().collect();
     for var_name in var_names {
         let var_ctx = VarResolutionCtx {
             var_name: &var_name,
@@ -5253,9 +5280,9 @@ fn process_assert_narrowing<'b>(
                 // UnresolvableClass)).  Explicitly clear the variable so
                 // that diagnostics see "unknown type" and suppress false
                 // positives.  `scope.set()` is a no-op for empty vecs.
-                scope.locals.insert(var_name.clone(), vec![]);
+                scope.locals.insert(var_name, vec![]);
             } else {
-                scope.set(var_name.clone(), results);
+                scope.set(&var_name, results);
             }
         }
     }
@@ -6031,7 +6058,7 @@ fn process_foreach<'b>(foreach: &'b Foreach<'b>, scope: &mut ScopeState, ctx: &F
                 && doc_var == *vn
             {
                 let resolved = resolve_type_to_resolved_types(&php_type, ctx);
-                scope.set(vn.clone(), resolved);
+                scope.set(vn, resolved);
             }
         }
     }
@@ -6210,7 +6237,10 @@ fn resolve_foreach_expr_via_subject<'b>(
     // Build a ResolutionCtx from the forward walker's context.
     let scope_snapshot = scope.locals.clone();
     let scope_resolver = move |var_name: &str| -> Vec<ResolvedType> {
-        scope_snapshot.get(var_name).cloned().unwrap_or_default()
+        scope_snapshot
+            .get(&atom(var_name))
+            .cloned()
+            .unwrap_or_default()
     };
     let var_ctx = ctx.var_ctx_for_with_scope("$__foreach", expr_span.start.offset, &scope_resolver);
     let rctx = var_ctx.as_resolution_ctx();
@@ -6298,11 +6328,11 @@ fn bind_foreach_value<'b>(
                 );
                 if !resolved.is_empty() {
                     scope.set(
-                        var_name,
+                        &var_name,
                         ResolvedType::from_classes_with_hint(resolved, vt.clone()),
                     );
                 } else {
-                    scope.set(var_name, vec![ResolvedType::from_type_string(vt.clone())]);
+                    scope.set(&var_name, vec![ResolvedType::from_type_string(vt.clone())]);
                 }
                 return;
             }
@@ -6327,12 +6357,12 @@ fn bind_foreach_value<'b>(
                 );
                 if !resolved.is_empty() {
                     scope.set(
-                        var_name.clone(),
+                        &var_name,
                         ResolvedType::from_classes_with_hint(resolved, element_type),
                     );
                 } else {
                     scope.set(
-                        var_name.clone(),
+                        &var_name,
                         vec![ResolvedType::from_type_string(element_type)],
                     );
                 }
@@ -6356,11 +6386,11 @@ fn bind_foreach_value<'b>(
                             );
                         if !resolved.is_empty() {
                             scope.set(
-                                var_name,
+                                &var_name,
                                 ResolvedType::from_classes_with_hint(resolved, vt.clone()),
                             );
                         } else {
-                            scope.set(var_name, vec![ResolvedType::from_type_string(vt.clone())]);
+                            scope.set(&var_name, vec![ResolvedType::from_type_string(vt.clone())]);
                         }
                         return;
                     }
@@ -6377,12 +6407,12 @@ fn bind_foreach_value<'b>(
                             );
                         if !resolved.is_empty() {
                             scope.set(
-                                var_name.clone(),
+                                &var_name,
                                 ResolvedType::from_classes_with_hint(resolved, element_type),
                             );
                         } else {
                             scope.set(
-                                var_name.clone(),
+                                &var_name,
                                 vec![ResolvedType::from_type_string(element_type)],
                             );
                         }
@@ -6396,7 +6426,7 @@ fn bind_foreach_value<'b>(
         // `Some(vec![])` instead of `None`, preventing a pointless
         // fallthrough to the backward scanner.
         if !scope.contains(&var_name) {
-            scope.set_empty(var_name);
+            scope.set_empty(&var_name);
         }
     } else if let Expression::Array(_) | Expression::List(_) = value_expr {
         // Array/list destructuring in foreach: `foreach ($items as [$a, $b])`
@@ -6474,11 +6504,11 @@ fn bind_foreach_value<'b>(
                     );
                     if !resolved.is_empty() {
                         scope.set(
-                            var_name,
+                            &var_name,
                             ResolvedType::from_classes_with_hint(resolved, vt.clone()),
                         );
                     } else {
-                        scope.set(var_name, vec![ResolvedType::from_type_string(vt.clone())]);
+                        scope.set(&var_name, vec![ResolvedType::from_type_string(vt.clone())]);
                     }
                 }
             }
@@ -6610,18 +6640,18 @@ fn bind_foreach_key<'b>(
                 );
                 if !resolved.is_empty() {
                     scope.set(
-                        var_name,
+                        &var_name,
                         ResolvedType::from_classes_with_hint(resolved, kt.clone()),
                     );
                 } else {
-                    scope.set(var_name, vec![ResolvedType::from_type_string(kt.clone())]);
+                    scope.set(&var_name, vec![ResolvedType::from_type_string(kt.clone())]);
                 }
                 return;
             }
         }
         // Default: key is int|string.
         scope.set(
-            var_name,
+            &var_name,
             vec![ResolvedType::from_type_string(PhpType::Union(vec![
                 PhpType::int(),
                 PhpType::string(),
@@ -6944,7 +6974,7 @@ fn process_try<'b>(try_stmt: &'b Try<'b>, scope: &mut ScopeState, ctx: &ForwardW
                 // catch variable.
                 *scope = pre_try_scope.clone();
                 if !exception_types.is_empty() {
-                    scope.set(var_name, exception_types);
+                    scope.set(&var_name, exception_types);
                 }
             } else {
                 *scope = pre_try_scope.clone();
@@ -6986,7 +7016,7 @@ fn process_try<'b>(try_stmt: &'b Try<'b>, scope: &mut ScopeState, ctx: &ForwardW
             );
             let exception_types = ResolvedType::from_classes_with_hint(resolved, parsed_hint);
             if !exception_types.is_empty() {
-                catch_scope.set(var_name, exception_types);
+                catch_scope.set(&var_name, exception_types);
             }
         }
         walk_body_forward(catch.block.statements.iter(), &mut catch_scope, ctx);
@@ -7096,9 +7126,10 @@ fn apply_condition_narrowing<'b>(
     // all `&&` operands.  This prevents later operands from overwriting
     // earlier ones when both narrow the same variable.
     let scope_snapshot = scope.locals.clone();
-    let scope_resolver =
-        |vn: &str| -> Vec<ResolvedType> { scope_snapshot.get(vn).cloned().unwrap_or_default() };
-    let mut var_names: Vec<String> = scope.locals.keys().cloned().collect();
+    let scope_resolver = |vn: &str| -> Vec<ResolvedType> {
+        scope_snapshot.get(&atom(vn)).cloned().unwrap_or_default()
+    };
+    let mut var_names: Vec<String> = scope.locals.keys().map(|k| k.to_string()).collect();
     // Include variables from instanceof conditions that may not be in
     // scope yet (e.g. undeclared variables used in instanceof checks).
     for name in collect_condition_var_names(condition) {
@@ -7156,7 +7187,7 @@ fn apply_condition_narrowing<'b>(
                     // null — `!$x instanceof Foo` is true when $x is
                     // null, so null stays in the union.  No stripping.
                     if !results.is_empty() {
-                        scope.set(var_name.clone(), results);
+                        scope.set(var_name, results);
                     }
                 } else {
                     // Positive instanceof: resolve and accumulate into
@@ -7191,7 +7222,7 @@ fn apply_condition_narrowing<'b>(
             let existing = scope.get(&var_name);
             if existing.is_empty() {
                 // Untyped variable — instanceof provides the type.
-                scope.set(var_name, narrowed);
+                scope.set(&var_name, narrowed);
             } else {
                 // When the existing type is entirely `mixed` or
                 // `object`, instanceof replaces it — there is no
@@ -7204,7 +7235,7 @@ fn apply_condition_narrowing<'b>(
                         )
                 });
                 if all_broad {
-                    scope.set(var_name, narrowed);
+                    scope.set(&var_name, narrowed);
                     continue;
                 }
 
@@ -7258,9 +7289,9 @@ fn apply_condition_narrowing<'b>(
                         .filter(|rt| !rt.type_string.is_null())
                         .collect();
                     if filtered.is_empty() {
-                        scope.set(var_name, narrowed);
+                        scope.set(&var_name, narrowed);
                     } else {
-                        scope.set(var_name, filtered);
+                        scope.set(&var_name, filtered);
                     }
                 } else {
                     // No overlap between existing and narrowed types.
@@ -7295,16 +7326,16 @@ fn apply_condition_narrowing<'b>(
                     // `apply_narrowing`'s `None => true` rule.
                     results.retain(|rt| !rt.type_string.is_null());
                     if !results.is_empty() {
-                        scope.set(var_name, results);
+                        scope.set(&var_name, results);
                     } else {
                         // Fallback: use the narrowed types directly.
-                        scope.set(var_name, narrowed);
+                        scope.set(&var_name, narrowed);
                     }
                 }
             }
         } else {
             // Empty narrowed list means the target was unresolvable.
-            scope.locals.insert(var_name, vec![]);
+            scope.locals.insert(atom(&var_name), vec![]);
         }
     }
 
@@ -7335,13 +7366,14 @@ fn apply_condition_narrowing_inverse_single<'b>(
     seed_property_keys_into_scope(condition, scope, ctx);
 
     let scope_snapshot = scope.locals.clone();
-    let scope_resolver =
-        |vn: &str| -> Vec<ResolvedType> { scope_snapshot.get(vn).cloned().unwrap_or_default() };
+    let scope_resolver = |vn: &str| -> Vec<ResolvedType> {
+        scope_snapshot.get(&atom(vn)).cloned().unwrap_or_default()
+    };
     // Include variables from instanceof conditions that may not be in
     // scope yet (e.g. `if (!$foobar instanceof Foobar) { break; }`
     // where `$foobar` was never assigned).  After the guard clause,
     // `$foobar` must be `Foobar`.
-    let mut var_names: Vec<String> = scope.locals.keys().cloned().collect();
+    let mut var_names: Vec<String> = scope.locals.keys().map(|k| k.to_string()).collect();
     for name in collect_condition_var_names(condition) {
         if !var_names.contains(&name) {
             var_names.push(name);
@@ -7366,7 +7398,7 @@ fn apply_condition_narrowing_inverse_single<'b>(
                 });
             }
             if !results.is_empty() {
-                scope.set(var_name.clone(), results);
+                scope.set(var_name, results);
             }
             continue;
         }
@@ -7401,7 +7433,7 @@ fn apply_condition_narrowing_inverse_single<'b>(
                 });
             }
             if !results.is_empty() {
-                scope.set(var_name.clone(), results);
+                scope.set(var_name, results);
             }
         }
     }
@@ -7477,14 +7509,15 @@ fn apply_in_array_narrowing<'b>(
     inverted: bool,
 ) {
     let scope_snapshot = scope.locals.clone();
-    let scope_resolver =
-        |vn: &str| -> Vec<ResolvedType> { scope_snapshot.get(vn).cloned().unwrap_or_default() };
+    let scope_resolver = |vn: &str| -> Vec<ResolvedType> {
+        scope_snapshot.get(&atom(vn)).cloned().unwrap_or_default()
+    };
 
     // Unwrap parentheses and detect negation.
     let (inner, negated) = narrowing::unwrap_condition_negation(condition);
 
     // Check every variable in scope as the potential needle.
-    let var_names: Vec<String> = scope.locals.keys().cloned().collect();
+    let var_names: Vec<Atom> = scope.locals.keys().copied().collect();
     for var_name in &var_names {
         if let Some(haystack_expr) = narrowing::try_extract_in_array(inner, var_name) {
             // Resolve the haystack's type from the scope to extract the
@@ -7527,7 +7560,7 @@ fn apply_in_array_narrowing<'b>(
             }
 
             if !results.is_empty() {
-                scope.set(var_name.clone(), results);
+                scope.set(var_name, results);
             }
         }
     }
@@ -7571,8 +7604,9 @@ fn resolve_in_array_element_type_fw(
     // For non-variable expressions (method calls, property access, etc.),
     // try resolving via the expression resolution pipeline.
     let scope_snapshot = scope.locals.clone();
-    let scope_resolver =
-        |vn: &str| -> Vec<ResolvedType> { scope_snapshot.get(vn).cloned().unwrap_or_default() };
+    let scope_resolver = |vn: &str| -> Vec<ResolvedType> {
+        scope_snapshot.get(&atom(vn)).cloned().unwrap_or_default()
+    };
     let var_ctx = build_var_ctx("", ctx, &scope_resolver);
     let raw_type =
         crate::completion::variable::resolution::resolve_arg_raw_type(haystack_expr, &var_ctx);
@@ -7610,8 +7644,9 @@ fn apply_phpstan_assert_condition_narrowing<'b>(
     let function_returned_true = !(inverted ^ condition_negated);
 
     let scope_snapshot = scope.locals.clone();
-    let scope_resolver =
-        |vn: &str| -> Vec<ResolvedType> { scope_snapshot.get(vn).cloned().unwrap_or_default() };
+    let scope_resolver = |vn: &str| -> Vec<ResolvedType> {
+        scope_snapshot.get(&atom(vn)).cloned().unwrap_or_default()
+    };
 
     // Try to extract assertion info from function calls and static method calls.
     match call {
@@ -7663,7 +7698,7 @@ fn apply_phpstan_assert_condition_narrowing<'b>(
                         });
                     }
                     if !results.is_empty() {
-                        scope.set(arg_var, results);
+                        scope.set(&arg_var, results);
                     }
                 }
             }
@@ -7733,7 +7768,7 @@ fn apply_phpstan_assert_condition_narrowing<'b>(
                         });
                     }
                     if !results.is_empty() {
-                        scope.set(arg_var, results);
+                        scope.set(&arg_var, results);
                     }
                 }
             }
@@ -7818,7 +7853,7 @@ fn apply_phpstan_assert_condition_narrowing<'b>(
                     });
                 }
                 if !results.is_empty() {
-                    scope.set(target_var, results);
+                    scope.set(&target_var, results);
                 }
             }
         }
@@ -7884,7 +7919,7 @@ fn apply_type_guard_on_operands(condition: &Expression<'_>, scope: &mut ScopeSta
     // Decompose `&&` chains so that `is_object($x) && is_string($y)`
     // applies both guards.
     let operands = collect_and_chain_operands(condition);
-    let mut var_names: Vec<String> = scope.locals.keys().cloned().collect();
+    let mut var_names: Vec<String> = scope.locals.keys().map(|k| k.to_string()).collect();
     // Include property access keys from conditions (e.g. `$a->foo`
     // from `is_string($a->foo)`) so they can be narrowed.
     for key in collect_condition_property_keys(condition) {
@@ -7908,7 +7943,7 @@ fn apply_type_guard_on_operands(condition: &Expression<'_>, scope: &mut ScopeSta
                         narrowing::apply_type_guard_exclusion(kind, &mut results);
                     }
                     if !results.is_empty() {
-                        scope.set(var_name.clone(), results);
+                        scope.set(var_name, results);
                     }
                 }
             }
@@ -8182,7 +8217,7 @@ fn narrow_to_null_in_scope(var_name: &str, scope: &mut ScopeState) {
         .any(|rt| rt.type_string.non_null_type().is_some() || rt.type_string.is_null());
     if has_null {
         scope.set(
-            var_name.to_string(),
+            var_name,
             vec![ResolvedType::from_type_string(PhpType::null())],
         );
     }
@@ -8207,7 +8242,7 @@ fn strip_null_from_scope(var_name: &str, scope: &mut ScopeState) {
         .collect();
 
     if !stripped.is_empty() {
-        scope.set(var_name.to_string(), stripped);
+        scope.set(var_name, stripped);
     }
 }
 
@@ -8254,7 +8289,7 @@ fn strip_falsy_from_scope(var_name: &str, scope: &mut ScopeState) {
         .collect();
 
     if !stripped.is_empty() {
-        scope.set(var_name.to_string(), stripped);
+        scope.set(var_name, stripped);
     }
 }
 
@@ -8286,7 +8321,7 @@ fn strip_null_from_array_shape_key(base_var: &str, key_name: &str, scope: &mut S
             rt
         })
         .collect();
-    scope.set(base_var.to_string(), narrowed);
+    scope.set(base_var, narrowed);
 }
 
 /// Recursively strip `null` from a specific key in an array shape type.
@@ -8375,7 +8410,7 @@ fn process_condition_assignment<'b>(
         let var_name = dv.name.to_string();
         let rhs_types = resolve_rhs_with_scope(assignment.rhs, scope, ctx);
         if !rhs_types.is_empty() {
-            scope.set(var_name, rhs_types);
+            scope.set(&var_name, rhs_types);
         }
         return;
     }
@@ -8487,7 +8522,7 @@ fn seed_synthetic_key_if_needed(key: &str, scope: &mut ScopeState, ctx: &Forward
                 }
             }
             if !prop_results.is_empty() {
-                scope.set(key.to_string(), prop_results);
+                scope.set(key, prop_results);
             }
         }
     } else if is_array {
@@ -8527,7 +8562,7 @@ fn seed_synthetic_key_if_needed(key: &str, scope: &mut ScopeState, ctx: &Forward
                 }
             }
             if !key_results.is_empty() {
-                scope.set(key.to_string(), key_results);
+                scope.set(key, key_results);
             }
         }
     }
@@ -8676,7 +8711,7 @@ fn seed_property_keys_into_scope(
             }
 
             if !prop_results.is_empty() {
-                scope.set(key.clone(), prop_results);
+                scope.set(key, prop_results);
             }
         }
     }
@@ -8851,7 +8886,7 @@ fn try_enter_closure_expr<'b>(
                 // enclosing class method.
                 let this_types = scope.get("$this");
                 if !this_types.is_empty() {
-                    closure_scope.set("$this".to_string(), this_types.to_vec());
+                    closure_scope.set("$this", this_types.to_vec());
                 }
 
                 // Seed with `use(...)` variables from the outer scope.
@@ -8860,7 +8895,7 @@ fn try_enter_closure_expr<'b>(
                         let var_name = use_var.variable.name.to_string();
                         let from_outer = scope.get(&var_name);
                         if !from_outer.is_empty() {
-                            closure_scope.set(var_name, from_outer.to_vec());
+                            closure_scope.set(&var_name, from_outer.to_vec());
                         }
                     }
                 }

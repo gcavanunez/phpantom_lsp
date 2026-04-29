@@ -508,7 +508,7 @@ function testLiterals(): void
 {
 	assertType('int', identity(1)); // literal '1' → 'int'
 	assertType('string', identity('foo')); // literal '\'foo\'' → 'string'
-	assertType('bool', identity(true)); // literal 'true' → 'bool'
+	assertType('true', identity(true)); // literal 'true' preserved through template inference
 }
 
 // ============================================================

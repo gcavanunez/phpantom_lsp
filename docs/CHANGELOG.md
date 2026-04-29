@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Literal `true`/`false` preserved in template inference.** Passing `true` or `false` to a generic constructor now keeps the precise type as the template argument (e.g. `C<false>`) instead of widening to `bool`.
+
 - **False-positive diagnostics on startup.** Files opened while the project was still indexing could produce hundreds of spurious "class not found" and "function not found" errors. Diagnostics are now deferred until initialization completes.
 - **Chained instantiation preserves constructor-inferred generics.** Expressions like `(new Box(new Product()))->get()` and `new Box(new Product())->get()` now propagate template arguments inferred from constructor parameters to subsequent method calls, so `get()` returns the concrete type instead of `mixed`.
 - **`@method` tag resolution.** Colon return type syntax (`@method foo(): bool`), parenthesised return types (`@method (callable():string) foo()`, `@method (string|int)[] bar()`), and the ambiguous single-`static` pattern (`@method static getStatic()`) are now parsed correctly. Template parameters in `@method` return types are substituted through `@extends` and `@implements` annotations (e.g. `@method T get()` on a parent class resolves to the concrete type when a child declares `@extends Parent<string>`). `$this` return types on `@method` tags preserve generic arguments (e.g. `A<B>` when the receiver is `A<B>`).
@@ -102,6 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Lower memory usage for variable type tracking.** Scope snapshots used by the forward variable resolver now use interned strings for variable name keys, eliminating redundant heap allocations when cloning scope state at each statement boundary.
 - **Diagnostic delivery model reworked for pull/push coexistence.** Editors that support pull diagnostics now get diagnostics on first file open without waiting for a debounce timer. Each diagnostic source caches results independently, and updates from external tools no longer re-run the entire native diagnostic pipeline.
 - **Rewritten variable resolver.** Variable type resolution now uses a single top-to-bottom pass through each function body with zero recursion and no depth limit.
 - **Broader type narrowing.** `instanceof`, type-guard functions, `in_array()` strict mode, `assert()`, `@phpstan-assert-if-true`/`-if-false`, and compound `&&`/`||` conditions now narrow types in if/else branches, guard clauses, while-loop bodies, ternary expressions, and `match(true)` arms.

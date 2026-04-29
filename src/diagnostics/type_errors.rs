@@ -681,6 +681,13 @@ fn is_refined_scalar_pair(arg: &PhpType, param: &PhpType) -> bool {
                 | "non-negative-int"
                 | "non-positive-int"
                 | "non-zero-int"
+        ) | (
+            // bool *might* be true or false at runtime — we can't
+            // prove otherwise from the type alone.  This arises when
+            // template inference narrows a parameter to `true` or
+            // `false` (e.g. Conditionable::when(true, …)).
+            "bool" | "boolean",
+            "true" | "false"
         )
     )
 }

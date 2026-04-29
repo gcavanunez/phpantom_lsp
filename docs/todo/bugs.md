@@ -30,11 +30,9 @@ Remaining gaps:
   do not infer key/value types separately.
 - **`key-of<T>` and indexed access types** (`T[K]`): advanced type
   operators not yet supported.
-- **Literal `false` preserved as template argument**: currently
-  widened to `bool`.
 
 **Tests:** SKIPs in `tests/psalm_assertions/template_class_template_extends.php`
-(lines 177, 227, 427, 500, 681-682, 737-738, 843 (namespace), 1087).
+(lines 177, 227, 427, 500, 681-682, 737-738, 843 (namespace)).
 
 
 ## B14. Template/generic resolution in namespace-level and complex scenarios

@@ -1084,7 +1084,7 @@ namespace PsalmTest_template_class_template_extends_24 {
     assertType('RealE', $resultB);
     assertType('c1<RealE>', $c1);
     assertType('RealE', $resultC1);
-    assertType('c2<RealE, false>', $c2); // SKIP — literal false not preserved as template argument, widened to bool
+    assertType('c2<RealE, false>', $c2);
     assertType('RealE', $resultC2);
     assertType('c3<Secondary, RealE>', $c3);
     assertType('RealE|Secondary', $resultC3);

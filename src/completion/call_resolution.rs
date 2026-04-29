@@ -2547,9 +2547,14 @@ fn resolve_literal_type(text: &str) -> Option<PhpType> {
         return Some(PhpType::null());
     }
 
-    // Boolean literals
-    if text.eq_ignore_ascii_case("true") || text.eq_ignore_ascii_case("false") {
-        return Some(PhpType::Named("bool".to_string()));
+    // Boolean literals — preserve true/false as distinct types so that
+    // template argument inference keeps the precise type (e.g. `C<false>`
+    // instead of widening to `C<bool>`).
+    if text.eq_ignore_ascii_case("true") {
+        return Some(PhpType::true_());
+    }
+    if text.eq_ignore_ascii_case("false") {
+        return Some(PhpType::false_());
     }
 
     // Array literals: [...] or array(...)

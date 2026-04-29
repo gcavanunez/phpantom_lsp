@@ -29,6 +29,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::atom::AtomMap;
+
 use crate::Backend;
 use crate::docblock;
 use crate::inheritance::resolve_property_type_hint;
@@ -203,7 +205,7 @@ pub(crate) struct VarResolutionCtx<'a> {
     /// Pre-computed top-level scope for resolving `global` variable imports.
     /// When a function body contains `global $x;`, the walker looks up
     /// `$x` in this map to seed the local scope with the top-level type.
-    pub top_level_scope: Option<HashMap<String, Vec<crate::types::ResolvedType>>>,
+    pub top_level_scope: Option<AtomMap<Vec<crate::types::ResolvedType>>>,
     /// Legacy flag: historically selected branch-aware resolution for
     /// hover vs union-all resolution for completion.  The forward
     /// walker now inherently produces position-accurate types, so both
