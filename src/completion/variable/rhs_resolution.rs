@@ -3374,6 +3374,7 @@ fn resolve_rhs_property_access(
                     ResolvedType::into_arced_classes(resolve_rhs_expression(obj, ctx))
                 };
 
+            let mut all_resolved: Vec<ResolvedType> = Vec::new();
             for owner in &owner_classes {
                 let resolved = resolve_property_with_hint(
                     &prop_name,
@@ -3382,9 +3383,17 @@ fn resolve_rhs_property_access(
                     all_classes,
                     class_loader,
                 );
-                if !resolved.is_empty() {
-                    return resolved;
+                for rt in resolved {
+                    if !all_resolved
+                        .iter()
+                        .any(|existing| existing.type_string == rt.type_string)
+                    {
+                        all_resolved.push(rt);
+                    }
                 }
+            }
+            if !all_resolved.is_empty() {
+                return all_resolved;
             }
         }
     }

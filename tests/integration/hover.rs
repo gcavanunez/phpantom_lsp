@@ -10547,3 +10547,36 @@ class Demo {
         text
     );
 }
+
+#[test]
+fn hover_property_through_or_instanceof() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class PropA {
+    /** @var int */
+    public $foo = 0;
+}
+class PropB {
+    /** @var string */
+    public $foo = "";
+}
+
+/** @var PropA|PropB|null $a */
+$a = null;
+$b = null;
+
+if ($a instanceof PropA || $a instanceof PropB) {
+    $b = $a->foo;
+}
+"#;
+
+    // Hover on `foo` in `$a->foo` (line 15, char 14)
+    let hover = hover_at(&backend, uri, content, 15, 14).expect("expected hover");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("int") && text.contains("string"),
+        "should contain both int and string from union property: {}",
+        text
+    );
+}

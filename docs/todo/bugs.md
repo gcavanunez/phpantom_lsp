@@ -157,20 +157,6 @@ resolution:
 (lines 59, 79, 95-96).
 
 
-## B18. Property type narrowing through OR'd `instanceof`
-
-**Discovered:** SKIP audit of
-`tests/psalm_assertions/property_type.php`.
-
-When a property is accessed after an OR'd `instanceof` check
-(`$a instanceof B || $a instanceof C`), the property type should
-be the union of both branches. Currently only one branch's type
-is used.
-
-**Tests:** SKIPs in `tests/psalm_assertions/property_type.php`
-(lines 24, 51).
-
-
 ## B19. Return type resolution edge cases
 
 **Discovered:** SKIP audit of

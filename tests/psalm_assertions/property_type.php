@@ -21,7 +21,7 @@ namespace PsalmTest_property_type_1 {
         $b = $a->foo;
     }
 
-    assertType('int|null|string', $b); // SKIP — type narrowing through OR'd instanceof doesn't merge both branch property types
+    assertType('int|null|string', $b);
 }
 
 // Test: sharedPropertyInElseIf
@@ -48,7 +48,7 @@ namespace PsalmTest_property_type_2 {
         $b = $a->foo;
     }
 
-    assertType('int|null|string', $b); // SKIP — type narrowing through elseif OR'd instanceof doesn't merge both branch property types
+    assertType('int|null|string', $b);
 }
 
 // Test: grandparentReflectedProperties
