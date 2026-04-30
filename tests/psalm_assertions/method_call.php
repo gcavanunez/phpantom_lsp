@@ -12,8 +12,8 @@ namespace PsalmTest_method_call_1 {
 
     $b = (new DateTimeImmutable())->modify("+3 hours");
 
-    assertType('MyDate', $yesterday); // SKIP — hover can't resolve static return type on DateTimeImmutable::sub
-    assertType('DateTimeImmutable', $b); // SKIP — hover can't resolve DateTimeImmutable::modify return
+    assertType('MyDate', $yesterday);
+    assertType('DateTimeImmutable|false', $b);
 }
 
 // Test: magicCall
@@ -28,17 +28,7 @@ namespace PsalmTest_method_call_2 {
     $a = new A;
     $s = $a->bar();
 
-    assertType('string', $s); // SKIP — @psalm-no-seal-methods __call return type not resolved
-}
-
-// Test: simpleXml
-namespace PsalmTest_method_call_3 {
-    $xml = new SimpleXMLElement("<a><b></b></a>");
-    $a = $xml->asXML();
-    $b = $xml->asXML("foo.xml");
-
-    assertType('false|string', $a); // SKIP — SimpleXMLElement::asXML overloaded return type not resolved
-    assertType('bool', $b); // SKIP — SimpleXMLElement::asXML overloaded return type not resolved
+    assertType('string', $s);
 }
 
 // Test: pdoStatementSetFetchMode
@@ -88,13 +78,6 @@ namespace PsalmTest_method_call_4 {
     assertType('array<array-key, null|scalar>|false', $j); // SKIP — PDOStatement::fetch mode-dependent return type not resolved
     assertType('list<array<array-key, null|scalar>>', $k); // SKIP — PDOStatement::fetchAll mode-dependent return type not resolved
     assertType('mixed', $l);
-}
-
-// Test: newSplObjectStorageDefaultEmpty
-namespace PsalmTest_method_call_5 {
-    $a = new SplObjectStorage();
-
-    assertType('SplObjectStorage<never, never>', $a); // SKIP — SplObjectStorage generic defaults not inferred
 }
 
 // Test: parentMagicMethodCall

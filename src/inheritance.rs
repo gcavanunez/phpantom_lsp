@@ -659,7 +659,8 @@ pub(crate) fn resolve_property_type_hint(
     if let Some(p) = class.properties.iter().find(|p| p.name == prop_name)
         && p.type_hint.is_some()
     {
-        return p.type_hint.clone();
+        let hint = p.type_hint.clone().unwrap();
+        return Some(replace_self_in_property_type(hint, class));
     }
     let cache = crate::virtual_members::active_resolved_class_cache();
     let merged =
@@ -670,7 +671,7 @@ pub(crate) fn resolve_property_type_hint(
         .find(|p| p.name == prop_name)
         .and_then(|p| p.type_hint.clone())
     {
-        return Some(hint);
+        return Some(replace_self_in_property_type(hint, class));
     }
 
     // Fallback: if the class has a `__get` method with method-level
@@ -678,6 +679,19 @@ pub(crate) fn resolve_property_type_hint(
     // `@template K as key-of<TData>` / `@return TData[K]`), infer K
     // from the property name and evaluate the indexed access.
     resolve_magic_get_return_type(&merged, prop_name)
+}
+
+/// Replace `self`/`static`/`$this` references in a property type with
+/// the owning class's fully qualified name.
+///
+/// Skips replacement for synthetic classes (like `__object_shape`) where
+/// `self` refers to the caller's context, not the synthetic class itself.
+fn replace_self_in_property_type(ty: PhpType, class: &ClassInfo) -> PhpType {
+    if ty.contains_self_ref() && !class.name.starts_with("__") {
+        ty.replace_self(&class.fqn())
+    } else {
+        ty
+    }
 }
 
 /// Try to resolve a property access through a `__get` magic method that
@@ -702,11 +716,18 @@ fn resolve_magic_get_return_type(class: &ClassInfo, prop_name: &str) -> Option<P
         .iter()
         .find(|m| m.name.eq_ignore_ascii_case("__get"))?;
 
-    // Only proceed if __get has method-level template params and a return type.
-    if get_method.template_params.is_empty() {
-        return None;
-    }
     let return_type = get_method.return_type.as_ref()?;
+
+    // When __get has no template params, return the declared return type
+    // directly (with self/static resolved to the owning class).
+    if get_method.template_params.is_empty() {
+        let resolved = if return_type.contains_self_ref() {
+            return_type.replace_self(&class.fqn())
+        } else {
+            return_type.clone()
+        };
+        return Some(resolved);
+    }
 
     // Build a substitution map: for each method-level template parameter,
     // try to infer its value from the property name being accessed.

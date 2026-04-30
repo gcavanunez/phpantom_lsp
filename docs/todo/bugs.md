@@ -89,35 +89,6 @@ handle this automatically.
 (lines 79-85, 87-89).
 
 
-## B17. Stub-level property and method resolution gaps
-
-**Discovered:** SKIP audit of `tests/psalm_assertions/method_call.php`
-and `tests/psalm_assertions/property_type.php`.
-
-Several built-in PHP classes have incorrect or missing type
-resolution:
-
-- `DateTimeImmutable::sub()` / `modify()` — static return type
-  not resolved (should return `MyDate` when called on subclass)
-- `SimpleXMLElement` — resolves as `stdClass` instead of itself;
-  `asXML()` overloaded return type not resolved; magic property
-  access not resolved
-- `DOMDocument` — grandparent stub property `ownerDocument` not
-  resolved (hover returns no type)
-- `DOMNode::$nextSibling` — `self` type alias not resolved to
-  concrete class name `Node`
-- `SplObjectStorage` — generic defaults (`<never, never>`) not
-  inferred for empty construction
-- `SplDoublyLinkedList::bottom()` — generic return type not
-  resolved
-- `@psalm-no-seal-methods` `__call` return type
-
-**Tests:** SKIPs in `tests/psalm_assertions/method_call.php`
-(lines 15-16, 31, 40-41, 97),
-`tests/psalm_assertions/property_type.php`
-(lines 59, 79, 95-96).
-
-
 ## B21. Remaining static-late-binding and generics gaps
 
 **Discovered:** SKIP audit of

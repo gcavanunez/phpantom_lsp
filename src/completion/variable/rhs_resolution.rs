@@ -2701,7 +2701,11 @@ fn resolve_rhs_method_call_inner<'b>(
                 Some(mm)
             }
             (Some(om), _) => Some(om),
-            (None, mm) => mm,
+            (None, Some(mm)) => Some(mm),
+            (None, None) => {
+                // Method not found — fall back to __call's return type.
+                merged.get_method_ci("__call")
+            }
         };
         let ret_type_string = method_ref.and_then(|m| m.return_type.as_ref()).map(|ret| {
             let substituted = if !template_subs.is_empty() {

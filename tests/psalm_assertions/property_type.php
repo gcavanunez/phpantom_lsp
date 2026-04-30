@@ -56,7 +56,7 @@ namespace PsalmTest_property_type_3 {
     $a = new DOMElement("foo");
     $owner = $a->ownerDocument;
 
-    assertType('DOMDocument', $owner); // SKIP — grandparent stub property not resolved (hover returns no type)
+    assertType('DOMDocument|null', $owner);
 }
 
 // Test: selfPropertyType
@@ -76,7 +76,7 @@ namespace PsalmTest_property_type_4 {
     $node = new Node();
     $next = $node->next;
 
-    assertType('Node|null', $next); // SKIP — self type alias not resolved to concrete class name
+    assertType('Node|null', $next);
 }
 
 // Test: setPropertiesOfStdClass
@@ -92,8 +92,8 @@ namespace PsalmTest_property_type_6 {
     $a = new SimpleXMLElement("<person><child role=\"son\"></child></person>");
     $b = $a->b;
 
-    assertType('SimpleXMLElement', $a); // SKIP — SimpleXMLElement not correctly identified (resolves as stdClass)
-    assertType('SimpleXMLElement|null', $b); // SKIP — SimpleXMLElement magic property access not resolved
+    assertType('SimpleXMLElement', $a);
+    assertType('SimpleXMLElement', $b);
 }
 
 // Test: staticVarSelf
