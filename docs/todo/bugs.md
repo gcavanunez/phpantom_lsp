@@ -70,13 +70,13 @@ only by this infrastructure limitation.
 **Discovered:** SKIP audit of `tests/psalm_assertions/loop_do.php`,
 `loop_while.php`, `loop_foreach.php`.
 
-After a loop exits (via condition failure or break), the variable
-type is not properly narrowed. Examples:
+After a loop exits (via condition failure or break), some variable
+types are not properly narrowed. Remaining issues:
 
-- `do { $a = getA(); } while ($a !== null);` — after the loop,
-  `$a` should be `null` but resolves to `A|null`
-- `while ($a = getA()) { ... }` — after the loop, `$a` should
-  be narrowed by the falsy exit condition
+- Cross-namespace class resolution in multi-namespace test files:
+  when multiple namespaces define a class `A`, property type
+  resolution picks up the wrong class, preventing nullable
+  propagation through the loop
 - `foreach` loop variable not narrowed away from initial `null`
   after non-empty iteration
 - Break-in-else branch type not merged with loop variable
@@ -86,8 +86,8 @@ type is not properly narrowed. Examples:
 Related to T20 (type narrowing reconciliation engine) and T29
 (definite vs possible variable existence tracking).
 
-**Tests:** SKIPs in `tests/psalm_assertions/loop_do.php` (lines
-63, 80), `loop_while.php` (lines 39, 91, 115, 152),
+**Tests:** SKIPs in `tests/psalm_assertions/loop_do.php` (line 80),
+`loop_while.php` (lines 91, 115, 152),
 `loop_foreach.php` (lines 81, 128, 156, 188, 208).
 
 

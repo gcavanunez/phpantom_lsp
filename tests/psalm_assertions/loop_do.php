@@ -60,7 +60,7 @@ namespace PsalmTest_loop_do_3 {
         $a = $a->a;
     } while ($a);
 
-    assertType('null', $a); // SKIP — got A|null, loop exit type not narrowed
+    assertType('null', $a);
 }
 
 // Test: doWhileWithMethodCall
@@ -77,6 +77,6 @@ namespace PsalmTest_loop_do_4 {
         $a = $a->getParent();
     } while ($a);
 
-    assertType('null', $a); // SKIP — got A, loop exit type not narrowed
+    assertType('null', $a); // SKIP — cross-namespace class resolution: A resolves to wrong namespace
 }
 

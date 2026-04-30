@@ -88,7 +88,7 @@ namespace PsalmTest_loop_while_4 {
         $a = $a->parent;
     }
 
-    assertType('null', $a); // SKIP
+    assertType('null', $a); // SKIP — cross-namespace class resolution: A resolves to wrong namespace
 }
 
 // Test: objectValueWithAnd
@@ -149,6 +149,6 @@ namespace PsalmTest_loop_while_7 {
       $a = $a->a;
     };
 
-    assertType('null', $a); // SKIP
+    assertType('null', $a); // SKIP — cross-namespace class resolution: A resolves to wrong namespace
 }
 

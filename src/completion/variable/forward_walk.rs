@@ -1867,7 +1867,36 @@ impl ScopeState {
     pub fn merge_branch(&mut self, other: &ScopeState) {
         for (name, other_types) in &other.locals {
             let entry = self.locals.entry(*name).or_default();
-            ResolvedType::extend_unique(entry, other_types.clone());
+
+            // Merge other_types into entry.  When an incoming entry
+            // shares a class name with an existing entry but has a
+            // broader type_string (e.g. `?A` vs `A`), widen the
+            // existing entry's type_string instead of discarding
+            // the incoming one.  This prevents post-loop merges from
+            // losing nullable information.
+            for rt in other_types.iter() {
+                let mut merged_into_existing = false;
+                if let Some(ref rt_cls) = rt.class_info {
+                    for existing in entry.iter_mut() {
+                        if let Some(ref ex_cls) = existing.class_info
+                            && ex_cls.name == rt_cls.name
+                        {
+                            // Same class.  If the incoming type is
+                            // broader, adopt it.
+                            if existing.type_string != rt.type_string
+                                && existing.type_string.is_subset_of(&rt.type_string)
+                            {
+                                existing.type_string = rt.type_string.clone();
+                            }
+                            merged_into_existing = true;
+                            break;
+                        }
+                    }
+                }
+                if !merged_into_existing {
+                    ResolvedType::push_unique(entry, rt.clone());
+                }
+            }
 
             // Remove entries whose type is subsumed by a broader entry.
             // E.g. `string|null` ⊆ `int|string|null` → drop the former.
@@ -6781,6 +6810,11 @@ fn process_while<'b>(while_stmt: &'b While<'b>, scope: &mut ScopeState, ctx: &Fo
     *scope = pre_loop_scope;
     scope.merge_branch(&post_loop);
 
+    // After the loop, the condition evaluated to false (that's why the
+    // loop exited).  Apply the inverse of the condition to narrow types.
+    // For example: `while ($a) { $a = $a->parent; }` => after loop, $a is null.
+    apply_condition_narrowing_inverse(while_stmt.condition, scope, ctx);
+
     // Remove synthetic property access keys that were seeded by
     // condition narrowing.  These represent narrowed types that only
     // hold inside the loop body (where the condition is true).
@@ -6933,6 +6967,12 @@ fn process_do_while<'b>(dw: &'b DoWhile<'b>, scope: &mut ScopeState, ctx: &Forwa
 
         walk_body_forward(std::iter::once(dw.statement), scope, ctx);
     }
+
+    // After the do-while loop, the condition evaluated to false (that's
+    // why the loop exited).  Apply the inverse of the condition to narrow
+    // types.  For example: `do { $a = getA(); } while ($a !== null);`
+    // => after loop, $a is null.
+    apply_condition_narrowing_inverse(dw.condition, scope, ctx);
 
     leave_loop(loop_depth);
 }
@@ -8034,6 +8074,12 @@ fn apply_null_narrowing_inverse<'b>(
     // $x is truthy — remove null.
     if let Some(var_name) = extract_falsy_check_var(condition) {
         strip_null_from_scope(&var_name, scope);
+    }
+    // When the condition is a bare `$x` (truthy check), the inverse means
+    // $x is falsy.  For nullable types (`T|null`), narrow to null.
+    // This handles `while ($a) { ... }` => after loop, $a is null.
+    if let Some(var_name) = expr_to_var_name(condition) {
+        narrow_to_null_in_scope(&var_name, scope);
     }
     // `isset($x)` — inverse (else) means $x was null: narrow to null.
     for var_name in extract_isset_vars(condition) {
