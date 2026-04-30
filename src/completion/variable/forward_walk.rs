@@ -4423,7 +4423,7 @@ fn resolve_rhs_with_scope<'b>(
                             .collect();
                         PhpType::ObjectShape(widened)
                     }
-                    Some(ref ty) if matches!(ty, PhpType::Named(s) if matches!(s.to_ascii_lowercase().as_str(), "int" | "integer" | "string" | "float" | "double" | "bool" | "boolean")) => {
+                    Some(ref ty) if matches!(ty, PhpType::Named(s) if matches!(s.to_ascii_lowercase().as_str(), "int" | "integer" | "string" | "float" | "double" | "real" | "bool" | "boolean")) => {
                         PhpType::ObjectShape(vec![ShapeEntry {
                             key: Some("scalar".to_string()),
                             value_type: ty.clone(),

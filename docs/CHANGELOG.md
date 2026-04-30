@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Foreach narrowing with break in else.** When a foreach body contained an `if` with an `else { break; }` branch, the variable state from the break path was not included in the post-loop type, causing the merged type to be too narrow.
 - **Foreach element type from untyped arrays.** Variables bound in a `foreach` over an untyped `array` (e.g. from a function returning bare `array`) now resolve to `mixed` instead of empty, so assignments from the loop variable propagate correctly.
 - **Foreach target type after non-empty literal array.** When iterating a non-empty literal array such as `["a", "b", "c"]`, the pre-loop sentinel value of the target variable (e.g. `null` from `$tag = null`) no longer survives as a possible post-loop type.
+- **Object cast type inference.** `(object)$scalar` now resolves to `object{scalar:T}` and `(object)$array` resolves to an object shape matching the array's keys, instead of bare `stdClass`.
 
 ### Changed
 

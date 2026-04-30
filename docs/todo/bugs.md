@@ -117,7 +117,6 @@ resolution:
 (lines 59, 79, 95-96).
 
 
-
 ## B21. Remaining static-late-binding and generics gaps
 
 **Discovered:** SKIP audit of
