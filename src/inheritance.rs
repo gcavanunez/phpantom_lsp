@@ -552,6 +552,36 @@ pub(crate) fn resolve_class_with_inheritance(
         current = ClassRef::Owned(parent);
     }
 
+    // 3. Enrich methods from implemented interfaces.
+    //    When a class overrides an interface method without a return type,
+    //    propagate the interface method's return type (with template
+    //    substitution from `@implements` generics).
+    for iface_name in &class.interfaces {
+        let Some(iface) = class_loader(iface_name) else {
+            continue;
+        };
+
+        // Build substitution map from @implements/@template-implements generics.
+        let iface_subs =
+            build_substitution_map(&ClassRef::Borrowed(class), &iface, &HashMap::new());
+
+        for method in &iface.methods {
+            // Only enrich methods that the class already has (i.e. overrides).
+            if let Some(existing) = merged
+                .methods
+                .make_mut()
+                .iter_mut()
+                .find(|m| m.name == method.name)
+            {
+                let mut ancestor_method = (**method).clone();
+                if !iface_subs.is_empty() {
+                    apply_substitution_to_method(&mut ancestor_method, &iface_subs);
+                }
+                enrich_method_from_ancestor(Arc::make_mut(existing), &ancestor_method);
+            }
+        }
+    }
+
     // Refine the `value` property on backed enums.  The `BackedEnum`
     // interface declares `public readonly int|string $value`, but each
     // concrete backed enum knows its specific backing type.  Replace

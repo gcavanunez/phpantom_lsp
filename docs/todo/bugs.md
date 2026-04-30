@@ -17,22 +17,30 @@ to second-guess upstream output.
 `tests/psalm_assertions/template_class_template_extends.php`.
 
 Constructor generic inference through inherited constructors,
-case-insensitive method lookup, and function-level `@template`
-inference through generic wrapper params are now fixed.
+case-insensitive method lookup, function-level `@template`
+inference through generic wrapper params, and function name
+resolution in multi-namespace files are now fixed.
 Remaining gaps:
 
-- **Multi-namespace class shadowing in `IteratorAggregate` resolution**:
-  When a multi-namespace file defines a class like `SomeIterator` in
-  an earlier namespace, resolving `getIterator()` return type
-  `ArrayIterator<K, V>` may pick up the wrong class.
+- **Multi-namespace file class/function shadowing**: class names
+  from earlier namespaces leak into later namespaces in single-file
+  tests, causing wrong resolution. Works correctly in real projects.
 - **Method-level `@template` with `key-of<T>` bound and `T[K]` return**:
   `key-of<T>`, `value-of<T>`, and `T[K]` now evaluate correctly after
   class-level template substitution. However, inferring a method-level
   template parameter `K` from a string literal argument (to resolve
   `T[K]` at a specific call site) is not yet supported.
+- **`__get` magic method template resolution**: `$foo->a` on a class
+  using `__get` with `@template K as key-of<TData>` / `@return TData[K]`
+  does not infer `K` from the property name.
+- **`@template-implements` return type inheritance from stub interfaces**:
+  when a class implements a stub-loaded interface (e.g. `IteratorAggregate`)
+  with `@template-implements Interface<T>` and overrides a method without
+  a return type, the interface method's substituted return type is not
+  propagated. Works correctly for same-file interfaces.
 
 **Tests:** SKIPs in `tests/psalm_assertions/template_class_template_extends.php`
-(lines 427, 500, 682, 980, 981).
+(lines 427, 500, 682, 737-738, 843, 980-981).
 
 
 ## B14. Template/generic resolution in namespace-level and complex scenarios

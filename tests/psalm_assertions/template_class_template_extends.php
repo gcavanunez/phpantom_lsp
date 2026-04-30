@@ -424,7 +424,7 @@ namespace PsalmTest_template_class_template_extends_10 {
 
     $i = (new SomeIterator())->getIterator();
 
-    assertType('Traversable<int, Foo>', $i); // SKIP — getIterator return type not inferred from @template-implements IteratorAggregate
+    assertType('Traversable<int, Foo>', $i); // SKIP — stub-loaded interface (IteratorAggregate) template resolution not propagating to child method
 }
 
 // Test: extendClassThatParameterizesTemplatedParent
