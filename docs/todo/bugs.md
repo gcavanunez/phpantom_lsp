@@ -25,14 +25,17 @@ Remaining gaps:
   function names in namespaced code are not resolved to their FQN,
   so function-level template inference fails in single-file tests
   with multiple namespaces. Works correctly in real projects.
-- **`array<TKey, TValue>` constructor inference**: multi-arg array
-  generic params in constructors (e.g. `@param array<TKey,TValue> $kv`)
-  do not infer key/value types separately.
-- **`key-of<T>` and indexed access types** (`T[K]`): advanced type
-  operators not yet supported.
+- **Method-level `@template` with `key-of<T>` bound and `T[K]` return**:
+  `key-of<T>`, `value-of<T>`, and `T[K]` now evaluate correctly after
+  class-level template substitution. However, inferring a method-level
+  template parameter `K` from a string literal argument (to resolve
+  `T[K]` at a specific call site) is not yet supported.
+- **`__get` magic method template resolution**: `$foo->a` on a class
+  using `__get` with `@template K as key-of<TData>` / `@return TData[K]`
+  does not infer `K` from the property name.
 
 **Tests:** SKIPs in `tests/psalm_assertions/template_class_template_extends.php`
-(lines 177, 227, 427, 500, 681-682, 737-738, 843 (namespace)).
+(lines 177, 227, 427, 500, 682, 737-738, 843 (namespace)).
 
 
 ## B14. Template/generic resolution in namespace-level and complex scenarios

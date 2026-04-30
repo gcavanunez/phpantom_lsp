@@ -678,8 +678,8 @@ namespace PsalmTest_template_class_template_extends_16 {
     $c = new C(["a" => 1]);
     $i = $c->getIterator();
 
-    assertType('C<string, int>', $c); // SKIP — constructor generic inference not propagating array key/value types
-    assertType('ArrayIterator<string, int>', $i); // SKIP — ArrayObject::getIterator not substituting template params from @template-extends
+    assertType('C<string, int>', $c);
+    assertType('ArrayIterator<string, int>', $i); // SKIP — multi-namespace file: SomeIterator from another namespace shadows ArrayIterator resolution
 }
 
 // Test: keyOfClassTemplateExtended

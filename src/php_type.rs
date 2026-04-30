@@ -2068,14 +2068,21 @@ impl PhpType {
                 PhpType::InterfaceString(inner.as_ref().map(|t| Box::new(t.substitute(subs))))
             }
 
-            PhpType::KeyOf(inner) => PhpType::KeyOf(Box::new(inner.substitute(subs))),
+            PhpType::KeyOf(inner) => {
+                let resolved = inner.substitute(subs);
+                evaluate_key_of(&resolved)
+            }
 
-            PhpType::ValueOf(inner) => PhpType::ValueOf(Box::new(inner.substitute(subs))),
+            PhpType::ValueOf(inner) => {
+                let resolved = inner.substitute(subs);
+                evaluate_value_of(&resolved)
+            }
 
-            PhpType::IndexAccess(base, index) => PhpType::IndexAccess(
-                Box::new(base.substitute(subs)),
-                Box::new(index.substitute(subs)),
-            ),
+            PhpType::IndexAccess(base, index) => {
+                let resolved_base = base.substitute(subs);
+                let resolved_index = index.substitute(subs);
+                evaluate_index_access(&resolved_base, &resolved_index)
+            }
         }
     }
 
@@ -4087,6 +4094,126 @@ fn flatten_intersection(ty: &ast::Type<'_>) -> Vec<PhpType> {
 }
 
 // ---------------------------------------------------------------------------
+// Type operator evaluation (key-of, value-of, T[K])
+// ---------------------------------------------------------------------------
+
+/// Evaluate `key-of<T>` when `T` is a concrete array or shape type.
+///
+/// - `key-of<array{a: int, b: string}>` → `'a'|'b'`
+/// - `key-of<array<string, mixed>>` → `string`
+/// - `key-of<list<T>>` → `int`
+/// - Otherwise returns `key-of<T>` unchanged.
+fn evaluate_key_of(resolved: &PhpType) -> PhpType {
+    match resolved {
+        PhpType::ArrayShape(entries) => {
+            let keys: Vec<PhpType> = entries
+                .iter()
+                .filter_map(|e| e.key.as_ref())
+                .map(|k| PhpType::Literal(k.clone()))
+                .collect();
+            match keys.len() {
+                0 => PhpType::Named("never".to_string()),
+                1 => keys.into_iter().next().unwrap(),
+                _ => PhpType::Union(keys),
+            }
+        }
+        PhpType::Generic(name, args) => {
+            let n = name.to_ascii_lowercase();
+            match n.as_str() {
+                "array" | "non-empty-array" if args.len() == 2 => args[0].clone(),
+                "array" | "non-empty-array" if args.len() == 1 => PhpType::Named("int".to_string()),
+                "list" | "non-empty-list" => PhpType::Named("int".to_string()),
+                _ => PhpType::KeyOf(Box::new(resolved.clone())),
+            }
+        }
+        PhpType::Array(_) => PhpType::Named("int".to_string()),
+        _ => PhpType::KeyOf(Box::new(resolved.clone())),
+    }
+}
+
+/// Evaluate `value-of<T>` when `T` is a concrete array or shape type.
+///
+/// - `value-of<array{a: int, b: string}>` → `int|string`
+/// - `value-of<array<string, User>>` → `User`
+/// - Otherwise returns `value-of<T>` unchanged.
+fn evaluate_value_of(resolved: &PhpType) -> PhpType {
+    match resolved {
+        PhpType::ArrayShape(entries) => {
+            let mut values: Vec<PhpType> = entries.iter().map(|e| e.value_type.clone()).collect();
+            values.dedup();
+            match values.len() {
+                0 => PhpType::Named("never".to_string()),
+                1 => values.into_iter().next().unwrap(),
+                _ => PhpType::Union(values),
+            }
+        }
+        PhpType::Generic(name, args) => {
+            let n = name.to_ascii_lowercase();
+            match n.as_str() {
+                "array" | "non-empty-array" if args.len() == 2 => args[1].clone(),
+                "array" | "non-empty-array" | "list" | "non-empty-list" if args.len() == 1 => {
+                    args[0].clone()
+                }
+                _ => PhpType::ValueOf(Box::new(resolved.clone())),
+            }
+        }
+        PhpType::Array(inner) => *inner.clone(),
+        _ => PhpType::ValueOf(Box::new(resolved.clone())),
+    }
+}
+
+/// Evaluate indexed access `T[K]` when both operands are concrete.
+///
+/// - `array{a: int, b: string}['a']` → `int`
+/// - `array{a: int, b: string}[key-of<...>]` → `int|string` (all values)
+/// - Otherwise returns `T[K]` unchanged.
+fn evaluate_index_access(base: &PhpType, index: &PhpType) -> PhpType {
+    if let PhpType::ArrayShape(entries) = base {
+        // If index is a literal string key, look it up directly.
+        if let PhpType::Literal(key) | PhpType::Named(key) = index {
+            for entry in entries {
+                if entry.key.as_deref() == Some(key.as_str()) {
+                    return entry.value_type.clone();
+                }
+            }
+        }
+        // If index is a union of literals, collect their value types.
+        if let PhpType::Union(members) = index {
+            let mut values: Vec<PhpType> = Vec::new();
+            for member in members {
+                if let PhpType::Literal(key) | PhpType::Named(key) = member {
+                    for entry in entries {
+                        if entry.key.as_deref() == Some(key.as_str())
+                            && !values.contains(&entry.value_type)
+                        {
+                            values.push(entry.value_type.clone());
+                        }
+                    }
+                }
+            }
+            if !values.is_empty() {
+                return match values.len() {
+                    1 => values.into_iter().next().unwrap(),
+                    _ => PhpType::Union(values),
+                };
+            }
+        }
+    }
+    // Generic array: T[K] where T is array<K2, V> → V
+    if let PhpType::Generic(name, args) = base {
+        let n = name.to_ascii_lowercase();
+        match n.as_str() {
+            "array" | "non-empty-array" if args.len() == 2 => return args[1].clone(),
+            "array" | "non-empty-array" | "list" | "non-empty-list" if args.len() == 1 => {
+                return args[0].clone();
+            }
+            _ => {}
+        }
+    }
+    PhpType::IndexAccess(Box::new(base.clone()), Box::new(index.clone()))
+}
+
+// ---------------------------------------------------------------------------
 // Display
 // ---------------------------------------------------------------------------
 
@@ -5929,7 +6056,7 @@ mod tests {
         let ty = PhpType::parse("key-of<T>");
         let subs = make_subs(&[("T", "array<string, int>")]);
         let result = ty.substitute(&subs);
-        assert_eq!(result.to_string(), "key-of<array<string, int>>");
+        assert_eq!(result.to_string(), "string");
     }
 
     #[test]
@@ -5937,7 +6064,7 @@ mod tests {
         let ty = PhpType::parse("value-of<T>");
         let subs = make_subs(&[("T", "array<string, User>")]);
         let result = ty.substitute(&subs);
-        assert_eq!(result.to_string(), "value-of<array<string, User>>");
+        assert_eq!(result.to_string(), "User");
     }
 
     #[test]
@@ -6023,7 +6150,7 @@ mod tests {
         let ty = PhpType::parse("T[K]");
         let subs = make_subs(&[("T", "array<string, int>"), ("K", "string")]);
         let result = ty.substitute(&subs);
-        assert_eq!(result.to_string(), "array<string, int>[string]");
+        assert_eq!(result.to_string(), "int");
     }
 
     #[test]

@@ -1404,6 +1404,17 @@ fn resolve_generic_wrapper_template(
     rctx: &crate::completion::resolver::ResolutionCtx<'_>,
     ctx: &VarResolutionCtx<'_>,
 ) -> Option<PhpType> {
+    // ── Built-in array-like types ───────────────────────────────
+    // `array`, `list`, `non-empty-array`, `non-empty-list` are not
+    // real classes — infer key/value types directly from the array
+    // literal argument.
+    if matches!(
+        wrapper_name,
+        "array" | "list" | "non-empty-array" | "non-empty-list"
+    ) {
+        return resolve_array_literal_generic(tpl_position, arg_text, rctx);
+    }
+
     // Load the wrapper class.
     let wrapper_cls = (ctx.class_loader)(wrapper_name)
         .map(Arc::unwrap_or_clone)
@@ -1437,6 +1448,75 @@ fn resolve_generic_wrapper_template(
     // look it up in the substitution map.
     let wrapper_tpl = wrapper_cls.template_params.get(tpl_position)?;
     wrapper_subs.get(wrapper_tpl.as_str()).cloned()
+}
+
+/// Infer a generic type argument from an array literal.
+///
+/// For `@param array<TKey, TValue> $kv` with argument `["a" => 1]`:
+/// - `tpl_position == 0` → key type (`string`)
+/// - `tpl_position == 1` → value type (`int`)
+///
+/// For single-param wrappers like `list<T>`, position 0 is the element type.
+fn resolve_array_literal_generic(
+    tpl_position: usize,
+    arg_text: &str,
+    rctx: &crate::completion::resolver::ResolutionCtx<'_>,
+) -> Option<PhpType> {
+    let trimmed = arg_text.trim();
+
+    // Must be an array literal.
+    let inner = if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        trimmed[1..trimmed.len() - 1].trim()
+    } else if let Some(s) = trimmed.strip_prefix("array(") {
+        s.strip_suffix(')')?.trim()
+    } else {
+        // Not an array literal — cannot infer.
+        return None;
+    };
+
+    if inner.is_empty() {
+        return Some(PhpType::never());
+    }
+
+    let elements = crate::completion::conditional_resolution::split_text_args(inner);
+
+    // Determine whether elements are key=>value pairs.
+    // Check the first element for `=>`.
+    let first = elements.first()?.trim();
+    let has_keys = first.contains("=>");
+
+    if has_keys {
+        // Collect key types (position 0) or value types (position 1)
+        // from the first element (sufficient for inference).
+        let arrow_pos = first.find("=>")?;
+        match tpl_position {
+            0 => {
+                let key_text = first[..arrow_pos].trim();
+                Backend::resolve_arg_text_to_type(key_text, rctx)
+            }
+            1 => {
+                let val_text = first[arrow_pos + 2..].trim();
+                Backend::resolve_arg_text_to_type(val_text, rctx)
+            }
+            _ => None,
+        }
+    } else {
+        // No keys — this is a list-style array.
+        // Position 0 in `array<T>` or `list<T>` is the element type.
+        // Position 0 in `array<TKey, TValue>` would be `int` (implicit key).
+        // Position 1 in `array<TKey, TValue>` is the element type.
+        match tpl_position {
+            0 => {
+                // Implicit integer keys.
+                Some(PhpType::Named("int".to_string()))
+            }
+            1 => {
+                // Element type from first element.
+                Backend::resolve_arg_text_to_type(first, rctx)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Resolve `$arr[0]` / `$arr[$key]` by extracting the generic element

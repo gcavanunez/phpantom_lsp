@@ -8847,3 +8847,240 @@ async fn test_bare_new_expression_chain_propagates_constructor_generics() {
         _ => panic!("Expected CompletionResponse::Array"),
     }
 }
+
+/// Constructor with `@param array<TKey, TValue> $kv` should infer key and
+/// value types from an array literal argument like `["a" => 1]`.
+#[tokio::test]
+async fn test_constructor_array_key_value_template_inference() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///array_kv_ctor.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @template TKey of array-key\n",
+        " * @template TValue\n",
+        " */\n",
+        "class TypedMap {\n",
+        "    /** @var array<TKey, TValue> */\n",
+        "    private $data;\n",
+        "    /** @param array<TKey, TValue> $data */\n",
+        "    public function __construct(array $data) { $this->data = $data; }\n",
+        "    /** @return TValue */\n",
+        "    public function first() { return reset($this->data); }\n",
+        "    /** @return TKey */\n",
+        "    public function firstKey() { return array_key_first($this->data); }\n",
+        "}\n",
+        "\n",
+        "class Product {\n",
+        "    public function getName(): string {}\n",
+        "}\n",
+        "\n",
+        "function demo() {\n",
+        "    $map = new TypedMap([\"a\" => new Product()]);\n",
+        "    $map->first()->\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 22,
+                character: 20,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getName"),
+                "array<TKey, TValue> constructor inference should resolve TValue\u{2192}Product, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// When a child class extends ArrayObject with `@template-extends \ArrayObject<TKey,TValue>`,
+/// calling `getIterator()` should return `ArrayIterator` with substituted template params,
+/// enabling completion on the iterator's methods like `current()`.
+#[tokio::test]
+async fn test_arrayobject_getiterator_template_substitution() {
+    let backend = create_test_backend_with_full_stubs();
+
+    let uri = Url::parse("file:///arrayobj_iter.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @template TKey of array-key\n",
+        " * @template TValue\n",
+        " * @template-extends \\ArrayObject<TKey,TValue>\n",
+        " */\n",
+        "class TypedArrayObject extends \\ArrayObject {\n",
+        "    /**\n",
+        "     * @param array<TKey,TValue> $kv\n",
+        "     */\n",
+        "    public function __construct(array $kv) {\n",
+        "        parent::__construct($kv);\n",
+        "    }\n",
+        "}\n",
+        "\n",
+        "class Product {\n",
+        "    public function getName(): string {}\n",
+        "}\n",
+        "\n",
+        "function demo() {\n",
+        "    $c = new TypedArrayObject([\"a\" => new Product()]);\n",
+        "    $iter = $c->getIterator();\n",
+        "    $iter->current()->\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Completion after $iter->current()->
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 22,
+                character: 24,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getName"),
+                "ArrayObject::getIterator()->current()-> should resolve through template-extends to Product, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
+
+/// `key-of<T>` and `value-of<T>` type operators evaluate after template
+/// substitution through `@extends`, enabling completion on the resolved type.
+#[tokio::test]
+async fn test_key_of_and_value_of_type_operators() {
+    let backend = create_test_backend();
+
+    let uri = Url::parse("file:///key_of_test.php").unwrap();
+    let text = concat!(
+        "<?php\n",
+        "/**\n",
+        " * @template TData as array\n",
+        " */\n",
+        "class DataBag {\n",
+        "    /** @var TData */\n",
+        "    protected $data;\n",
+        "    /** @param TData $data */\n",
+        "    public function __construct(array $data) { $this->data = $data; }\n",
+        "    /** @return value-of<TData> */\n",
+        "    public function firstValue() { return reset($this->data); }\n",
+        "}\n",
+        "\n",
+        "class User {\n",
+        "    public function getName(): string {}\n",
+        "}\n",
+        "\n",
+        "/** @extends DataBag<array{name: string, user: User}> */\n",
+        "class MyBag extends DataBag {}\n",
+        "\n",
+        "function demo() {\n",
+        "    $bag = new MyBag(['name' => 'test', 'user' => new User()]);\n",
+        "    $bag->firstValue()->\n",
+        "}\n",
+    );
+
+    let open_params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: text.to_string(),
+        },
+    };
+    backend.did_open(open_params).await;
+
+    // Line 22: `    $bag->firstValue()->`
+    let completion_params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 22,
+                character: 26,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result = backend.completion(completion_params).await.unwrap();
+    assert!(result.is_some(), "Completion should return results");
+
+    match result.unwrap() {
+        CompletionResponse::Array(items) => {
+            let method_names: Vec<&str> = items
+                .iter()
+                .filter(|i| i.kind == Some(CompletionItemKind::METHOD))
+                .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+                .collect();
+
+            assert!(
+                method_names.contains(&"getName"),
+                "value-of<TData> should evaluate to string|User after @extends substitution, got: {:?}",
+                method_names
+            );
+        }
+        _ => panic!("Expected CompletionResponse::Array"),
+    }
+}
