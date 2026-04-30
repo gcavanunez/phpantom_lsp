@@ -111,29 +111,6 @@ handle this automatically.
 (lines 79-85, 87-89).
 
 
-## B22. Remove redundant stub patches after upstream merge
-
-**Blocked on:** [phpstorm-stubs#1883](https://github.com/JetBrains/phpstorm-stubs/pull/1883)
-
-Most class patches in `stub_patches.rs` are now redundant because
-phpstorm-stubs already has the `@template` and `@template-implements`
-annotations for `ArrayObject`, `SplDoublyLinkedList`, `SplStack`,
-`SplPriorityQueue`, `SplFixedArray`, `SplObjectStorage`, and
-`WeakMap`. The upstream PR adds the remaining missing annotations:
-
-- `ArrayIterator` — `@template TKey of array-key`, `@template TValue`,
-  `@template-implements SeekableIterator<TKey, TValue>`,
-  `@template-implements ArrayAccess<TKey, TValue>`
-- `SplQueue` — `@template-extends SplDoublyLinkedList<TValue>`
-- `array_reduce` — `@template TCarry`, `@template TValue`,
-  `@return TCarry`
-
-Once merged and our embedded stubs are updated, remove all patches
-from `stub_patches.rs` that are covered by the upstream annotations.
-Verify with the test suite that the stubs' own annotations produce
-the same results.
-
-
 ## B17. Stub-level property and method resolution gaps
 
 **Discovered:** SKIP audit of `tests/psalm_assertions/method_call.php`

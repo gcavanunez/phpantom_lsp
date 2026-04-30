@@ -1041,18 +1041,20 @@ function test() {
         }
     };
 
-    // Provide a function loader that returns a patched array_reduce
-    // FunctionInfo (with @template TReturn bound to $initial),
-    // matching what the real backend produces after stub patches.
+    // Provide a function loader that returns array_reduce with
+    // @template TCarry, @param TCarry $initial, @return TCarry
+    // (matching what the real backend parses from the upstream stubs).
     let func_loader = |name: &str| -> Option<crate::types::FunctionInfo> {
         if name.eq_ignore_ascii_case("array_reduce") {
-            let mut fi = stub_function_info(name, Some(PhpType::mixed()));
+            let mut fi = stub_function_info(name, Some(PhpType::Named("TCarry".to_string())));
             fi.parameters = vec![
                 crate::test_fixtures::make_param("$array", Some("array"), true),
                 crate::test_fixtures::make_param("$callback", Some("callable"), true),
-                crate::test_fixtures::make_param("$initial", Some("mixed"), false),
+                crate::test_fixtures::make_param("$initial", Some("TCarry"), false),
             ];
-            crate::stub_patches::apply_function_stub_patches(&mut fi);
+            fi.template_params = vec![crate::atom::atom("TCarry"), crate::atom::atom("TValue")];
+            fi.template_bindings =
+                vec![(crate::atom::atom("TCarry"), crate::atom::atom("$initial"))];
             Some(fi)
         } else {
             None

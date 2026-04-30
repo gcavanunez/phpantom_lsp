@@ -47,10 +47,12 @@ interface BackedEnum extends UnitEnum
 static ARRAY_FUNC_STUB: &str = "\
 <?php
 /**
- * @param array $array
- * @param callable $callback
- * @param mixed $initial
- * @return mixed
+ * @template TCarry
+ * @template TValue
+ * @param array<TValue> $array
+ * @param callable(TCarry, TValue): TCarry $callback
+ * @param TCarry $initial
+ * @return TCarry
  */
 function array_reduce(array $array, callable $callback, mixed $initial = null): mixed {}
 

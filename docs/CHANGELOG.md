@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Updated embedded phpstorm-stubs.** Generic annotations for `ArrayIterator`, `ArrayObject`, `SplDoublyLinkedList`, `SplQueue`, `SplStack`, `SplPriorityQueue`, `SplFixedArray`, `SplObjectStorage`, and `array_reduce` are now provided by upstream stubs directly, removing the need for runtime patches.
+
 ### Added
 
 - **Argument type mismatch diagnostics.** Flags function and method calls where an argument's resolved type is incompatible with the declared parameter type.
