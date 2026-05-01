@@ -140,11 +140,13 @@ pub fn extract_template_params_full_from_info(
                 // `split_type_token`-based parsing that respects `<>` nesting.
                 let rest = desc[name.len()..].trim_start();
 
-                // Check for an `of` bound: `@template T of SomeClass`
-                let (bound, rest_after_bound) = if let Some(after_of) =
-                    rest.strip_prefix("of").and_then(|s| {
-                        // "of" must be followed by whitespace (not "offer", etc.)
-                        s.strip_prefix(|c: char| c.is_whitespace())
+                // Check for a bound keyword: `@template T of SomeClass` or `@template T as SomeClass`
+                let (bound, rest_after_bound) = if let Some(after_of) = rest
+                    .strip_prefix("of")
+                    .and_then(|s| s.strip_prefix(|c: char| c.is_whitespace()))
+                    .or_else(|| {
+                        rest.strip_prefix("as")
+                            .and_then(|s| s.strip_prefix(|c: char| c.is_whitespace()))
                     }) {
                     let after_of = after_of.trim_start();
                     if after_of.is_empty() {

@@ -3018,6 +3018,20 @@ fn resolve_rhs_method_call_inner<'b>(
             continue;
         }
     }
+
+    // For intersection types, filter out `mixed` when concrete types exist.
+    // When a receiver is an intersection like `IChild&IParent<C>`, each member
+    // resolves the method independently: the unparameterized interface may
+    // return `mixed` while the parameterized one returns `C`.  In an
+    // intersection the most specific type wins, so discard `mixed` entries
+    // when at least one non-mixed result is present.
+    if union_results.len() > 1 {
+        let has_non_mixed = union_results.iter().any(|rt| !rt.type_string.is_mixed());
+        if has_non_mixed {
+            union_results.retain(|rt| !rt.type_string.is_mixed());
+        }
+    }
+
     union_results
 }
 

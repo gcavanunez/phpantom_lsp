@@ -13,8 +13,8 @@ namespace PsalmTest_template_class_template_1 {
     $key = $decoratorIterator->key();
     $value = $decoratorIterator->current();
 
-    assertType('null|string', $value); // SKIP hover fails in namespace-level code with iterator generics
-    assertType('bool', $next); // SKIP hover fails in namespace-level code with iterator generics
+    assertType('null|string', $value); // SKIP multi-namespace class resolution
+    assertType('bool', $next);
 }
 
 // Test: infiniteIterator
@@ -26,7 +26,7 @@ namespace PsalmTest_template_class_template_2 {
     $key = $decoratorIterator->key();
     $value = $decoratorIterator->current();
 
-    assertType('null|string', $value); // SKIP hover fails in namespace-level code with iterator generics
+    assertType('null|string', $value); // SKIP multi-namespace class resolution
 }
 
 // Test: limitIterator
@@ -38,7 +38,7 @@ namespace PsalmTest_template_class_template_3 {
     $key = $decoratorIterator->key();
     $value = $decoratorIterator->current();
 
-    assertType('null|string', $value); // SKIP hover fails in namespace-level code with iterator generics
+    assertType('null|string', $value); // SKIP multi-namespace class resolution
 }
 
 // Test: callbackFilterIterator
@@ -53,7 +53,7 @@ namespace PsalmTest_template_class_template_4 {
     $key = $decoratorIterator->key();
     $value = $decoratorIterator->current();
 
-    assertType('null|string', $value); // SKIP hover fails in namespace-level code with iterator generics
+    assertType('null|string', $value); // SKIP multi-namespace class resolution
 }
 
 // Test: noRewindIterator
@@ -65,7 +65,7 @@ namespace PsalmTest_template_class_template_5 {
     $key = $decoratorIterator->key();
     $value = $decoratorIterator->current();
 
-    assertType('null|string', $value); // SKIP hover fails in namespace-level code with iterator generics
+    assertType('null|string', $value); // SKIP multi-namespace class resolution
 }
 
 // Test: classTemplate
@@ -119,7 +119,7 @@ namespace PsalmTest_template_class_template_6 {
     $cfoo_bar = $cfoo->bar();
 
     assertType('Foo<A>', $afoo);
-    assertType('A', $afoo_bar); // SKIP hover returns no type for class-string generic resolution
+    assertType('A', $afoo_bar); // SKIP multi-namespace class resolution (Foo collision with ns6)
     assertType('Foo<B>', $bfoo);
     assertType('B', $bfoo_bar);
     assertType('Foo<C>', $cfoo);
@@ -188,8 +188,8 @@ namespace PsalmTest_template_class_template_7 {
     assertType('Foo<E>', $efoo);
     assertType('Foo<E>', $efoo2);
     assertType('Foo<E>', $efoo3);
-    assertType('Foo<E>', $gfoo); // SKIP got Foo<G>, self not resolved to declaring class in inherited static method
-    assertType('Foo<E>', $gfoo2); // SKIP got Foo<G>, self not resolved to declaring class in inherited static method
+    assertType('Foo<E>', $gfoo);
+    assertType('Foo<E>', $gfoo2);
     assertType('Foo<G>', $gfoo3);
 }
 
@@ -283,8 +283,8 @@ namespace PsalmTest_template_class_template_10 {
     $b_x = $b->x;
     $b_y = $b->y;
 
-    assertType('A|null', $b_x); // SKIP hover fails for @property virtual members with unresolved template
-    assertType('A|null', $b_y); // SKIP hover fails for template property on unparameterized generic class
+    assertType('A|null', $b_x);
+    assertType('A|null', $b_y);
 }
 
 // Test: mixedTemplatedParamOutWithNoExtendedTemplate
@@ -448,7 +448,7 @@ namespace PsalmTest_template_class_template_13 {
     $id = $au->getId();
 
     assertType('AppUser', $au);
-    assertType('array-key', $id); // SKIP hover returns no type, missing @extends loses template bound
+    assertType('array-key', $id);
 }
 
 // Test: templateTKeyedArrayValues
@@ -484,7 +484,7 @@ namespace PsalmTest_template_class_template_15 {
     $templated_list->add(5, "hello");
     $a = $templated_list->bottom();
 
-    assertType('string', $a); // SKIP got KeyValueContainer, SplDoublyLinkedList generic bottom() not resolved
+    assertType('string', $a);
 }
 
 // Test: allowTemplateParamsToCoerceToMinimumTypes
@@ -562,7 +562,7 @@ namespace PsalmTest_template_class_template_17 {
     $a_or_b = $random_collection->get();
 
     assertType('C<A>|C<B>', $random_collection);
-    assertType('A|B', $a_or_b); // SKIP hover fails, depends on union generic resolution
+    assertType('A|B', $a_or_b);
 }
 
 // Test: doNotCombineTypesWhenMemoized
@@ -599,7 +599,7 @@ namespace PsalmTest_template_class_template_18 {
     $a_or_b = $random_collection->get();
 
     assertType('C<A>|C<B>', $random_collection);
-    assertType('A|B', $a_or_b); // SKIP hover fails for method call on @var union of generic types
+    assertType('A|B', $a_or_b); // SKIP multi-namespace class resolution (C collision)
 }
 
 // Test: templatedGet
@@ -637,7 +637,7 @@ namespace PsalmTest_template_class_template_19 {
 
     $a = $p->a;
 
-    assertType('string', $a); // SKIP got KeyValueContainer, __get with template return type not resolved
+    assertType('string', $a);
 }
 
 // Test: templatedInterfaceIntersectionSecond
@@ -664,7 +664,7 @@ namespace PsalmTest_template_class_template_20 {
 
     $a = makeConcrete()->foo();
 
-    assertType('C', $a); // SKIP got KeyValueContainer, intersection type with template interface not resolved
+    assertType('C', $a);
 }
 
 // Test: returnTemplateIntersectionGenericObjectAndTemplate
@@ -698,7 +698,7 @@ namespace PsalmTest_template_class_template_21 {
 
     $a = makeConcrete(C::class);
 
-    assertType('C&I<C>', $a); // SKIP got KeyValueContainer, intersection generic return type not resolved
+    assertType('C&I<C>', $a);
 }
 
 // Test: weakReferenceIsTyped
@@ -707,7 +707,7 @@ namespace PsalmTest_template_class_template_22 {
     $r = WeakReference::create($e);
     $ex = $r->get();
 
-    assertType('Exception|null', $ex); // SKIP hover fails for WeakReference::create generic resolution
+    assertType('Exception|null', $ex);
 }
 
 // Test: createEmptyArrayCollection
@@ -749,7 +749,7 @@ namespace PsalmTest_template_class_template_23 {
         }
     }
 
-    assertType('ArrayCollection<never, never>', $a); // SKIP got ArrayCollection<array-key, mixed>, empty array not inferred as never
+    assertType('ArrayCollection<never, never>', $a); // SKIP multi-namespace class resolution (ArrayCollection collision)
 }
 
 // Test: unionClassStringInferenceAndDefaultEmptyArray
@@ -785,7 +785,7 @@ namespace PsalmTest_template_class_template_24 {
         }
     }
 
-    assertType('Collection<A>', $packages); // SKIP hover fails for static method with method-level template returning generic
+    assertType('Collection<A>', $packages); // SKIP multi-namespace class resolution (Collection collision)
 }
 
 // Test: newWithoutInferredTemplate
@@ -797,6 +797,6 @@ namespace PsalmTest_template_class_template_25 {
 
     $f = new Foo();
 
-    assertType('Foo<object>', $f); // SKIP got Foo<mixed>, template bound 'of object' not used as default
+    assertType('Foo<object>', $f);
 }
 

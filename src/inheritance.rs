@@ -701,6 +701,12 @@ pub(crate) fn resolve_property_type_hint(
     // template parameters and an IndexAccess return type (e.g.
     // `@template K as key-of<TData>` / `@return TData[K]`), infer K
     // from the property name and evaluate the indexed access.
+    // Try the original class first — it may already carry generic
+    // substitutions (e.g. from `apply_generic_args`) so `__get`'s
+    // return type is already concrete.
+    if let Some(ty) = resolve_magic_get_return_type(class, prop_name) {
+        return Some(ty);
+    }
     resolve_magic_get_return_type(&merged, prop_name)
 }
 

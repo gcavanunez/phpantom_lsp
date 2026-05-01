@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`NoRewindIterator` generic resolution.** Added stub patch so `new NoRewindIterator($generator)` propagates the wrapped iterator's type parameters.
 - **Template param inference from type bounds.** When a class template parameter has a bound like `TIterator as Iterator<TKey, TValue>` and `TIterator` is resolved to a concrete generic type, the nested template params (`TKey`, `TValue`) are now inferred from the concrete type's generic arguments.
 - **`static` return type through first-class callables.** `self::method(...)()`, `static::method(...)()`, `parent::method(...)()`, and `$this->method(...)()` now preserve `static` in the return type when the underlying method declares `@return static`.
+- **`@template T as Bound` parsing.** Template declarations using the `as` keyword (e.g. `@template T as SomeClass`) now correctly parse the upper bound. Previously only `of` was recognized, causing `as` bounds to silently fall back to `mixed`.
+- **`__get` template return type substitution.** Dynamic property access on generic classes with a `__get` method now correctly substitutes class-level template parameters. Previously `__get` was resolved against the raw class, ignoring constructor-inferred type arguments.
+- **Intersection type method return.** Method calls on intersection types (e.g. `IChild&IParent<C>`) no longer include `mixed` from unparameterized members when a parameterized member provides a concrete return type.
 - **Property narrowing after guard clauses.** After `if (!$this->prop instanceof Foo) { return; }`, the narrowed type of `$this->prop` was being stripped before subsequent code could use it. Member accesses on the narrowed property (e.g. in a foreach) now resolve correctly.
 
 ### Changed

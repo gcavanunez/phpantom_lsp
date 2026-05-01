@@ -1784,6 +1784,61 @@ fn template_default_stripped_from_names() {
     assert_eq!(params, vec!["TAsync"]);
 }
 
+// ─── @template with `as` keyword ────────────────────────────────────
+
+#[test]
+fn template_as_bound_simple() {
+    let doc = concat!("/**\n", " * @template T as SomeClass\n", " */");
+    let result = extract_template_params_full(doc);
+    assert_eq!(result.len(), 1);
+    let (name, bound, _, default) = &result[0];
+    assert_eq!(name, "T");
+    assert_eq!(*bound, Some(PhpType::parse("SomeClass")));
+    assert!(default.is_none());
+}
+
+#[test]
+fn template_as_bound_with_default() {
+    let doc = concat!("/**\n", " * @template TAsync as bool = false\n", " */");
+    let result = extract_template_params_full(doc);
+    assert_eq!(result.len(), 1);
+    let (name, bound, _, default) = &result[0];
+    assert_eq!(name, "TAsync");
+    assert_eq!(*bound, Some(PhpType::parse("bool")));
+    assert_eq!(*default, Some(PhpType::parse("false")));
+}
+
+#[test]
+fn template_as_does_not_match_assign_prefix() {
+    // "assign" starts with "as" but should NOT be treated as a bound keyword
+    let doc = concat!("/**\n", " * @template Tassign\n", " */");
+    let result = extract_template_params_full(doc);
+    assert_eq!(result.len(), 1);
+    let (name, bound, _, _) = &result[0];
+    assert_eq!(name, "Tassign");
+    assert!(bound.is_none());
+}
+
+#[test]
+fn template_mixed_of_and_as() {
+    let doc = concat!(
+        "/**\n",
+        " * @template TKey of int\n",
+        " * @template TValue as string\n",
+        " */",
+    );
+    let result = extract_template_params_full(doc);
+    assert_eq!(result.len(), 2);
+
+    let (name0, bound0, _, _) = &result[0];
+    assert_eq!(name0, "TKey");
+    assert_eq!(*bound0, Some(PhpType::parse("int")));
+
+    let (name1, bound1, _, _) = &result[1];
+    assert_eq!(name1, "TValue");
+    assert_eq!(*bound1, Some(PhpType::parse("string")));
+}
+
 // ─── Conditional resolution with template defaults ──────────────────
 
 #[test]

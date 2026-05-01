@@ -44,34 +44,19 @@ Remaining gaps:
 
 
 
-## B14. Template/generic resolution in namespace-level and complex scenarios
+## B14. Template/generic resolution in multi-namespace test files
 
 **Discovered:** SKIP audit of
 `tests/psalm_assertions/template_class_template.php`.
 
-Several template resolution patterns fail:
-
-- Hover fails in namespace-level code with iterator generics
-  (outside any class/function body)
-- `class-string<T>` generic resolution for factory patterns
-- `self` not resolved to declaring class in inherited static
-  methods (returns parent's template param name instead)
-- `@property` virtual members with unresolved templates
-- `__get` with template return type not resolved
-- Intersection types with template interfaces
-- Method-level template on static method returning generic
-- `WeakReference::create` generic resolution
-
-Many of these fail in the multi-namespace Psalm test file because
-`FileContext.namespace` stores only the first namespace, so the
-class loader resolves bare names (e.g. `Foo`) against the wrong
-namespace. Items that work correctly in single-namespace contexts
-(template bound defaults, static method-level templates) are blocked
-only by this infrastructure limitation.
+Remaining failures are all caused by the multi-namespace
+infrastructure limitation: `FileContext.namespace` stores only the
+first namespace, so the class loader resolves bare names (e.g.
+`Foo`, `Collection`) against the wrong namespace when the same
+short name appears in multiple namespace blocks within one file.
 
 **Tests:** SKIPs in `tests/psalm_assertions/template_class_template.php`
-(lines 16-17, 29, 41, 56, 68, 122, 191-192, 286-287, 451, 487,
-640, 667, 701, 710, 788, 800).
+(lines 16, 29, 41, 56, 68, 122, 602, 752, 788).
 
 
 
