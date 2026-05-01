@@ -68,6 +68,6 @@ namespace PsalmTest_annotation_3 {
 namespace PsalmTest_annotation_4 {
     $_arr = ["foo\bar\nbaz" => "literal"];
 
-    assertType('array{\\', $_arr); // SKIP — escaped backslash in array key not normalized
+    assertType("array{'foo\\bar\\nbaz': string}", $_arr);
 }
 

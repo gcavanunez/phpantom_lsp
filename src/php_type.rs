@@ -4415,11 +4415,50 @@ impl fmt::Display for ShapeEntry {
         match &self.key {
             Some(key) => {
                 let opt = if self.optional { "?" } else { "" };
-                write!(f, "{key}{opt}: {}", self.value_type)
+                let formatted_key = format_shape_key(key);
+                write!(f, "{formatted_key}{opt}: {}", self.value_type)
             }
             None => write!(f, "{}", self.value_type),
         }
     }
+}
+
+/// Format a shape key for display in a type string.
+///
+/// Keys that are simple identifiers (alphanumeric + underscore, not starting
+/// with a digit) or plain integers are emitted bare.  Keys that contain
+/// special characters (spaces, newlines, backslashes, colons, braces, quotes,
+/// etc.) are wrapped in single quotes with `\` and `\n` / `\r` / `\t`
+/// escaped so the type string remains a single readable line.
+fn format_shape_key(key: &str) -> String {
+    // Simple identifier-like keys: emit bare.
+    let is_simple = !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && !key.starts_with(|c: char| c.is_ascii_digit());
+    if is_simple {
+        return key.to_string();
+    }
+    // Pure integer keys: emit bare.
+    if key.parse::<i64>().is_ok() {
+        return key.to_string();
+    }
+    // Quote and escape.
+    let mut out = String::with_capacity(key.len() + 2);
+    out.push('\'');
+    for ch in key.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('\'');
+    out
 }
 
 impl fmt::Display for CallableParam {

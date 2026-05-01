@@ -74,19 +74,6 @@ handle this automatically.
 (lines 79-85, 87-89).
 
 
-## B21. Remaining static-late-binding and generics gaps
-
-**Discovered:** SKIP audit.
-
-Remaining minor gaps:
-
-- Escaped backslash in array shape key not normalized
-  (`annotation.php` line 71)
-
-**Tests:** Referenced in-line above.
-
-
-
 ## Bulk un-SKIP after fixes
 
 There are `// SKIP` markers across `tests/phpstan_nsrt/*.php` and
