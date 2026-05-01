@@ -108,6 +108,10 @@ struct Region {
 /// Collect all definitions for `var_name` in `scope_start`, filtering
 /// out property and docblock-only definitions, and build a [`Region`]
 /// list sorted by definition offset.
+///
+/// Definitions at a deeper conditional nesting level than the most
+/// recent same-or-shallower definition are excluded from region
+/// splitting.  They are treated as reads within the outer region.
 fn build_regions(symbol_map: &SymbolMap, var_name: &str, scope_start: u32) -> Vec<Region> {
     let defs: Vec<&VarDefSite> = symbol_map
         .var_defs
@@ -121,9 +125,23 @@ fn build_regions(symbol_map: &SymbolMap, var_name: &str, scope_start: u32) -> Ve
         })
         .collect();
 
-    let mut regions = Vec::with_capacity(defs.len());
-    for (i, def) in defs.iter().enumerate() {
-        let reads_until = defs
+    // Filter: only keep definitions that are at the same or shallower
+    // nesting level as the current "active" definition.
+    let mut region_defs: Vec<&VarDefSite> = Vec::with_capacity(defs.len());
+    for def in &defs {
+        if let Some(last) = region_defs.last()
+            && def.nesting_depth > last.nesting_depth
+        {
+            // Deeper nesting — this is a conditional refinement,
+            // not a new region. Skip it.
+            continue;
+        }
+        region_defs.push(def);
+    }
+
+    let mut regions = Vec::with_capacity(region_defs.len());
+    for (i, def) in region_defs.iter().enumerate() {
+        let reads_until = region_defs
             .get(i + 1)
             .map(|next| next.effective_from)
             .unwrap_or(u32::MAX);
