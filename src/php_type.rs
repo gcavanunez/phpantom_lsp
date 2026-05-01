@@ -4231,8 +4231,14 @@ fn evaluate_index_access(base: &PhpType, index: &PhpType) -> PhpType {
     if let PhpType::ArrayShape(entries) = base {
         // If index is a literal string key, look it up directly.
         if let PhpType::Literal(key) | PhpType::Named(key) = index {
+            // Strip surrounding quotes from string literals (e.g. 'name' → name)
+            let bare_key = key
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+                .or_else(|| key.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+                .unwrap_or(key);
             for entry in entries {
-                if entry.key.as_deref() == Some(key.as_str()) {
+                if entry.key.as_deref() == Some(bare_key) {
                     return entry.value_type.clone();
                 }
             }
@@ -4242,8 +4248,13 @@ fn evaluate_index_access(base: &PhpType, index: &PhpType) -> PhpType {
             let mut values: Vec<PhpType> = Vec::new();
             for member in members {
                 if let PhpType::Literal(key) | PhpType::Named(key) = member {
+                    let bare_key = key
+                        .strip_prefix('\'')
+                        .and_then(|s| s.strip_suffix('\''))
+                        .or_else(|| key.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+                        .unwrap_or(key);
                     for entry in entries {
-                        if entry.key.as_deref() == Some(key.as_str())
+                        if entry.key.as_deref() == Some(bare_key)
                             && !values.contains(&entry.value_type)
                         {
                             values.push(entry.value_type.clone());

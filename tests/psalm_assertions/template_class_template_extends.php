@@ -497,7 +497,7 @@ namespace PsalmTest_template_class_template_extends_12 {
     /** @psalm-suppress MixedAssignment */
     $b = $storage->offsetGet($c);
 
-    assertType('mixed', $b); // SKIP — array-access assignment ($storage[$c] = ...) overwrites @var generic type on ArrayAccess objects
+    assertType('mixed', $b);
 }
 
 // Test: templateExtendsOnceWithSpecificStaticCall
@@ -680,6 +680,40 @@ namespace PsalmTest_template_class_template_extends_16 {
 
     assertType('C<string, int>', $c);
     assertType('ArrayIterator<string, int>', $i);
+}
+
+// Test: methodLevelTemplateKeyOfWithStringLiteral
+namespace PsalmTest_template_class_template_extends_16b {
+    /**
+     * @template TData as array
+     */
+    class Config {
+        /** @var TData */
+        private $data;
+
+        /** @param TData $data */
+        public function __construct(array $data) {
+            $this->data = $data;
+        }
+
+        /**
+         * @template K as key-of<TData>
+         * @param K $key
+         * @return TData[K]
+         */
+        public function get(string $key) {
+            return $this->data[$key];
+        }
+    }
+
+    /** @var Config<array{name: string, age: int}> */
+    $config = new Config(['name' => 'John', 'age' => 30]);
+
+    $name = $config->get('name');
+    $age = $config->get('age');
+
+    assertType('string', $name);
+    assertType('int', $age);
 }
 
 // Test: keyOfClassTemplateExtended

@@ -11,38 +11,6 @@ to second-guess upstream output.
 
 
 
-## B13. Remaining template inference gaps
-
-**Discovered:** SKIP audit of
-`tests/psalm_assertions/template_class_template_extends.php`.
-
-Constructor generic inference through inherited constructors,
-case-insensitive method lookup, function-level `@template`
-inference through generic wrapper params, function name
-resolution in multi-namespace files, `@extends` with swapped
-parameter order, `__get` magic method with `key-of<T>`/`T[K]`,
-`@template-implements` return type inheritance from stub
-interfaces, and class-level generic substitution in method
-call return types via `@var` annotations are now fixed.
-Remaining gaps:
-
-- **Array-access assignment overwrites `@var` generic type on
-  `ArrayAccess` objects**: `$obj[$key] = $val` on an object that
-  implements `ArrayAccess` causes the forward walker to lose the
-  `@var` generic annotation on `$obj`. Works correctly when there
-  is no array-access assignment between the `@var` and the method
-  call.
-- **Method-level `@template` with `key-of<T>` bound and `T[K]` return**:
-  `key-of<T>`, `value-of<T>`, and `T[K]` now evaluate correctly after
-  class-level template substitution. However, inferring a method-level
-  template parameter `K` from a string literal argument (to resolve
-  `T[K]` at a specific call site) is not yet supported.
-
-**Tests:** SKIPs in `tests/psalm_assertions/template_class_template_extends.php`
-(line 500).
-
-
-
 
 ## B14. Template/generic resolution in multi-namespace test files
 

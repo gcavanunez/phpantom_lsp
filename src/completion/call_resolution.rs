@@ -36,6 +36,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::Backend;
+use crate::atom::atom;
 use crate::completion::variable::rhs_resolution::{TemplateBindingMode, classify_template_binding};
 use crate::completion::variable::{ARRAY_ELEMENT_FUNCS, ARRAY_PRESERVING_FUNCS};
 use crate::docblock;
@@ -2037,6 +2038,29 @@ impl Backend {
                 .get(param_idx)
                 .and_then(|p| p.type_hint.as_ref());
             let binding_mode = classify_template_binding(tpl_name, param_hint);
+
+            // When the template param has a key-of bound (e.g.
+            // `@template K as key-of<TData>`) and the argument is a
+            // string literal, resolve K to the literal value so that
+            // indexed access types like `TData[K]` can look up the
+            // specific key in the array shape.
+            if let Some(bound) = method.template_param_bounds.get(&atom(tpl_name))
+                && matches!(bound, PhpType::KeyOf(_))
+            {
+                let trimmed = arg_text.trim();
+                let is_string_lit = (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+                    || (trimmed.starts_with('"') && trimmed.ends_with('"'));
+                if is_string_lit {
+                    // Store as Literal with quotes so evaluate_index_access
+                    // can strip them when matching against shape keys.
+                    crate::completion::variable::rhs_resolution::insert_or_union(
+                        &mut subs,
+                        tpl_name.to_string(),
+                        PhpType::Literal(trimmed.to_string()),
+                    );
+                    continue;
+                }
+            }
 
             match binding_mode {
                 TemplateBindingMode::Direct => {

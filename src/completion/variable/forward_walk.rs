@@ -4869,6 +4869,13 @@ fn process_array_key_assignment<'b>(
             .map(|rt| rt.type_string.clone())
             .unwrap_or_else(PhpType::array);
 
+        // If the base variable is an object (e.g. SplObjectStorage, ArrayAccess),
+        // array-access syntax invokes offsetSet, not actual array mutation.
+        // Preserve the original object type instead of overwriting it with an array shape.
+        if base_type.is_object_like() && !base_type.is_array_like() {
+            return;
+        }
+
         // Extract all keys in the chain.
         let all_string_keys: Option<Vec<String>> = key_chain
             .iter()
