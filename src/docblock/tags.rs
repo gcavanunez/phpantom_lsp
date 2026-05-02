@@ -598,21 +598,30 @@ pub fn extract_param_raw_type(docblock: &str, var_name: &str) -> Option<PhpType>
 
 /// Like [`extract_param_raw_type`], but operates on a pre-parsed [`DocblockInfo`].
 pub fn extract_param_raw_type_from_info(info: &DocblockInfo, var_name: &str) -> Option<PhpType> {
-    for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::PsalmParam, TagKind::Param]) {
-        let desc = tag.description.trim();
-        if desc.is_empty() {
-            continue;
-        }
+    // Check tags in priority order: @phpstan-param > @psalm-param > @param.
+    // When both `@param` and `@psalm-param` exist for the same parameter,
+    // the more specific variant must win.  Because `tags_by_kinds` yields
+    // tags in document order, iterating all kinds at once would return
+    // whichever appears first in the docblock.  Instead, check each
+    // priority level separately so that `@phpstan-param` always beats
+    // `@psalm-param` which always beats `@param`.
+    for kind in &[TagKind::PhpstanParam, TagKind::PsalmParam, TagKind::Param] {
+        for tag in info.tags_by_kind(*kind) {
+            let desc = tag.description.trim();
+            if desc.is_empty() {
+                continue;
+            }
 
-        // Extract the full type token (respects `<…>` nesting).
-        let (type_token, remainder) = split_type_token(desc);
+            // Extract the full type token (respects `<…>` nesting).
+            let (type_token, remainder) = split_type_token(desc);
 
-        // The next token should be the parameter name.
-        // Handle `...$name` (variadic) by stripping the leading `...`.
-        if let Some(name) = remainder.split_whitespace().next() {
-            let name = name.strip_prefix("...").unwrap_or(name);
-            if name == var_name {
-                return sanitise_and_parse_docblock_type(type_token);
+            // The next token should be the parameter name.
+            // Handle `...$name` (variadic) by stripping the leading `...`.
+            if let Some(name) = remainder.split_whitespace().next() {
+                let name = name.strip_prefix("...").unwrap_or(name);
+                if name == var_name {
+                    return sanitise_and_parse_docblock_type(type_token);
+                }
             }
         }
     }
@@ -640,26 +649,31 @@ pub fn extract_all_param_tags(docblock: &str) -> Vec<(String, PhpType)> {
 /// Like [`extract_all_param_tags`], but operates on a pre-parsed [`DocblockInfo`].
 pub fn extract_all_param_tags_from_info(info: &DocblockInfo) -> Vec<(String, PhpType)> {
     let mut results = Vec::new();
+    let mut seen_params = std::collections::HashSet::new();
 
-    // Only match `@param` and `@phpstan-param`, not compound tags like
-    // `@param-closure-this` (those have their own TagKind).
-    for tag in info.tags_by_kinds(&[TagKind::PhpstanParam, TagKind::PsalmParam, TagKind::Param]) {
-        let desc = tag.description.trim();
-        if desc.is_empty() {
-            continue;
-        }
+    // Iterate in priority order: @phpstan-param > @psalm-param > @param.
+    // When both `@param` and `@psalm-param` exist for the same parameter,
+    // the more specific variant wins.
+    for kind in &[TagKind::PhpstanParam, TagKind::PsalmParam, TagKind::Param] {
+        for tag in info.tags_by_kind(*kind) {
+            let desc = tag.description.trim();
+            if desc.is_empty() {
+                continue;
+            }
 
-        // Extract the full type token (respects `<…>` nesting).
-        let (type_token, remainder) = split_type_token(desc);
+            // Extract the full type token (respects `<…>` nesting).
+            let (type_token, remainder) = split_type_token(desc);
 
-        // The next token should be the parameter name.
-        // Handle `...$name` (variadic) by stripping the leading `...`.
-        if let Some(name) = remainder.split_whitespace().next() {
-            let name = name.strip_prefix("...").unwrap_or(name);
-            if name.starts_with('$')
-                && let Some(parsed) = sanitise_and_parse_docblock_type(type_token)
-            {
-                results.push((name.to_string(), parsed));
+            // The next token should be the parameter name.
+            // Handle `...$name` (variadic) by stripping the leading `...`.
+            if let Some(name) = remainder.split_whitespace().next() {
+                let name = name.strip_prefix("...").unwrap_or(name);
+                if name.starts_with('$')
+                    && seen_params.insert(name.to_string())
+                    && let Some(parsed) = sanitise_and_parse_docblock_type(type_token)
+                {
+                    results.push((name.to_string(), parsed));
+                }
             }
         }
     }

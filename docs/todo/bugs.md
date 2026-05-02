@@ -20,23 +20,31 @@ to second-guess upstream output.
 Remaining failures have multiple root causes (the original
 multi-namespace theory was incorrect for most of them):
 
-- **Lines 16, 29, 41, 56, 68:** Generic constructor inference
-  through iterator decorators (`CachingIterator(new ArrayIterator(...))`)
-  does not propagate template parameters. Fails in single-namespace
-  files too.
-- **Line 602:** Union generic method resolution (`C<A>|C<B>` → `->get()`)
-  does not resolve per-branch template substitutions.
-- **Line 752:** `new ArrayCollection()` with no args infers
-  `ArrayCollection<array, array>` instead of `ArrayCollection<never, never>`.
-- **Line 788:** Static method call `Collection::fromClassString(A::class)`
-  does not propagate the method-level template to the return type.
+- **Lines 16, 29, 41, 56, 68:** SPL iterator stubs
+  (`CachingIterator`, `InfiniteIterator`, `LimitIterator`,
+  `CallbackFilterIterator`, `NoRewindIterator`) lack `@template`
+  annotations, so generic type propagation through iterator
+  decorator constructors is impossible with current stubs.
+- **Lines 602, 788:** Union generic method resolution and static
+  method template inference work correctly in single-namespace
+  files. The failures are caused by the multi-namespace test
+  runner not resolving short class names to FQN across namespace
+  blocks in the same file.
 
-**Fixed:** Line 122 — `@var` docblocks with additional tags
-(e.g. `@psalm-suppress`) after the type corrupted the type string.
-Fixed in `parse_inline_var_docblock_no_var`.
+**Fixed:**
+- Line 122 — `@var` docblocks with additional tags
+  (e.g. `@psalm-suppress`) after the type corrupted the type
+  string. Fixed in `parse_inline_var_docblock_no_var`.
+- Line 752 — `new ArrayCollection([])` inferred
+  `ArrayCollection<array, array>` instead of
+  `ArrayCollection<never, never>`. Root cause: when both `@param`
+  and `@psalm-param` existed for the same parameter,
+  `extract_param_raw_type_from_info` returned the first match in
+  document order instead of respecting `@phpstan-param` >
+  `@psalm-param` > `@param` priority.
 
 **Tests:** SKIPs in `tests/psalm_assertions/template_class_template.php`
-(lines 16, 29, 41, 56, 68, 602, 752, 788).
+(lines 16, 29, 41, 56, 68, 602, 788).
 
 
 
@@ -64,11 +72,10 @@ tests that may now pass. Run
 `cargo nextest run --test assert_type_runner --no-fail-fast` with
 the SKIP removed to verify.
 
-Remaining SKIPs (12) are:
-- `template_class_template.php` (8) — B14 multi-namespace and
-  genuine type engine gaps (union generic method resolution,
-  generic constructor inference with `never`, static method
-  generic inference)
+Remaining SKIPs (11) are:
+- `template_class_template.php` (7) — B14: SPL stubs lack
+  @template annotations (5), multi-namespace test runner
+  limitation (2)
 - `magic_method_annotation.php` (3) — B14 cross-namespace
   resolution in single-file test runner
 - `mixin_annotation.php` (1) — `IteratorIterator` not in fixture
