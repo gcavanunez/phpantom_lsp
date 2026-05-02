@@ -83,9 +83,11 @@ impl Backend {
                     self.highlight_keyword(symbol_map, content, *ssp_kind, span.start, uri)
                 }
             }
-            SymbolKind::NamespaceDeclaration { .. } | SymbolKind::LaravelStringKey { .. } => {
-                Vec::new()
-            }
+            SymbolKind::NamespaceDeclaration { .. }
+            | SymbolKind::LaravelStringKey { .. }
+            | SymbolKind::Keyword
+            | SymbolKind::CastType
+            | SymbolKind::Comment => Vec::new(),
         };
 
         if highlights.is_empty() {

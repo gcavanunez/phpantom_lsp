@@ -41,6 +41,8 @@ const TT_FUNCTION: u32 = 9;
 const TT_METHOD: u32 = 10;
 const TT_DECORATOR: u32 = 11;
 const TT_ENUM_MEMBER: u32 = 12;
+const TT_KEYWORD: u32 = 13;
+const TT_COMMENT: u32 = 14;
 
 // ─── Token modifier bit positions ───────────────────────────────────────────
 
@@ -74,6 +76,8 @@ pub fn legend() -> SemanticTokensLegend {
         assert!(TT_METHOD == 10);
         assert!(TT_DECORATOR == 11);
         assert!(TT_ENUM_MEMBER == 12);
+        assert!(TT_KEYWORD == 13);
+        assert!(TT_COMMENT == 14);
     };
 
     SemanticTokensLegend {
@@ -91,6 +95,8 @@ pub fn legend() -> SemanticTokensLegend {
             SemanticTokenType::METHOD,         // 10
             SemanticTokenType::DECORATOR,      // 11
             SemanticTokenType::ENUM_MEMBER,    // 12
+            SemanticTokenType::KEYWORD,        // 13
+            SemanticTokenType::COMMENT,        // 14
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,     // bit 0
@@ -105,6 +111,7 @@ pub fn legend() -> SemanticTokensLegend {
 }
 
 /// A single absolute-positioned semantic token before delta encoding.
+#[derive(Clone)]
 struct AbsoluteToken {
     line: u32,
     start_char: u32,
@@ -177,10 +184,33 @@ impl Backend {
 
             // Re-sort after translation as columns might have shifted significantly.
             tokens.sort_by(|a, b| a.line.cmp(&b.line).then(a.start_char.cmp(&b.start_char)));
+
+            // Add Blade-native keyword tokens (directives, echo/comment delimiters)
+            // directly in original Blade coordinates.  The `content` parameter
+            // is the virtual PHP (swapped by `with_file_content`), so we must
+            // read the original Blade source from `open_files`.
+            if let Some(blade_content) = self.get_file_content(uri) {
+                tokens.extend(Self::collect_blade_tokens(&blade_content));
+            }
+
+            // Re-sort to interleave Blade tokens with translated PHP tokens.
+            tokens.sort_by(|a, b| a.line.cmp(&b.line).then(a.start_char.cmp(&b.start_char)));
         }
 
-        // Deduplicate overlapping tokens at the same position (keep first).
-        tokens.dedup_by(|b, a| a.line == b.line && a.start_char == b.start_char);
+        // Deduplicate overlapping tokens at the same position (keep longer).
+        tokens.dedup_by(|b, a| {
+            if a.line == b.line && a.start_char == b.start_char {
+                // Keep the longer token (swap b's fields into a if b is longer).
+                if b.length > a.length {
+                    a.length = b.length;
+                    a.token_type = b.token_type;
+                    a.modifiers = b.modifiers;
+                }
+                true
+            } else {
+                false
+            }
+        });
 
         let delta_tokens = encode_deltas(&tokens);
 
@@ -207,10 +237,17 @@ impl Backend {
             }
 
             let (token_type, modifiers) = match &span.kind {
-                SymbolKind::ClassReference { name, is_fqn, .. } => {
-                    // Check if this class reference is actually a
-                    // template parameter name (e.g. `T` from `@template T`).
-                    if self.is_template_param(name, span.start, symbol_map) {
+                SymbolKind::ClassReference {
+                    name,
+                    is_fqn,
+                    context,
+                } => {
+                    // Use-import names: Tree-sitter highlights these as
+                    // @module, but the closest LSP semantic token type is
+                    // `type` (Zed has no mapping for `namespace`).
+                    if *context == crate::symbol_map::ClassRefContext::UseImport {
+                        (TT_TYPE, 0)
+                    } else if self.is_template_param(name, span.start, symbol_map) {
                         (TT_TYPE_PARAMETER, 0)
                     } else {
                         let tt = self.resolve_class_token_type(name, *is_fqn, ctx, span.start);
@@ -315,6 +352,12 @@ impl Backend {
                     }
                 }
 
+                SymbolKind::Keyword => (TT_KEYWORD, 0),
+
+                SymbolKind::CastType => (TT_TYPE, 0),
+
+                SymbolKind::Comment => (TT_COMMENT, 0),
+
                 SymbolKind::LaravelStringKey { .. } => continue,
             };
 
@@ -324,6 +367,12 @@ impl Backend {
                 tokens.push(abs);
             }
         }
+
+        // Split comment tokens around any inner tokens (e.g. class refs
+        // and @var keywords inside docblocks).  Without this, a single
+        // comment token covering `/** @var \App\Foo $x */` would hide
+        // the more specific inner tokens.
+        split_comments_around_inner(&mut tokens);
 
         tokens
     }
@@ -553,6 +602,171 @@ impl Backend {
         }
         TT_TYPE
     }
+
+    /// Scan Blade source for directives, echo delimiters, and comment
+    /// delimiters and emit semantic tokens in original Blade coordinates.
+    ///
+    /// Token type assignments:
+    /// - Blade directives (`@if`, `@foreach`, etc.) → `keyword`
+    /// - Echo delimiters (`{{ }}`, `{!! !!}`) → `keyword`
+    /// - Comment blocks (`{{-- ... --}}`) → `comment` (entire span)
+    fn collect_blade_tokens(content: &str) -> Vec<AbsoluteToken> {
+        let mut tokens = Vec::new();
+        let mut in_comment = false;
+
+        for (line_idx, line) in content.lines().enumerate() {
+            let line_u32 = line_idx as u32;
+            let chars: Vec<char> = line.chars().collect();
+            let mut col = 0u32; // UTF-16 column
+            let mut i = 0usize;
+
+            // If we're inside a multi-line comment, mark the entire line
+            // as comment until we find --}}.
+            if in_comment {
+                if let Some(close_pos) = find_substr(&chars, 0, &['-', '-', '}', '}']) {
+                    // Comment ends on this line: mark from start to end of --}}
+                    let end_col = utf16_col_at(&chars, close_pos + 4);
+                    tokens.push(AbsoluteToken {
+                        line: line_u32,
+                        start_char: 0,
+                        length: end_col,
+                        token_type: TT_COMMENT,
+                        modifiers: 0,
+                    });
+                    in_comment = false;
+                    // Continue scanning the rest of the line after the comment.
+                    i = close_pos + 4;
+                    col = end_col;
+                } else {
+                    // Entire line is comment.
+                    let line_len: u32 = chars.iter().map(|c| c.len_utf16() as u32).sum();
+                    if line_len > 0 {
+                        tokens.push(AbsoluteToken {
+                            line: line_u32,
+                            start_char: 0,
+                            length: line_len,
+                            token_type: TT_COMMENT,
+                            modifiers: 0,
+                        });
+                    }
+                    continue;
+                }
+            }
+
+            while i < chars.len() {
+                let remaining = &chars[i..];
+
+                // {{-- comment start
+                if remaining.starts_with(&['{', '{', '-', '-']) {
+                    if let Some(close_pos) = find_substr(&chars, i + 4, &['-', '-', '}', '}']) {
+                        // Single-line comment: mark the entire {{-- ... --}} span.
+                        let end_col = utf16_col_at(&chars, close_pos + 4);
+                        tokens.push(AbsoluteToken {
+                            line: line_u32,
+                            start_char: col,
+                            length: end_col - col,
+                            token_type: TT_COMMENT,
+                            modifiers: 0,
+                        });
+                        i = close_pos + 4;
+                        col = end_col;
+                        continue;
+                    } else {
+                        // Multi-line comment starts here.
+                        let line_len: u32 = chars.iter().map(|c| c.len_utf16() as u32).sum();
+                        tokens.push(AbsoluteToken {
+                            line: line_u32,
+                            start_char: col,
+                            length: line_len - col,
+                            token_type: TT_COMMENT,
+                            modifiers: 0,
+                        });
+                        in_comment = true;
+                        break;
+                    }
+                }
+
+                // {!! raw echo !!}
+                if remaining.starts_with(&['{', '!', '!']) {
+                    tokens.push(AbsoluteToken {
+                        line: line_u32,
+                        start_char: col,
+                        length: 3,
+                        token_type: TT_KEYWORD,
+                        modifiers: 0,
+                    });
+                    i += 3;
+                    col += 3;
+                    continue;
+                }
+
+                // !!} closing raw echo
+                if remaining.starts_with(&['!', '!', '}']) {
+                    tokens.push(AbsoluteToken {
+                        line: line_u32,
+                        start_char: col,
+                        length: 3,
+                        token_type: TT_KEYWORD,
+                        modifiers: 0,
+                    });
+                    i += 3;
+                    col += 3;
+                    continue;
+                }
+
+                // {{ echo }} — but not {{{
+                if remaining.starts_with(&['{', '{']) && !remaining.starts_with(&['{', '{', '{']) {
+                    tokens.push(AbsoluteToken {
+                        line: line_u32,
+                        start_char: col,
+                        length: 2,
+                        token_type: TT_KEYWORD,
+                        modifiers: 0,
+                    });
+                    i += 2;
+                    col += 2;
+                    continue;
+                }
+
+                // }} closing echo — but not }}}
+                if remaining.starts_with(&['}', '}']) && (i == 0 || chars[i - 1] != '}') {
+                    tokens.push(AbsoluteToken {
+                        line: line_u32,
+                        start_char: col,
+                        length: 2,
+                        token_type: TT_KEYWORD,
+                        modifiers: 0,
+                    });
+                    i += 2;
+                    col += 2;
+                    continue;
+                }
+
+                // @directive
+                if chars[i] == '@' && i + 1 < chars.len() && chars[i + 1].is_alphabetic() {
+                    let rest: String = chars[i + 1..].iter().collect();
+                    if let Some(directive) = crate::blade::directives::match_directive(&rest) {
+                        let token_len = 1 + directive.len() as u32; // @ + directive name
+                        tokens.push(AbsoluteToken {
+                            line: line_u32,
+                            start_char: col,
+                            length: token_len,
+                            token_type: TT_KEYWORD,
+                            modifiers: 0,
+                        });
+                        i += token_len as usize;
+                        col += token_len;
+                        continue;
+                    }
+                }
+
+                col += chars[i].len_utf16() as u32;
+                i += 1;
+            }
+        }
+
+        tokens
+    }
 }
 
 /// Map a [`ClassLikeKind`] to a semantic token type index.
@@ -563,6 +777,24 @@ fn kind_to_token_type(kind: ClassLikeKind) -> u32 {
         ClassLikeKind::Trait => TT_TYPE,
         ClassLikeKind::Enum => TT_ENUM,
     }
+}
+
+/// Find a character subsequence starting from position `start` in a char slice.
+fn find_substr(chars: &[char], start: usize, needle: &[char]) -> Option<usize> {
+    if needle.is_empty() || start + needle.len() > chars.len() {
+        return None;
+    }
+    for i in start..=chars.len() - needle.len() {
+        if chars[i..i + needle.len()] == *needle {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Compute the UTF-16 column of position `pos` in a char slice.
+fn utf16_col_at(chars: &[char], pos: usize) -> u32 {
+    chars[..pos].iter().map(|c| c.len_utf16() as u32).sum()
 }
 
 /// Convert a byte offset to an absolute line/character position and
@@ -616,6 +848,109 @@ fn encode_deltas(tokens: &[AbsoluteToken]) -> Vec<SemanticToken> {
     result
 }
 
+/// Split comment tokens around any non-comment tokens that fall inside them.
+///
+/// Docblock comments like `/** @var \App\Foo $x */` produce a single
+/// `Comment` span covering the entire block, plus inner `Keyword` and
+/// `ClassReference` spans for `@var` and `\App\Foo`.  The LSP protocol
+/// does not support overlapping tokens, so we split the comment into
+/// fragments: one before each inner token and one after the last.
+fn split_comments_around_inner(tokens: &mut Vec<AbsoluteToken>) {
+    // Sort by (line, start_char) so we can detect containment.
+    tokens.sort_by(|a, b| a.line.cmp(&b.line).then(a.start_char.cmp(&b.start_char)));
+
+    let mut new_tokens: Vec<AbsoluteToken> = Vec::with_capacity(tokens.len());
+
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = &tokens[i];
+
+        // Only split single-line comment tokens.
+        if tok.token_type != TT_COMMENT {
+            new_tokens.push(tokens[i].clone());
+            i += 1;
+            continue;
+        }
+
+        let comment_line = tok.line;
+        let comment_start = tok.start_char;
+        let comment_end = tok.start_char + tok.length;
+
+        // Collect all non-comment tokens on the same line that fall within
+        // this comment's range.
+        let mut inner: Vec<&AbsoluteToken> = Vec::new();
+        let mut j = i + 1;
+        while j < tokens.len() && tokens[j].line == comment_line {
+            let t = &tokens[j];
+            if t.start_char >= comment_start
+                && t.start_char + t.length <= comment_end
+                && t.token_type != TT_COMMENT
+            {
+                inner.push(t);
+            }
+            if t.start_char >= comment_end {
+                break;
+            }
+            j += 1;
+        }
+
+        if inner.is_empty() {
+            // No inner tokens — keep the comment as-is.
+            new_tokens.push(tokens[i].clone());
+            i += 1;
+            continue;
+        }
+
+        // Split the comment around the inner tokens.
+        let mut cursor = comment_start;
+        for inner_tok in &inner {
+            // Comment fragment before this inner token.
+            if inner_tok.start_char > cursor {
+                new_tokens.push(AbsoluteToken {
+                    line: comment_line,
+                    start_char: cursor,
+                    length: inner_tok.start_char - cursor,
+                    token_type: TT_COMMENT,
+                    modifiers: 0,
+                });
+            }
+            // The inner token itself.
+            new_tokens.push((*inner_tok).clone());
+            cursor = inner_tok.start_char + inner_tok.length;
+        }
+        // Comment fragment after the last inner token.
+        if cursor < comment_end {
+            new_tokens.push(AbsoluteToken {
+                line: comment_line,
+                start_char: cursor,
+                length: comment_end - cursor,
+                token_type: TT_COMMENT,
+                modifiers: 0,
+            });
+        }
+
+        // Skip past the inner tokens we've already processed.
+        // They'll be at positions i+1..j but we need to skip only
+        // those that were part of `inner`.
+        i += 1;
+        while i < j {
+            let t = &tokens[i];
+            if t.line == comment_line
+                && t.start_char >= comment_start
+                && t.start_char + t.length <= comment_end
+                && t.token_type != TT_COMMENT
+            {
+                // Already emitted as part of the split.
+                i += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    *tokens = new_tokens;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,8 +959,8 @@ mod tests {
     fn legend_has_correct_type_count() {
         let l = legend();
         // Ensure the legend has all the token types we reference.
-        assert!(l.token_types.len() > TT_ENUM_MEMBER as usize);
-        assert_eq!(l.token_types.len(), 13);
+        assert!(l.token_types.len() > TT_COMMENT as usize);
+        assert_eq!(l.token_types.len(), 15);
         assert_eq!(l.token_modifiers.len(), 7);
     }
 

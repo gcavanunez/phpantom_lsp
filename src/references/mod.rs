@@ -216,6 +216,8 @@ impl Backend {
                     include_declaration,
                 )
             }
+
+            SymbolKind::Keyword | SymbolKind::CastType | SymbolKind::Comment => Vec::new(),
         }
     }
 

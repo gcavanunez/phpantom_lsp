@@ -126,7 +126,10 @@ impl Backend {
             | SymbolKind::MemberDeclaration { .. }
             | SymbolKind::ConstantReference { .. }
             | SymbolKind::NamespaceDeclaration { .. }
-            | SymbolKind::LaravelStringKey { .. } => {
+            | SymbolKind::LaravelStringKey { .. }
+            | SymbolKind::Keyword
+            | SymbolKind::CastType
+            | SymbolKind::Comment => {
                 // No meaningful type definition target for these.
                 Vec::new()
             }

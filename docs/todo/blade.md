@@ -62,25 +62,6 @@ translate the returned `Hover.range` back (php→blade). Other
 handlers (rename, highlights, linked editing) already do this
 translation.
 
-### Syntax coloring may not appear
-
-The semantic token provider correctly handles Blade files internally,
-but editors typically decide whether to request semantic tokens based
-on the document's `languageId`. When a `.blade.php` file is opened
-with `languageId: "blade"` (not `"php"`), the editor may never send
-a `textDocument/semanticTokens/full` request because the server
-registered as a PHP language server. Needs investigation per editor.
-
-Editors like Zed rely on Tree-sitter for base syntax highlighting
-and use LSP semantic tokens as an additional layer. Since Blade
-files use a Blade Tree-sitter grammar (not PHP), the PHP expressions
-inside directives and echo statements get no language-aware coloring
-unless the LSP provides semantic tokens covering them. We should
-ensure semantic tokens are comprehensive enough to provide full PHP
-highlighting inside Blade files (variables, class names, keywords,
-function calls, etc.) since the editor's Tree-sitter grammar won't
-cover the PHP portions.
-
 ### Code actions are not Blade-aware
 
 Code actions like "Import class" insert a `use` statement at the top

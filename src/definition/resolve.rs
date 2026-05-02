@@ -310,6 +310,8 @@ impl Backend {
             SymbolKind::LaravelStringKey { kind, key } => {
                 laravel::resolve_laravel_string_key(self, kind, key)
             }
+
+            SymbolKind::Keyword | SymbolKind::CastType | SymbolKind::Comment => None,
         }
     }
 

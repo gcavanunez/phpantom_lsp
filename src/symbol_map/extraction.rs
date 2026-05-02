@@ -74,6 +74,48 @@ struct ExtractionCtx<'a> {
     cond_block_end_stack: Vec<u32>,
 }
 
+// ─── Keyword helper ─────────────────────────────────────────────────────────
+
+/// Emit a keyword span.
+fn emit_keyword(kw: &keyword::Keyword<'_>, ctx: &mut ExtractionCtx<'_>) {
+    let start = kw.span.start.offset;
+    let end = kw.span.end.offset;
+    if end > start {
+        ctx.spans.push(SymbolSpan {
+            start,
+            end,
+            kind: SymbolKind::Keyword,
+        });
+    }
+}
+
+/// Emit keyword spans for PHPDoc tags (`@var`, `@param`, `@return`, etc.)
+/// found inside a docblock comment.
+fn emit_phpdoc_tag_keywords(text: &str, base_offset: u32, spans: &mut Vec<SymbolSpan>) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'@' {
+            let tag_start = i;
+            i += 1;
+            // Consume alphabetic chars and hyphens (for @psalm-suppress, @phpstan-ignore, etc.)
+            while i < bytes.len() && (bytes[i].is_ascii_alphabetic() || bytes[i] == b'-') {
+                i += 1;
+            }
+            let tag_len = i - tag_start;
+            if tag_len > 1 {
+                spans.push(SymbolSpan {
+                    start: base_offset + tag_start as u32,
+                    end: base_offset + i as u32,
+                    kind: SymbolKind::Keyword,
+                });
+            }
+        } else {
+            i += 1;
+        }
+    }
+}
+
 // ─── AST extraction ─────────────────────────────────────────────────────────
 
 /// Build a [`SymbolMap`] from a parsed PHP program.
@@ -114,6 +156,22 @@ pub(crate) fn extract_symbol_map(program: &Program<'_>, content: &str) -> Symbol
     for t in program.trivia.iter() {
         if t.kind == TriviaKind::DocBlockComment {
             let _tpl = extract_docblock_symbols(t.value, t.span.start.offset, &mut ctx.spans);
+        }
+    }
+
+    // Emit comment spans for all comment trivia so semantic tokens
+    // can highlight comments in Blade files.  For docblock comments,
+    // also emit keyword spans for PHPDoc tags.
+    for t in program.trivia.iter() {
+        if t.kind.is_comment() {
+            ctx.spans.push(SymbolSpan {
+                start: t.span.start.offset,
+                end: t.span.end.offset,
+                kind: SymbolKind::Comment,
+            });
+            if t.kind == TriviaKind::DocBlockComment {
+                emit_phpdoc_tag_keywords(t.value, t.span.start.offset, &mut ctx.spans);
+            }
         }
     }
 
@@ -205,6 +263,7 @@ fn extract_from_statement<'a>(
             extract_from_function(func, ctx);
         }
         Statement::Use(use_stmt) => {
+            emit_keyword(&use_stmt.r#use, ctx);
             extract_from_use_statement(use_stmt, &mut ctx.spans);
         }
         Statement::Expression(expr_stmt) => {
@@ -218,22 +277,26 @@ fn extract_from_statement<'a>(
             extract_from_expression(expr_stmt.expression, ctx, scope_start);
         }
         Statement::Return(ret) => {
+            emit_keyword(&ret.r#return, ctx);
             extract_inline_docblock(ret, ctx);
             if let Some(val) = ret.value {
                 extract_from_expression(val, ctx, scope_start);
             }
         }
         Statement::Echo(echo) => {
+            emit_keyword(&echo.echo, ctx);
             extract_inline_docblock(echo, ctx);
             for expr in echo.values.iter() {
                 extract_from_expression(expr, ctx, scope_start);
             }
         }
         Statement::If(if_stmt) => {
+            emit_keyword(&if_stmt.r#if, ctx);
             extract_from_expression(if_stmt.condition, ctx, scope_start);
             extract_from_if_body(&if_stmt.body, ctx, scope_start);
         }
         Statement::While(while_stmt) => {
+            emit_keyword(&while_stmt.r#while, ctx);
             extract_from_expression(while_stmt.condition, ctx, scope_start);
             let body_span = while_stmt.body.span();
             record_breakable_scope(body_span.start.offset, body_span.end.offset, ctx);
@@ -241,6 +304,8 @@ fn extract_from_statement<'a>(
             extract_from_while_body(&while_stmt.body, ctx, scope_start);
         }
         Statement::DoWhile(do_while) => {
+            emit_keyword(&do_while.r#do, ctx);
+            emit_keyword(&do_while.r#while, ctx);
             let body_span = do_while.statement.span();
             record_breakable_scope(body_span.start.offset, body_span.end.offset, ctx);
             record_loop_scope(body_span.start.offset, body_span.end.offset, ctx);
@@ -248,6 +313,7 @@ fn extract_from_statement<'a>(
             extract_from_expression(do_while.condition, ctx, scope_start);
         }
         Statement::For(for_stmt) => {
+            emit_keyword(&for_stmt.r#for, ctx);
             for expr in for_stmt.initializations.iter() {
                 extract_from_expression(expr, ctx, scope_start);
             }
@@ -263,6 +329,8 @@ fn extract_from_statement<'a>(
             extract_from_for_body(&for_stmt.body, ctx, scope_start);
         }
         Statement::Foreach(foreach_stmt) => {
+            emit_keyword(&foreach_stmt.foreach, ctx);
+            emit_keyword(&foreach_stmt.r#as, ctx);
             extract_from_expression(foreach_stmt.expression, ctx, scope_start);
             // key and value are accessed via the target.
             if let Some(key_expr) = foreach_stmt.target.key() {
@@ -304,8 +372,12 @@ fn extract_from_statement<'a>(
             for inner in foreach_stmt.body.statements() {
                 extract_from_statement(inner, ctx, scope_start);
             }
+            if let ForeachBody::ColonDelimited(body) = &foreach_stmt.body {
+                emit_keyword(&body.end_foreach, ctx);
+            }
         }
         Statement::Switch(switch_stmt) => {
+            emit_keyword(&switch_stmt.switch, ctx);
             extract_from_expression(switch_stmt.expression, ctx, scope_start);
             let switch_span = switch_stmt.body.span();
             record_breakable_scope(switch_span.start.offset, switch_span.end.offset, ctx);
@@ -314,10 +386,12 @@ fn extract_from_statement<'a>(
             extract_from_switch_body(&switch_stmt.body, ctx, scope_start);
         }
         Statement::Try(try_stmt) => {
+            emit_keyword(&try_stmt.r#try, ctx);
             for s in try_stmt.block.statements.iter() {
                 extract_from_statement(s, ctx, scope_start);
             }
             for catch in try_stmt.catch_clauses.iter() {
+                emit_keyword(&catch.r#catch, ctx);
                 // Catch type hint is a navigable class reference.
                 extract_from_hint_ctx(&catch.hint, &mut ctx.spans, ClassRefContext::Catch);
                 // The caught variable.
@@ -350,6 +424,7 @@ fn extract_from_statement<'a>(
                 pop_cond_nesting(ctx);
             }
             if let Some(ref finally) = try_stmt.finally_clause {
+                emit_keyword(&finally.r#finally, ctx);
                 for s in finally.block.statements.iter() {
                     extract_from_statement(s, ctx, scope_start);
                 }
@@ -361,6 +436,7 @@ fn extract_from_statement<'a>(
             }
         }
         Statement::Global(global) => {
+            emit_keyword(&global.global, ctx);
             for var in global.variables.iter() {
                 if let Variable::Direct(dv) = var {
                     let name = dv.name.strip_prefix('$').unwrap_or(dv.name).to_string();
@@ -384,6 +460,7 @@ fn extract_from_statement<'a>(
             }
         }
         Statement::Static(static_stmt) => {
+            emit_keyword(&static_stmt.r#static, ctx);
             for item in static_stmt.items.iter() {
                 let dv = item.variable();
                 let name = dv.name.strip_prefix('$').unwrap_or(dv.name).to_string();
@@ -406,11 +483,13 @@ fn extract_from_statement<'a>(
             }
         }
         Statement::Unset(unset_stmt) => {
+            emit_keyword(&unset_stmt.unset, ctx);
             for val in unset_stmt.values.iter() {
                 extract_from_expression(val, ctx, scope_start);
             }
         }
         Statement::Constant(constant) => {
+            emit_keyword(&constant.r#const, ctx);
             // Top-level `const FOO = Expr;` — walk value expressions so
             // that class references like `Foo::class` produce spans.
             extract_from_attribute_lists(&constant.attribute_lists, ctx, scope_start);
@@ -436,6 +515,18 @@ fn extract_from_statement<'a>(
             for expr in echo_tag.values.iter() {
                 extract_from_expression(expr, ctx, scope_start);
             }
+        }
+        Statement::Break(brk) => {
+            emit_keyword(&brk.r#break, ctx);
+        }
+        Statement::Continue(cont) => {
+            emit_keyword(&cont.r#continue, ctx);
+        }
+        Statement::HaltCompiler(hc) => {
+            emit_keyword(&hc.halt_compiler, ctx);
+        }
+        Statement::Goto(goto_stmt) => {
+            emit_keyword(&goto_stmt.goto, ctx);
         }
         _ => {}
     }
@@ -478,6 +569,7 @@ fn extract_from_if_body<'a>(body: &'a IfBody<'a>, ctx: &mut ExtractionCtx<'a>, s
             extract_from_statement(stmt_body.statement, ctx, scope_start);
             pop_cond_nesting(ctx);
             for else_if in stmt_body.else_if_clauses.iter() {
+                emit_keyword(&else_if.elseif, ctx);
                 extract_from_expression(else_if.condition, ctx, scope_start);
                 // Record elseif-body as a narrowing block.
                 let ei_span = else_if.statement.span();
@@ -488,6 +580,7 @@ fn extract_from_if_body<'a>(body: &'a IfBody<'a>, ctx: &mut ExtractionCtx<'a>, s
                 pop_cond_nesting(ctx);
             }
             if let Some(ref else_clause) = stmt_body.else_clause {
+                emit_keyword(&else_clause.r#else, ctx);
                 // Record else-body as a narrowing block.
                 let el_span = else_clause.statement.span();
                 ctx.narrowing_blocks
@@ -516,6 +609,7 @@ fn extract_from_if_body<'a>(body: &'a IfBody<'a>, ctx: &mut ExtractionCtx<'a>, s
             }
             pop_cond_nesting(ctx);
             for else_if in colon_body.else_if_clauses.iter() {
+                emit_keyword(&else_if.elseif, ctx);
                 extract_from_expression(else_if.condition, ctx, scope_start);
                 if let (Some(first), Some(last)) =
                     (else_if.statements.first(), else_if.statements.last())
@@ -535,6 +629,7 @@ fn extract_from_if_body<'a>(body: &'a IfBody<'a>, ctx: &mut ExtractionCtx<'a>, s
                 pop_cond_nesting(ctx);
             }
             if let Some(ref else_clause) = colon_body.else_clause {
+                emit_keyword(&else_clause.r#else, ctx);
                 if let (Some(first), Some(last)) = (
                     else_clause.statements.first(),
                     else_clause.statements.last(),
@@ -553,6 +648,7 @@ fn extract_from_if_body<'a>(body: &'a IfBody<'a>, ctx: &mut ExtractionCtx<'a>, s
                 }
                 pop_cond_nesting(ctx);
             }
+            emit_keyword(&colon_body.endif, ctx);
         }
     }
 }
@@ -570,6 +666,7 @@ fn extract_from_while_body<'a>(
             for inner in colon_body.statements.iter() {
                 extract_from_statement(inner, ctx, scope_start);
             }
+            emit_keyword(&colon_body.end_while, ctx);
         }
     }
 }
@@ -583,6 +680,7 @@ fn extract_from_for_body<'a>(body: &'a ForBody<'a>, ctx: &mut ExtractionCtx<'a>,
             for inner in colon_body.statements.iter() {
                 extract_from_statement(inner, ctx, scope_start);
             }
+            emit_keyword(&colon_body.end_for, ctx);
         }
     }
 }
@@ -597,6 +695,10 @@ fn extract_from_switch_body<'a>(
         SwitchBody::ColonDelimited(b) => &b.cases,
     };
     for case in cases.iter() {
+        match case {
+            SwitchCase::Expression(expr_case) => emit_keyword(&expr_case.case, ctx),
+            SwitchCase::Default(def_case) => emit_keyword(&def_case.default, ctx),
+        }
         let case_end = case
             .statements()
             .last()
@@ -607,6 +709,9 @@ fn extract_from_switch_body<'a>(
             extract_from_statement(inner, ctx, scope_start);
         }
         pop_cond_nesting(ctx);
+    }
+    if let SwitchBody::ColonDelimited(b) = body {
+        emit_keyword(&b.end_switch, ctx);
     }
 }
 
@@ -1444,7 +1549,7 @@ fn extract_from_use_statement(use_stmt: &Use<'_>, spans: &mut Vec<SymbolSpan>) {
             kind: SymbolKind::ClassReference {
                 name,
                 is_fqn: true,
-                context: ClassRefContext::Other,
+                context: ClassRefContext::UseImport,
             },
         });
     }
@@ -1609,6 +1714,7 @@ fn extract_from_expression<'a>(
 
         // ── Instantiation: `new Foo(...)` ──
         Expression::Instantiation(inst) => {
+            emit_keyword(&inst.new, ctx);
             match inst.class {
                 Expression::Identifier(ident) => {
                     let raw = ident.value().to_string();
@@ -1971,6 +2077,25 @@ fn extract_from_expression<'a>(
 
         // ── Unary operations ──
         Expression::UnaryPrefix(un) => {
+            if un.operator.is_cast() {
+                let op_start = un.operator.span().start.offset;
+                let raw = un.operator.as_str();
+                if let Some(open) = raw.find('(')
+                    && let Some(close) = raw.find(')')
+                {
+                    let inner = raw[open + 1..close].trim();
+                    if !inner.is_empty() {
+                        let inner_start_in_raw = raw.find(inner).unwrap_or(open + 1);
+                        let type_start = op_start + inner_start_in_raw as u32;
+                        let type_end = type_start + inner.len() as u32;
+                        ctx.spans.push(SymbolSpan {
+                            start: type_start,
+                            end: type_end,
+                            kind: SymbolKind::CastType,
+                        });
+                    }
+                }
+            }
             extract_from_expression(un.operand, ctx, scope_start);
         }
         Expression::UnaryPostfix(un) => {
@@ -2134,6 +2259,7 @@ fn extract_from_expression<'a>(
 
         // ── Match expression ──
         Expression::Match(match_expr) => {
+            emit_keyword(&match_expr.r#match, ctx);
             extract_from_expression(match_expr.expression, ctx, scope_start);
             for arm in match_expr.arms.iter() {
                 match arm {
@@ -2144,6 +2270,7 @@ fn extract_from_expression<'a>(
                         extract_from_expression(arm.expression, ctx, scope_start);
                     }
                     MatchArm::Default(arm) => {
+                        emit_keyword(&arm.default, ctx);
                         extract_from_expression(arm.expression, ctx, scope_start);
                     }
                 }
@@ -2152,27 +2279,33 @@ fn extract_from_expression<'a>(
 
         // ── Throw expression (PHP 8) ──
         Expression::Throw(throw_expr) => {
+            emit_keyword(&throw_expr.throw, ctx);
             extract_from_expression(throw_expr.exception, ctx, scope_start);
         }
 
         // ── Yield ──
         Expression::Yield(yield_expr) => match yield_expr {
             Yield::Value(yv) => {
+                emit_keyword(&yv.r#yield, ctx);
                 if let Some(value) = yv.value {
                     extract_from_expression(value, ctx, scope_start);
                 }
             }
             Yield::Pair(yp) => {
+                emit_keyword(&yp.r#yield, ctx);
                 extract_from_expression(yp.key, ctx, scope_start);
                 extract_from_expression(yp.value, ctx, scope_start);
             }
             Yield::From(yf) => {
+                emit_keyword(&yf.r#yield, ctx);
+                emit_keyword(&yf.from, ctx);
                 extract_from_expression(yf.iterator, ctx, scope_start);
             }
         },
 
         // ── Clone ──
         Expression::Clone(clone) => {
+            emit_keyword(&clone.clone, ctx);
             extract_from_expression(clone.object, ctx, scope_start);
         }
 
@@ -2229,37 +2362,47 @@ fn extract_from_expression<'a>(
         // `include ...`, `require ...`, `exit(...)`, `die(...)`
         Expression::Construct(construct) => match construct {
             Construct::Isset(isset) => {
+                emit_keyword(&isset.isset, ctx);
                 for val in isset.values.iter() {
                     extract_from_expression(val, ctx, scope_start);
                 }
             }
             Construct::Empty(empty) => {
+                emit_keyword(&empty.empty, ctx);
                 extract_from_expression(empty.value, ctx, scope_start);
             }
             Construct::Eval(eval) => {
+                emit_keyword(&eval.eval, ctx);
                 extract_from_expression(eval.value, ctx, scope_start);
             }
             Construct::Include(inc) => {
+                emit_keyword(&inc.include, ctx);
                 extract_from_expression(inc.value, ctx, scope_start);
             }
             Construct::IncludeOnce(inc) => {
+                emit_keyword(&inc.include_once, ctx);
                 extract_from_expression(inc.value, ctx, scope_start);
             }
             Construct::Require(req) => {
+                emit_keyword(&req.require, ctx);
                 extract_from_expression(req.value, ctx, scope_start);
             }
             Construct::RequireOnce(req) => {
+                emit_keyword(&req.require_once, ctx);
                 extract_from_expression(req.value, ctx, scope_start);
             }
             Construct::Print(print) => {
+                emit_keyword(&print.print, ctx);
                 extract_from_expression(print.value, ctx, scope_start);
             }
             Construct::Exit(exit) => {
+                emit_keyword(&exit.exit, ctx);
                 if let Some(ref args) = exit.arguments {
                     extract_from_arguments(&args.arguments, ctx, scope_start);
                 }
             }
             Construct::Die(die) => {
+                emit_keyword(&die.die, ctx);
                 if let Some(ref args) = die.arguments {
                     extract_from_arguments(&args.arguments, ctx, scope_start);
                 }

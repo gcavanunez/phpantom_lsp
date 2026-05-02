@@ -809,7 +809,10 @@ impl Backend {
                 }
             }
 
-            SymbolKind::LaravelStringKey { .. } => None,
+            SymbolKind::LaravelStringKey { .. }
+            | SymbolKind::Keyword
+            | SymbolKind::CastType
+            | SymbolKind::Comment => None,
         }
     }
 

@@ -92,6 +92,8 @@ pub(crate) enum ClassRefContext {
     /// In a native type-hint position (parameter type, return type,
     /// property type).
     TypeHint,
+    /// In a `use` import statement at file level.
+    UseImport,
 }
 
 #[derive(Debug, Clone)]
@@ -174,6 +176,20 @@ pub(crate) enum SymbolKind {
         /// The full namespace name (e.g. `"App\\Models"`).
         name: String,
     },
+
+    /// A PHP keyword token (e.g. `as`, `foreach`, `if`, `new`, `use`).
+    /// Emitted so that semantic tokens can highlight keywords in Blade
+    /// files where Tree-sitter's PHP grammar is not available.
+    Keyword,
+
+    /// A cast-type name inside a cast expression (e.g. `string` in
+    /// `(string)$x`).  Tree-sitter marks these as `type.builtin`.
+    CastType,
+
+    /// A comment token (single-line `//`, multi-line `/* */`, docblock
+    /// `/** */`, or hash `#`).  Emitted from AST trivia so that Blade
+    /// files get comment highlighting.
+    Comment,
 
     /// A Laravel string-key literal (config key, route name, view name, etc.)
     /// inside a framework helper call such as `config()`, `route()`, `view()`,

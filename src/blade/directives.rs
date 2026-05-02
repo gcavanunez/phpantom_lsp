@@ -56,6 +56,48 @@ pub fn match_directive(s: &str) -> Option<&'static str> {
         "show",
         "append",
         "overwrite",
+        // Auth/env directives
+        "auth",
+        "endauth",
+        "guest",
+        "endguest",
+        "production",
+        "endproduction",
+        "env",
+        "endenv",
+        // Session/context directives
+        "session",
+        "endsession",
+        "context",
+        "endcontext",
+        // Section helpers
+        "hasSection",
+        "sectionMissing",
+        "parent",
+        // Include variants
+        "includeIsolated",
+        "each",
+        // Stack directives
+        "pushIf",
+        "endPushIf",
+        "pushOnce",
+        "endPushOnce",
+        "prependOnce",
+        "hasstack",
+        // Form directives
+        "csrf",
+        "method",
+        "error",
+        "enderror",
+        // Continuation
+        "continue",
+        // Misc directives
+        "once",
+        "endonce",
+        "verbatim",
+        "endverbatim",
+        "fragment",
+        "endfragment",
     ];
 
     for d in directives {

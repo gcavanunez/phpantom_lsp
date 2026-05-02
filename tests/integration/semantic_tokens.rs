@@ -32,6 +32,10 @@ const TT_FUNCTION: u32 = 9;
 const TT_METHOD: u32 = 10;
 #[allow(dead_code)]
 const TT_ENUM_MEMBER: u32 = 12;
+#[allow(dead_code)]
+const TT_KEYWORD: u32 = 13;
+#[allow(dead_code)]
+const TT_COMMENT: u32 = 14;
 
 // ─── Token modifier bits (must match src/semantic_tokens.rs) ────────────────
 
@@ -778,4 +782,213 @@ class Foo {
 
     assert!(has_property, "expected property token on line 2");
     assert!(has_method, "expected method token on line 4");
+}
+
+// ─── Blade semantic token tests ─────────────────────────────────────────────
+
+fn get_blade_tokens(blade: &str) -> Vec<DecodedToken> {
+    let backend = create_test_backend();
+    let uri = "file:///test.blade.php";
+    // Populate open_files so collect_blade_tokens can read the original content.
+    backend
+        .open_files()
+        .write()
+        .insert(uri.to_string(), std::sync::Arc::new(blade.to_string()));
+    backend.update_ast(uri, blade);
+    let result = backend.handle_semantic_tokens_full(uri, blade);
+    match result {
+        Some(SemanticTokensResult::Tokens(tokens)) => decode_tokens(&tokens.data),
+        _ => vec![],
+    }
+}
+
+#[test]
+fn blade_php_block_tokens_debug() {
+    let blade = "@php\nuse Pdo\\Mysql;\n/** @var \\App\\Foo $x */\n@endphp";
+    let tokens = get_blade_tokens(blade);
+    for t in &tokens {
+        eprintln!(
+            "line={} char={} len={} type={} mods={}",
+            t.line, t.character, t.length, t.token_type, t.modifiers
+        );
+    }
+    // @var should be keyword (13)
+    let var_tok = tokens
+        .iter()
+        .find(|t| t.token_type == TT_KEYWORD && t.length == 4 && t.line == 2);
+    assert!(var_tok.is_some(), "Expected @var keyword token on line 2");
+    // /** */ should have comment tokens
+    let comment_tok = tokens
+        .iter()
+        .find(|t| t.token_type == TT_COMMENT && t.line == 2);
+    assert!(
+        comment_tok.is_some(),
+        "Expected comment token on line 2, tokens: {:?}",
+        tokens.iter().filter(|t| t.line == 2).collect::<Vec<_>>()
+    );
+    // Pdo\Mysql in use-import gets type token (closest to Tree-sitter's @module)
+    let type_tok = tokens
+        .iter()
+        .find(|t| t.line == 1 && t.token_type == TT_TYPE);
+    assert!(
+        type_tok.is_some(),
+        "Expected type token for Pdo\\Mysql on line 1, tokens: {:?}",
+        tokens.iter().filter(|t| t.line == 1).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn blade_keyword_tokens_real_world() {
+    let blade = "@php\nuse Pdo\\Mysql;\n@endphp\n\n@foreach ($countries as $country)\n    {{ $country->code }}\n    {{ Mysql::ATTR_AUTOCOMMIT }}\n@endforeach";
+    let tokens = get_blade_tokens(blade);
+    let keyword_tokens: Vec<_> = tokens
+        .iter()
+        .filter(|t| t.token_type == TT_KEYWORD)
+        .collect();
+    eprintln!("Keyword tokens: {:#?}", keyword_tokens);
+    assert!(
+        keyword_tokens.len() >= 7,
+        "Expected at least 7 keyword tokens, got {}: {:?}",
+        keyword_tokens.len(),
+        keyword_tokens
+    );
+}
+
+#[test]
+fn blade_as_keyword_in_foreach() {
+    let blade = "@foreach ($items as $item)\n@endforeach";
+    let tokens = get_blade_tokens(blade);
+    let keyword_tokens: Vec<_> = tokens
+        .iter()
+        .filter(|t| t.token_type == TT_KEYWORD)
+        .collect();
+    eprintln!("All keyword tokens: {:#?}", keyword_tokens);
+    let as_tok = tokens
+        .iter()
+        .find(|t| t.line == 0 && t.token_type == TT_KEYWORD && t.length == 2 && t.character > 8);
+    assert!(
+        as_tok.is_some(),
+        "Expected 'as' keyword token, keywords: {:?}",
+        keyword_tokens
+    );
+}
+
+#[test]
+fn blade_cast_type_in_echo() {
+    let blade = "{{ (string)$var }}";
+    let tokens = get_blade_tokens(blade);
+    eprintln!("All tokens: {:#?}", tokens);
+    let type_tok = tokens.iter().find(|t| t.token_type == TT_TYPE);
+    assert!(
+        type_tok.is_some(),
+        "Expected 'string' type token, got: {:?}",
+        tokens
+    );
+    assert_eq!(type_tok.unwrap().length, 6);
+}
+
+#[test]
+fn blade_directive_tokens() {
+    let tokens = get_blade_tokens("@if($x)\n    <p>hello</p>\n@endif");
+    let if_tok = tokens
+        .iter()
+        .find(|t| t.character == 0 && t.line == 0 && t.token_type == TT_KEYWORD);
+    assert!(
+        if_tok.is_some(),
+        "Expected @if keyword token, got: {:?}",
+        tokens
+    );
+    assert_eq!(if_tok.unwrap().length, 3); // @if
+
+    let endif_tok = tokens
+        .iter()
+        .find(|t| t.line == 2 && t.token_type == TT_KEYWORD);
+    assert!(
+        endif_tok.is_some(),
+        "Expected @endif keyword token, got: {:?}",
+        tokens
+    );
+    assert_eq!(endif_tok.unwrap().length, 6); // @endif
+}
+
+#[test]
+fn blade_echo_delimiter_tokens() {
+    let tokens = get_blade_tokens("{{ $name }}");
+    let open = tokens
+        .iter()
+        .find(|t| t.character == 0 && t.token_type == TT_KEYWORD);
+    assert!(
+        open.is_some(),
+        "Expected {{ keyword token, got: {:?}",
+        tokens
+    );
+    assert_eq!(open.unwrap().length, 2);
+
+    let close = tokens
+        .iter()
+        .find(|t| t.character == 9 && t.token_type == TT_KEYWORD);
+    assert!(
+        close.is_some(),
+        "Expected }} keyword token, got: {:?}",
+        tokens
+    );
+    assert_eq!(close.unwrap().length, 2);
+}
+
+#[test]
+fn blade_raw_echo_delimiter_tokens() {
+    let tokens = get_blade_tokens("{!! $html !!}");
+    let open = tokens
+        .iter()
+        .find(|t| t.character == 0 && t.token_type == TT_KEYWORD);
+    assert!(
+        open.is_some(),
+        "Expected {{!! keyword token, got: {:?}",
+        tokens
+    );
+    assert_eq!(open.unwrap().length, 3);
+
+    let close = tokens
+        .iter()
+        .find(|t| t.character == 10 && t.token_type == TT_KEYWORD);
+    assert!(
+        close.is_some(),
+        "Expected !!}} keyword token, got: {:?}",
+        tokens
+    );
+    assert_eq!(close.unwrap().length, 3);
+}
+
+#[test]
+fn blade_comment_delimiter_tokens() {
+    let tokens = get_blade_tokens("{{-- this is a comment --}}");
+    // Entire comment is a single comment token.
+    let comment = tokens
+        .iter()
+        .find(|t| t.character == 0 && t.token_type == TT_COMMENT);
+    assert!(
+        comment.is_some(),
+        "Expected comment token, got: {:?}",
+        tokens
+    );
+    assert_eq!(comment.unwrap().length, 27); // entire {{-- this is a comment --}}
+}
+
+#[test]
+fn blade_foreach_directive_token() {
+    let tokens = get_blade_tokens("@foreach ($items as $item)\n    {{ $item }}\n@endforeach");
+    let foreach_tok = tokens
+        .iter()
+        .find(|t| t.line == 0 && t.character == 0 && t.token_type == TT_KEYWORD);
+    assert!(foreach_tok.is_some(), "Expected @foreach keyword token");
+    assert_eq!(foreach_tok.unwrap().length, 8); // @foreach
+
+    let endforeach_tok = tokens
+        .iter()
+        .find(|t| t.line == 2 && t.character == 0 && t.token_type == TT_KEYWORD);
+    assert!(
+        endforeach_tok.is_some(),
+        "Expected @endforeach keyword token"
+    );
+    assert_eq!(endforeach_tok.unwrap().length, 11); // @endforeach
 }

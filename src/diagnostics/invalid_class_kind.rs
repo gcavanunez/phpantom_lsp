@@ -342,7 +342,7 @@ fn check_kind_in_context(
                 None
             }
         }
-        ClassRefContext::Other => None,
+        ClassRefContext::Other | ClassRefContext::UseImport => None,
     }
 }
 
