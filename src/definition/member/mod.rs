@@ -521,9 +521,10 @@ impl Backend {
                                                                 && let Some((
                                                                     class_uri,
                                                                     class_content,
-                                                                )) = self.find_class_file_content(
-                                                                    &fqn, uri, content,
-                                                                )
+                                                                )) = self
+                                                                    .find_class_file_content(
+                                                                        &fqn, uri, content,
+                                                                    )
                                                                 && let Some(entry_position) =
                                                                     Self::find_eloquent_array_entry(
                                                                         &class_content,

@@ -1030,8 +1030,7 @@ class User extends Model {
     let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
 
     // "deleted_at" on line 10, cursor at character 15
-    let result =
-        goto_definition_at(&backend, &dir, "src/Models/User.php", user_php, 10, 15).await;
+    let result = goto_definition_at(&backend, &dir, "src/Models/User.php", user_php, 10, 15).await;
 
     assert!(
         result.is_some(),

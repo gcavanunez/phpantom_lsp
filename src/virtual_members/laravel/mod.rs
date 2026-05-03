@@ -195,11 +195,11 @@ pub use helpers::extends_eloquent_model;
 pub(crate) use helpers::{accessor_method_candidates, camel_to_snake};
 
 pub(crate) use accessors::is_accessor_method;
-pub(crate) use where_property::where_property_method_to_column;
 use accessors::{
     extract_modern_accessor_type, is_legacy_accessor, is_modern_accessor,
     legacy_accessor_property_name,
 };
+pub(crate) use where_property::where_property_method_to_column;
 
 pub(crate) use relationships::count_property_to_relationship_method;
 pub use relationships::infer_relationship_from_body;
