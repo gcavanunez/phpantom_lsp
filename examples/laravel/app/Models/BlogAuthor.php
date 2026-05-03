@@ -32,23 +32,3 @@ class BlogAuthor extends Model
         $query->where('genre', $genre);
     }
 }
-
-class BlogPost extends Model
-{
-    public function getTitle(): string { return ''; }
-    public function getSlug(): string { return ''; }
-
-    /** @return \Illuminate\Database\Eloquent\Relations\BelongsTo<BlogAuthor, covariant $this> */
-    public function author(): mixed { return $this->belongsTo(BlogAuthor::class); }
-}
-
-class AuthorProfile extends Model
-{
-    public function getBio(): string { return ''; }
-    public function getAvatar(): string { return ''; }
-}
-
-class BlogTag extends Model
-{
-    public function getLabel(): string { return ''; }
-}

@@ -187,6 +187,22 @@ pub fn lowercase_method_names<M: std::borrow::Borrow<MethodInfo>>(
         .collect()
 }
 
+/// Reverse-map a `where{Property}` method name back to its column name.
+///
+/// `whereFlour` → `"flour"`, `whereKitchenId` → `"kitchen_id"`.
+/// Returns `None` if the name does not start with `"where"` or if what
+/// follows is empty.
+pub fn where_property_method_to_column(method_name: &str) -> Option<String> {
+    let suffix = method_name.strip_prefix("where")?;
+    if suffix.is_empty() {
+        return None;
+    }
+    // The suffix is PascalCase. Run camel_to_snake on it to recover the
+    // original column name.  The first character is already uppercase
+    // (PascalCase), so camel_to_snake produces the right result.
+    Some(super::helpers::camel_to_snake(suffix))
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

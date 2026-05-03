@@ -41,7 +41,7 @@ use crate::types::*;
 use crate::util::{find_class_at_offset, position_to_offset};
 use crate::virtual_members::laravel::{
     ELOQUENT_BUILDER_FQN, accessor_method_candidates, count_property_to_relationship_method,
-    extends_eloquent_model, is_accessor_method,
+    extends_eloquent_model, is_accessor_method, where_property_method_to_column,
 };
 
 /// Pre-extracted context for a member definition lookup.
@@ -313,6 +313,53 @@ impl Backend {
                     }
                 };
 
+            // ── Eloquent array entry fallback (pre-classify) ─────────────────
+            // Virtual properties synthesised from $casts, $dates, $attributes,
+            // $fillable, $guarded, $hidden, $visible, and $appends are NOT
+            // stored in ClassInfo.properties — they exist only as virtual
+            // members produced at resolve time.  classify_member therefore
+            // returns None for them, causing us to `continue` past this
+            // candidate before ever reaching the fallback below.  Check
+            // the array entry here, before that early-exit, so that GTD on
+            // $dates/$casts etc. still jumps to the correct string literal.
+            if extends_eloquent_model(lookup_class, &class_loader)
+                && let Some((class_uri, class_content)) =
+                    self.find_class_file_content(&declaring_fqn, uri, content)
+                && let Some(entry_position) = Self::find_eloquent_array_entry(
+                    &class_content,
+                    &effective_name,
+                    Some((
+                        declaring_class.start_offset as usize,
+                        declaring_class.end_offset as usize,
+                    )),
+                )
+                && let Ok(parsed_uri) = Url::parse(&class_uri)
+            {
+                return Some(point_location(parsed_uri, entry_position));
+            }
+
+            // ── where{Property} method → column entry fallback ───────────────
+            // `whereFlour()`, `whereKitchenId()` etc. are virtual methods
+            // synthesised from column names.  They have no real method
+            // declaration; GTD should jump to the column's string literal
+            // in the relevant Eloquent array ($fillable, $casts, etc.).
+            if extends_eloquent_model(lookup_class, &class_loader)
+                && let Some(column) = where_property_method_to_column(&effective_name)
+                && let Some((class_uri, class_content)) =
+                    self.find_class_file_content(&declaring_fqn, uri, content)
+                && let Some(entry_position) = Self::find_eloquent_array_entry(
+                    &class_content,
+                    &column,
+                    Some((
+                        lookup_class.start_offset as usize,
+                        lookup_class.end_offset as usize,
+                    )),
+                )
+                && let Ok(parsed_uri) = Url::parse(&class_uri)
+            {
+                return Some(point_location(parsed_uri, entry_position));
+            }
+
             // Check that the member is actually present on the declaring class.
             let member_kind =
                 match Self::classify_member(&declaring_class, &search_name, access_hint) {
@@ -457,13 +504,47 @@ impl Backend {
                                                         (effective_name.clone(), cls, fqn)
                                                     }
                                                     None => {
-                                                        // Last resort: Eloquent array entry.
+                                                        // Last resort: Eloquent array entry
+                                                        // (virtual properties) and
+                                                        // where{Property} method mapping.
                                                         if extends_eloquent_model(
                                                             fallback_class,
                                                             &class_loader,
                                                         ) {
                                                             let fqn =
                                                                 fallback_class.name.to_string();
+                                                            // where{Property} → column entry
+                                                            if let Some(column) =
+                                                                where_property_method_to_column(
+                                                                    &effective_name,
+                                                                )
+                                                                && let Some((
+                                                                    class_uri,
+                                                                    class_content,
+                                                                )) = self.find_class_file_content(
+                                                                    &fqn, uri, content,
+                                                                )
+                                                                && let Some(entry_position) =
+                                                                    Self::find_eloquent_array_entry(
+                                                                        &class_content,
+                                                                        &column,
+                                                                        Some((
+                                                                            fallback_class
+                                                                                .start_offset
+                                                                                as usize,
+                                                                            fallback_class
+                                                                                .end_offset
+                                                                                as usize,
+                                                                        )),
+                                                                    )
+                                                                && let Ok(parsed_uri) =
+                                                                    Url::parse(&class_uri)
+                                                            {
+                                                                return Some(point_location(
+                                                                    parsed_uri,
+                                                                    entry_position,
+                                                                ));
+                                                            }
                                                             if let Some((class_uri, class_content)) =
                                                                 self.find_class_file_content(
                                                                     &fqn, uri, content,

@@ -1009,6 +1009,157 @@ class User extends Model {
 }
 
 #[tokio::test]
+async fn test_goto_definition_dates_property_entry() {
+    // Ctrl+click on `$user->deleted_at` should jump to the 'deleted_at'
+    // entry in the $dates array.
+    let user_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class User extends Model {
+    protected $dates = [
+        'deleted_at',
+        'trial_ends_at',
+    ];
+    public function demo(): void {
+        $user = new User();
+        $user->deleted_at;
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/User.php", user_php)]);
+
+    // "deleted_at" on line 10, cursor at character 15
+    let result =
+        goto_definition_at(&backend, &dir, "src/Models/User.php", user_php, 10, 15).await;
+
+    assert!(
+        result.is_some(),
+        "Go-to-definition on $user->deleted_at should resolve to $dates entry"
+    );
+
+    let response = result.unwrap();
+    let line = definition_line(&response);
+    assert_eq!(
+        line, 5,
+        "Should jump to 'deleted_at' in $dates on line 5, got: {}",
+        line
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_where_property_from_fillable() {
+    // Ctrl+click on `Bakery::whereFlour(...)` should jump to the 'flour'
+    // entry in the $fillable array.
+    let model_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class Bakery extends Model {
+    protected $fillable = [
+        'flour',
+        'water',
+    ];
+    public function demo(): void {
+        Bakery::whereFlour('rye');
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/Bakery.php", model_php)]);
+
+    // "whereFlour" on line 9, cursor at character 17
+    let result =
+        goto_definition_at(&backend, &dir, "src/Models/Bakery.php", model_php, 9, 17).await;
+
+    assert!(
+        result.is_some(),
+        "Go-to-definition on Bakery::whereFlour should resolve to $fillable entry"
+    );
+
+    let response = result.unwrap();
+    let line = definition_line(&response);
+    assert_eq!(
+        line, 5,
+        "Should jump to 'flour' in $fillable on line 5, got: {}",
+        line
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_where_property_from_casts() {
+    // Ctrl+click on `Bakery::whereApricot(...)` should jump to the 'apricot'
+    // entry in the $casts array.
+    let model_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class Bakery extends Model {
+    protected $casts = [
+        'apricot' => 'boolean',
+    ];
+    public function demo(): void {
+        Bakery::whereApricot(true);
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/Bakery.php", model_php)]);
+
+    // "whereApricot" on line 8, cursor at character 17
+    let result =
+        goto_definition_at(&backend, &dir, "src/Models/Bakery.php", model_php, 8, 17).await;
+
+    assert!(
+        result.is_some(),
+        "Go-to-definition on Bakery::whereApricot should resolve to $casts entry"
+    );
+
+    let response = result.unwrap();
+    let line = definition_line(&response);
+    assert_eq!(
+        line, 5,
+        "Should jump to 'apricot' in $casts on line 5, got: {}",
+        line
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_where_property_from_dates() {
+    // Ctrl+click on `Bakery::whereDefrostedAt(...)` should jump to the
+    // 'defrosted_at' entry in the $dates array.
+    let model_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class Bakery extends Model {
+    protected $dates = [
+        'defrosted_at',
+    ];
+    public function demo(): void {
+        Bakery::whereDefrostedAt('2024-01-01');
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[("src/Models/Bakery.php", model_php)]);
+
+    // "whereDefrostedAt" on line 8, cursor at character 17
+    let result =
+        goto_definition_at(&backend, &dir, "src/Models/Bakery.php", model_php, 8, 17).await;
+
+    assert!(
+        result.is_some(),
+        "Go-to-definition on Bakery::whereDefrostedAt should resolve to $dates entry"
+    );
+
+    let response = result.unwrap();
+    let line = definition_line(&response);
+    assert_eq!(
+        line, 5,
+        "Should jump to 'defrosted_at' in $dates on line 5, got: {}",
+        line
+    );
+}
+
+#[tokio::test]
 async fn test_goto_definition_hidden_column_name() {
     // Ctrl+click on `$user->password` should jump to the 'password'
     // entry in the $hidden array.

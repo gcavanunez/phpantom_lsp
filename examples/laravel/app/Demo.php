@@ -234,7 +234,7 @@ class LaravelConfigDemo
     public function demo(): void
     {
         config('app.name');
-        \Illuminate\Support\Facades\Config::get('database.default');
-        \Illuminate\Support\Facades\Config::set('app.timezone', 'UTC');
+        Config::get('database.default');
+        Config::set('app.timezone', 'UTC');
     }
 }

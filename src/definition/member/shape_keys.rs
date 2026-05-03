@@ -174,6 +174,7 @@ impl Backend {
         let double_pattern = format!("\"{member_name}\"");
         let targets = [
             "$casts",
+            "$dates",
             "$attributes",
             "$fillable",
             "$guarded",
