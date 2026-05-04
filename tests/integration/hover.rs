@@ -11414,3 +11414,101 @@ namespace Ns2 {
         text
     );
 }
+
+#[test]
+fn hover_variable_reassigned_inside_method_shows_new_type() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+
+final class OrderController
+{
+    private function getOrder()
+    {
+        $ship = null;
+        if (true) {
+            $ship = new OrderController();
+        }
+
+        return $ship;
+    }
+}
+"#;
+
+    // Hover on $ship at line 8 col 12 (the LHS of the reassignment inside if)
+    // `$` is at column 12 (12 spaces indentation).
+    let hover = hover_at(&backend, uri, content, 8, 12).expect("expected hover on $ship LHS");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("OrderController") && !text.contains("null"),
+        "$ship on LHS of reassignment should be OrderController, got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_variable_reassigned_inside_if_shows_new_type() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class ShipmentData {}
+function test(?object $shipment): ?ShipmentData {
+    $ship = null;
+    if ($shipment) {
+        $ship = new ShipmentData();
+    }
+    return $ship;
+}
+"#;
+
+    // Hover on $ship at line 5 col 8 (the LHS of the reassignment inside if)
+    // Should show `ShipmentData`, not `null`.
+    let hover = hover_at(&backend, uri, content, 5, 9).expect("expected hover on $ship LHS");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("ShipmentData") && !text.contains("null"),
+        "$ship on LHS of reassignment inside if should be ShipmentData, got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_variable_reassigned_shows_new_type() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    // Mirrors the real-world pattern: method call returns a union,
+    // assert() narrows, then reassignment to string.
+    let content = r#"<?php
+class CarbonLike {
+    public function locale(string $l): self { return $this; }
+    public function isoFormat(string $format): string { return ''; }
+}
+function test(): void {
+    $date = new CarbonLike();
+
+    assert($date instanceof CarbonLike);
+
+    $date = $date->isoFormat('D. MMMM YYYY');
+    echo $date;
+}
+"#;
+
+    // Hover on $date at line 10 (the LHS of the reassignment)
+    // Should show `string`, not `CarbonLike`.
+    let hover = hover_at(&backend, uri, content, 10, 5).expect("expected hover on $date LHS");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("string") && !text.contains("CarbonLike"),
+        "$date on LHS of reassignment should be string, got: {}",
+        text
+    );
+
+    // Hover on $date at line 11 (the echo usage) should also be string.
+    let hover = hover_at(&backend, uri, content, 11, 9).expect("expected hover on $date usage");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("string") && !text.contains("CarbonLike"),
+        "$date after reassignment should be string, got: {}",
+        text
+    );
+}

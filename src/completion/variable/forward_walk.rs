@@ -134,31 +134,6 @@ fn is_hover_scope_cache_active() -> bool {
     HOVER_SCOPE_CACHE.with(|cell| cell.borrow().is_some())
 }
 
-/// Look up a variable's types from the hover scope cache for a specific
-/// method body.
-///
-/// Returns `Some(types)` when a snapshot at-or-before `offset` exists for
-/// the method, `None` when the method hasn't been cached yet.
-fn lookup_hover_scope(
-    method_span_start: u32,
-    var_name: &str,
-    offset: u32,
-) -> Option<Vec<ResolvedType>> {
-    HOVER_SCOPE_CACHE.with(|cell| {
-        let borrow = cell.borrow();
-        let cache = borrow.as_ref()?;
-        let snapshots = cache.methods.get(&method_span_start)?;
-        // Find the snapshot at-or-before `offset`.
-        let (_snap_offset, snap) = snapshots.range(..=offset).next_back()?;
-        // Only return Some when the variable is explicitly present in the
-        // snapshot.  A missing key means the variable had not been assigned
-        // at this point in the walk — return None so the caller falls back
-        // to the standard walk path (which handles assignment-site hovering,
-        // parameter inference, etc.).
-        snap.get(&atom(var_name)).cloned()
-    })
-}
-
 /// Returns `true` when the hover scope cache already has a snapshot map
 /// for the given method body.
 fn hover_scope_has_method(method_span_start: u32) -> bool {
@@ -2156,8 +2131,13 @@ pub(crate) fn walk_body_forward<'b>(
     let record_snapshots = is_diagnostic_scope_active();
 
     for stmt in statements {
-        // Stop when we reach the cursor.
-        if stmt.span().start.offset >= ctx.cursor_offset {
+        // Stop when we have passed the cursor.  We use `>` rather than
+        // `>=` so that a statement whose start offset exactly equals the
+        // cursor is still processed.  This matters when hovering on the
+        // LHS variable of an assignment: the cursor sits at the first
+        // token of the statement, and the user expects to see the *result*
+        // type of the assignment, not the type from before it.
+        if stmt.span().start.offset > ctx.cursor_offset {
             break;
         }
 
@@ -2252,43 +2232,21 @@ pub(crate) fn resolve_in_method_body<'b>(
     let params_vec: Vec<&'b FunctionLikeParameter<'b>> = parameters.collect();
     let stmts_vec: Vec<&'b Statement<'b>> = body_statements.collect();
 
-    // ── Hover scope cache fast path ──────────────────────────────────────
-    // When the hover scope cache is active and already has snapshots for
-    // this method, serve the result directly from the pre-computed map
-    // without re-walking the body.  This turns O(n) re-walks into O(log N)
-    // BTreeMap range lookups for every hover after the first on a method.
+    // ── Hover scope cache ────────────────────────────────────────────────
+    // The hover scope cache records snapshots at each statement's START
+    // offset (before the statement is processed).  This works well for
+    // member-access resolution within a statement (which needs the scope
+    // from before the statement), but returns the wrong type for variable
+    // hover on the LHS of an assignment: hovering `$x` in `$x = new Foo()`
+    // should show the post-assignment type (`Foo`), not the pre-assignment
+    // type.  Detecting all edge cases (nudged offsets, nested blocks,
+    // closures) is fragile, so variable resolution always uses the
+    // standard walk which processes statements up to the cursor and
+    // returns the correct post-assignment scope.
     //
-    // Only used when the diagnostic scope cache is not active — diagnostics
-    // have their own cache and the two must not interfere.
-    if !is_diagnostic_scope_active()
-        && hover_scope_has_method(method_span_start)
-        && let Some(types) = lookup_hover_scope(method_span_start, var_name, ctx.cursor_offset)
-    {
-        // Generator yield inference is a last-resort fallback that
-        // doesn't depend on the walk, so it's safe to try here too.
-        if types.is_empty()
-            && let Some(inferred) = try_generator_yield_inference(var_name, ctx)
-        {
-            return Some(inferred);
-        }
-        return Some(types);
-    }
-    // The method IS in the cache but this variable had no snapshot
-    // at-or-before cursor_offset (i.e. it was never assigned before
-    // this point).  Fall through to the standard walk so the caller
-    // gets `None` rather than a spurious empty-vec.
-
-    // ── Populate hover cache via a full-body walk ────────────────────────
-    // When the hover cache is active but doesn't yet have snapshots for
-    // this method, walk the full body once (cursor at u32::MAX) to build
-    // all snapshots, store them, then serve the result from the map.
-    // Subsequent hovers on the same method skip the walk entirely.
-    //
-    // Only populate when the method is NOT already cached.  When it IS
-    // cached but the variable was not found at-or-before the cursor (the
-    // fast path above fell through), we must reach the standard walk below
-    // so that closure-internal variables, assignment-site hovers, and
-    // other cases handled by the existing walk logic still work.
+    // The cache IS still populated here (if not yet present) so that
+    // other consumers (diagnostics member-access lookups via
+    // `lookup_diagnostic_scope`) benefit from it.
     if !is_diagnostic_scope_active()
         && is_hover_scope_cache_active()
         && !hover_scope_has_method(method_span_start)
@@ -2339,22 +2297,8 @@ pub(crate) fn resolve_in_method_body<'b>(
         // snapshots in the hover cache before that happens (we already
         // took ownership of the map above).
         populate_hover_scope_cache_for_method(method_span_start, snapshots);
-
-        // Now look up the result from the freshly-populated hover cache.
-        // When the variable IS found in a snapshot, return it directly.
-        // When NOT found (e.g. cursor is at/before first assignment, or
-        // variable is inside a closure body not visible in outer scope),
-        // fall through to the standard walk below so those cases are
-        // handled correctly.
-        if let Some(types) = lookup_hover_scope(method_span_start, var_name, ctx.cursor_offset) {
-            if types.is_empty()
-                && let Some(inferred) = try_generator_yield_inference(var_name, ctx)
-            {
-                return Some(inferred);
-            }
-            return Some(types);
-        }
-        // Variable not found in cache — fall through to standard walk.
+        // Do NOT look up the variable from the freshly-populated cache.
+        // The standard walk below will produce the correct result.
     }
 
     // ── Standard walk (diagnostics path or hover cache not active) ───────
