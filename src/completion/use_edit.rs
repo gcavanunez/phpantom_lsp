@@ -147,6 +147,28 @@ impl UseBlockInfo {
     pub(crate) fn has_class_imports(&self) -> bool {
         self.existing.iter().any(|(_, k)| Self::key_group(k) == 0)
     }
+
+    /// Check whether a `use function` import already exists whose short
+    /// name (case-insensitive) matches the given short name but whose
+    /// FQN differs from `fqn`.  This indicates a conflict: the short
+    /// name is already taken by a different function.
+    pub(crate) fn function_import_conflicts(&self, fqn: &str) -> bool {
+        let short = crate::util::short_name(fqn).to_lowercase();
+        let target_key = format!("function {}", fqn.to_lowercase());
+        self.existing.iter().any(|(_, k)| {
+            if !k.starts_with("function ") {
+                return false;
+            }
+            if k == &target_key {
+                // Same FQN — not a conflict, it's already imported.
+                return false;
+            }
+            // Extract short name from the sort key.
+            let existing_fqn = k.strip_prefix("function ").unwrap_or(k);
+            let existing_short = existing_fqn.rsplit('\\').next().unwrap_or(existing_fqn);
+            existing_short == short
+        })
+    }
 }
 
 /// Extract the sort key (lowercased FQN) from a `use` statement line.
@@ -390,6 +412,15 @@ pub(crate) fn build_use_function_edit(
     // Use a prefixed sort key so function imports sort after class
     // imports and sit among other function imports.
     let sort_key = format!("function {}", fqn.to_lowercase());
+
+    // Skip if this exact function is already imported.
+    if use_block
+        .existing
+        .iter()
+        .any(|(_, k)| k == &sort_key)
+    {
+        return None;
+    }
     let insert_pos = use_block.insert_position_for_key(&sort_key);
 
     // Prepend a blank line when:

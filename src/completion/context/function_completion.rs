@@ -225,7 +225,16 @@ impl Backend {
                         .as_ref()
                         .zip(info.namespace.as_ref())
                         .is_some_and(|(file_ns, func_ns)| file_ns.eq_ignore_ascii_case(func_ns));
-                    let additional_text_edits = if is_namespaced && !same_ns {
+
+                    // Check for import conflict: another function with
+                    // the same short name is already imported.
+                    let has_conflict = is_namespaced
+                        && !same_ns
+                        && use_block
+                            .as_ref()
+                            .is_some_and(|ub| ub.function_import_conflicts(&fqn));
+
+                    let additional_text_edits = if is_namespaced && !same_ns && !has_conflict {
                         use_block
                             .as_ref()
                             .and_then(|ub| build_use_function_edit(&fqn, ub))
@@ -233,11 +242,24 @@ impl Backend {
                         None
                     };
 
+                    // When there's a conflict, use the leading-backslash
+                    // FQN so the call resolves without an import.
+                    let (insert_text, filter_text) = if has_conflict {
+                        let fqn_snippet =
+                            format!("\\{}", build_callable_snippet(&fqn, &info.parameters));
+                        (fqn_snippet, format!("\\{}", fqn))
+                    } else {
+                        (
+                            build_callable_snippet(&info.name, &info.parameters),
+                            info.name.to_string(),
+                        )
+                    };
+
                     items.push(
                         FunctionItemBuilder::new(
                             label,
-                            build_callable_snippet(&info.name, &info.parameters),
-                            info.name.to_string(),
+                            insert_text,
+                            filter_text,
                             format!("4_{}", info.name.to_lowercase()),
                             fqn.clone(),
                             uri.to_string(),
@@ -280,7 +302,12 @@ impl Backend {
                 if for_use_import {
                     items.push(build_use_import_item(fqn.clone(), fqn, "4", false, uri));
                 } else {
-                    let additional_text_edits = if is_namespaced {
+                    let has_conflict = is_namespaced
+                        && use_block
+                            .as_ref()
+                            .is_some_and(|ub| ub.function_import_conflicts(fqn));
+
+                    let additional_text_edits = if is_namespaced && !has_conflict {
                         use_block
                             .as_ref()
                             .and_then(|ub| build_use_function_edit(fqn, ub))
@@ -288,11 +315,17 @@ impl Backend {
                         None
                     };
 
+                    let (insert_text, filter_text) = if has_conflict {
+                        (format!("\\{fqn}()$0"), format!("\\{fqn}"))
+                    } else {
+                        (format!("{sn}()$0"), sn.to_string())
+                    };
+
                     items.push(
                         FunctionItemBuilder::new(
                             sn.to_string(),
-                            format!("{sn}()$0"),
-                            sn.to_string(),
+                            insert_text,
+                            filter_text,
                             format!("4_{}", sn.to_lowercase()),
                             fqn.clone(),
                             uri.to_string(),

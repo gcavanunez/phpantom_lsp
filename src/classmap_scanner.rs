@@ -1078,6 +1078,21 @@ pub fn find_symbols(content: &[u8]) -> ScanResult {
                 && &content[i..i + 8] == b"function"
                 && (i + 8 >= len || content[i + 8].is_ascii_whitespace() || content[i + 8] == b'(')
             {
+                // Skip `use function …;` import statements — these
+                // are not function declarations.
+                if is_preceded_by_use(content, i) {
+                    i += 8;
+                    // Advance past the rest of the `use function` line
+                    // so we don't accidentally pick up names from it.
+                    while i < len && content[i] != b';' && content[i] != b'\n' {
+                        i += 1;
+                    }
+                    if i < len && content[i] == b';' {
+                        i += 1;
+                    }
+                    continue;
+                }
+
                 // Only top-level functions: depth 0 (no braced ns) or
                 // the namespace brace depth + 1 doesn't apply — we
                 // want depth == 0 outside braced ns, or depth ==
@@ -1131,6 +1146,18 @@ pub fn find_symbols(content: &[u8]) -> ScanResult {
                 && &content[i..i + 5] == b"const"
                 && (i + 5 >= len || content[i + 5].is_ascii_whitespace())
             {
+                // Skip `use const …;` import statements.
+                if is_preceded_by_use(content, i) {
+                    i += 5;
+                    while i < len && content[i] != b';' && content[i] != b'\n' {
+                        i += 1;
+                    }
+                    if i < len && content[i] == b';' {
+                        i += 1;
+                    }
+                    continue;
+                }
+
                 let is_top_level = if in_braced_namespace {
                     brace_depth == namespace_brace_depth + 1
                 } else {
@@ -1495,6 +1522,29 @@ fn memchr2_single_string(haystack: &[u8]) -> Option<(usize, u8)> {
 #[inline]
 fn memchr2_double_string(haystack: &[u8]) -> Option<(usize, u8)> {
     memchr::memchr2(b'"', b'\\', haystack).map(|pos| (pos, haystack[pos]))
+}
+
+/// Check whether the keyword at position `i` is preceded by `use `
+/// (with optional whitespace), indicating a `use function` or `use const`
+/// import statement rather than a declaration.
+fn is_preceded_by_use(content: &[u8], i: usize) -> bool {
+    if i < 4 {
+        return false;
+    }
+    // Walk backwards over whitespace.
+    let mut j = i - 1;
+    while j > 0 && content[j].is_ascii_whitespace() {
+        j -= 1;
+    }
+    // Check for `use` (the 'e' is at j, 'u' at j-2).
+    if j >= 2 && &content[j - 2..=j] == b"use" {
+        // Make sure `use` itself is at a keyword boundary (not part
+        // of a longer identifier like `reuse`).
+        if j - 2 == 0 || is_boundary_char(content[j - 3]) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Check whether a keyword can start at this offset.
@@ -2256,6 +2306,28 @@ class Real {}
         let content = b"<?php\n$fn = function () { return 1; };";
         let result = find_symbols(content);
         assert!(result.functions.is_empty());
+    }
+
+    #[test]
+    fn use_function_not_captured() {
+        let content = b"<?php\nnamespace App\\Cache;\nuse function is_array;\nuse function array_map;\n";
+        let result = find_symbols(content);
+        assert!(
+            result.functions.is_empty(),
+            "use function statements should not appear as functions: {:?}",
+            result.functions
+        );
+    }
+
+    #[test]
+    fn use_const_not_captured() {
+        let content = b"<?php\nnamespace App\\Config;\nuse const PHP_EOL;\n";
+        let result = find_symbols(content);
+        assert!(
+            result.constants.is_empty(),
+            "use const statements should not appear as constants: {:?}",
+            result.constants
+        );
     }
 
     #[test]
